@@ -41,7 +41,10 @@ const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<strin
     return { value: undefined } as never
   })
   on('ui.notify', () => ({ value: { isSent: true, channel: 'terminal_bell' } }) as never)
-  on('model.fork', () => ({ value: fork }) as never)
+  on('model.fork', () => {
+    if (fork === 'reject') throw new Error('fork refused')
+    return { value: fork } as never
+  })
   on('command.register', () => ({ value: { command: 'glitch-hud' } }) as never)
   on('turn.start', () => ({ turnId: 't' }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
@@ -210,6 +213,13 @@ test('warm: an expired cache is said to be re-written', async ($, on) => {
   await turn($, 0.1)
   fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 180_000 } }
   expect(await run($, 'warm')).toBe('The cache had expired; the ping wrote it again (180k tokens). Next expiry in 60:00.')
+})
+
+test('warm: a refused fork says so and keeps the countdown', async ($, on) => {
+  await start($, on)
+  await turn($, 0.1)
+  fork = 'reject'
+  expect(await run($, 'warm')).toBe('Keep-warm failed (request refused); the countdown is unchanged.')
 })
 
 test('warm: nothing to fork changes nothing', async ($, on) => {

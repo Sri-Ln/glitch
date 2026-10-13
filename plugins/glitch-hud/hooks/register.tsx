@@ -63,7 +63,7 @@ export async function warnCache($: EngineInterface, config: HudConfig, minutes: 
 
 export async function keepWarm($: EngineInterface, ttlMs: number): Promise<string> {
   if ((await read($, cache)).isBusy) return 'Claude is working, so the cache is warm already.'
-  const reply = await $.model.fork({ prompt: WARM_PROMPT })
+  const reply = await $.model.fork({ prompt: WARM_PROMPT }).catch(() => ({ isAnswered: false as const, reason: 'request refused' }))
   if (reply.isAnswered) {
     const now = await $.clock.now()
     await update($, cache, c => ({ ...c, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true }))
@@ -173,7 +173,11 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    await $.command.register({ name: 'glitch-hud', description: 'Glitch HUD: hud, budget, warm, demo (also as /glitch <sub>)' })
+    try {
+      await $.command.register({ name: 'glitch-hud', description: 'Glitch HUD: hud, budget, warm, demo (also as /glitch <sub>)' })
+    } catch {
+      $.ui.toast('Glitch HUD: could not register /glitch-hud', { timeoutMs: 8000 })
+    }
     if (problems.length) $.ui.toast(`Glitch HUD: ${problems.join('; ')}`, { timeoutMs: 8000 })
 
     await refreshUsage($)
@@ -190,21 +194,30 @@ export const register: Register = (on, options) => {
       await update($, budget, b => withConfigCaps(b, config, total))
     }
 
+    // Each tick catches its own failure: one rejection must never end the interval.
     $.clock.every(1000, async () => {
-      const c = await read($, cache)
-      if (c.expiresAt === null) return
-      const left = Math.max(0, Math.floor((c.expiresAt - (await $.clock.now())) / 1000))
-      if (left !== c.secondsLeft) await update($, cache, x => ({ ...x, secondsLeft: left }))
-      if (c.isBusy) return
-      const mark = dueMark(left, config.cacheWarnMinutes, c.warnedMark)
-      if (mark === null) return
-      await update($, cache, x => ({ ...x, warnedMark: mark }))
-      await warnCache($, config, Math.ceil(left / 60))
-      await autoWarm($, config, mark)
+      try {
+        const c = await read($, cache)
+        if (c.expiresAt === null) return
+        const left = Math.max(0, Math.floor((c.expiresAt - (await $.clock.now())) / 1000))
+        if (left !== c.secondsLeft) await update($, cache, x => ({ ...x, secondsLeft: left }))
+        if (c.isBusy) return
+        const mark = dueMark(left, config.cacheWarnMinutes, c.warnedMark)
+        if (mark === null) return
+        await update($, cache, x => ({ ...x, warnedMark: mark }))
+        await warnCache($, config, Math.ceil(left / 60))
+        await autoWarm($, config, mark)
+      } catch {
+        // The next tick tries again.
+      }
     })
 
     $.clock.every(GIT_EVERY_MS, async () => {
-      if (!(await read($, cache)).isBusy) await refreshGit($)
+      try {
+        if (!(await read($, cache)).isBusy) await refreshGit($)
+      } catch {
+        // The next refresh tries again.
+      }
     })
     return started
   })
@@ -222,15 +235,20 @@ export const register: Register = (on, options) => {
     let startedAt: number | null = null
     const stream = next(e)
     for await (const chunk of stream) {
-      if (startedAt === null) startedAt = await $.clock.now()
-      if (chunk.kind === 'stop' && chunk.usage) {
-        const seconds = ((await $.clock.now()) - startedAt) / 1000
-        const tokens = chunk.usage.output_tokens
-        if (tokens >= MIN_TOKENS && seconds >= MIN_SECONDS) await update($, stats, s => ({ ...s, speed: Math.round(tokens / seconds) }))
+      // The speed is a nicety: a failure to time or store it must never break the stream.
+      try {
+        if (startedAt === null) startedAt = await $.clock.now()
+        if (chunk.kind === 'stop' && chunk.usage) {
+          const seconds = ((await $.clock.now()) - startedAt) / 1000
+          const tokens = chunk.usage.output_tokens
+          if (tokens >= MIN_TOKENS && seconds >= MIN_SECONDS) await update($, stats, s => ({ ...s, speed: Math.round(tokens / seconds) }))
+        }
+      } catch {
+        // Leave the last speed shown.
       }
       yield chunk
     }
-    await refreshUsage($)
+    await refreshUsage($).catch(() => undefined)
     return stream.result
   })
 
@@ -240,8 +258,12 @@ export const register: Register = (on, options) => {
       if (e.agentId !== undefined) return result
       await refreshUsage($)
       await recordSpend($, config).catch(() => undefined)
-      const now = await $.clock.now()
-      await update($, cache, c => ({ ...c, expiresAt: now + config.cacheTtlMs, secondsLeft: config.cacheTtlMs / 1000, warnedMark: 0 }))
+      // Only a turn that reached the API restarts the cache's lifetime; one aborted
+      // or failed before any request leaves the countdown as it was.
+      if (e.reason === 'answer' || e.usage) {
+        const now = await $.clock.now()
+        await update($, cache, c => ({ ...c, expiresAt: now + config.cacheTtlMs, secondsLeft: config.cacheTtlMs / 1000, warnedMark: 0 }))
+      }
       await update($, budget, b => ({ ...b, demoPercent: null }))
       void refreshGit($)
       return result

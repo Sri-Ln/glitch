@@ -8,18 +8,25 @@ const BAND = (bodyColumns: number) =>
 let usd = 0
 let toasts: string[] = []
 let gitOut: string | null = null
+// How many of the next toasts the host refuses (throws).
+let toastThrows = 0
 // `lead`: time before the first chunk; `ms`: time from the first chunk to the rest.
 let step: { chunks: unknown[]; ms: number; lead?: number } = { chunks: [], ms: 0 }
 const MAIN = '# branch.oid abc\n# branch.head main\n'
 const STEP_RESULT = { turnId: 't', index: 0, answer: 'hi', toolUses: [] }
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
-const session = async ($: Engine, on: On, git: string | null = MAIN) => {
+const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { registerFails?: boolean } = {}) => {
   usd = 0
   toasts = []
   gitOut = git
+  toastThrows = 0
   step = { chunks: [], ms: 0 }
   on('ui.toast', (_$, e) => {
+    if (toastThrows > 0) {
+      toastThrows--
+      throw new Error('toast refused')
+    }
     toasts.push(e.text)
     return { value: undefined } as never
   })
@@ -44,7 +51,10 @@ const session = async ($: Engine, on: On, git: string | null = MAIN) => {
     const { Box } = $.ui.resolve(e)
     return <Box />
   })
-  on('command.register', () => ({ value: { command: 'glitch-hud' } }) as never)
+  on('command.register', () => {
+    if (opts.registerFails) throw new Error('register refused')
+    return { value: { command: 'glitch-hud' } } as never
+  })
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }) as never)
   on('session.start', async () => ({ cwd: 'C:\\repo' }) as never)
   await $.session.start({ source: 'startup', cwd: 'C:\\repo', surface: 'terminal', isInteractive: true } as never)
@@ -217,6 +227,39 @@ test('band: cache marks notify once each, never while a turn runs, and re-arm', 
   await ($.turn.complete as (e: unknown) => Promise<unknown>)({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't2', reason: 'answer' })
   await clock.advance(50 * 60_000)
   expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 10 min'])
+})
+
+test('session.start: a refused /glitch-hud registration toasts and start-up goes on', async ($, on) => {
+  const clock = await session($, on, MAIN, { registerFails: true })
+  expect(toasts).toEqual(['Glitch HUD: could not register /glitch-hud'])
+  await turn($, 0.1)
+  await clock.advance(61_000)
+  const row = await rowText($, 160)
+  expect(row).toContain('58:59')
+  expect(row).toContain('main')
+})
+
+test('band: a tick that fails does not stop the countdown warnings', { options: { notify: 'toast' } }, async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  toastThrows = 1
+  await clock.advance(50 * 60_000)
+  expect(toasts).toEqual([])
+  await clock.advance(5 * 60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 5 min'])
+})
+
+test('band: a turn that ended before any answer leaves the countdown', async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  await clock.advance(10 * 60_000)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'again', turnId: 't2' })
+  await ($.turn.complete as (e: unknown) => Promise<unknown>)({ answer: '', durationMs: 10, isAborted: true, turnId: 't2', reason: 'aborted' })
+  expect(await rowText($, 160)).toContain('50:00')
+  // An errored turn whose requests had usage did reach the cache.
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'again', turnId: 't3' })
+  await ($.turn.complete as (e: unknown) => Promise<unknown>)({ answer: '', durationMs: 10, isAborted: false, turnId: 't3', reason: 'error', usage: { input_tokens: 10, output_tokens: 0 } })
+  expect(await rowText($, 160)).toContain('60:00')
 })
 
 test('session.start: bad settings toast once with the problem', { options: { parts: 'cost,,bogus' } }, async ($, on) => {
