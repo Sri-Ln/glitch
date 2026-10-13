@@ -1,0 +1,4 @@
+docs/superpowers/
+node_modules/
+.claude-plugin/types/
+plugins/*/.claude-plugin/types/
