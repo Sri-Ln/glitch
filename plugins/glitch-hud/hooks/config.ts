@@ -4,6 +4,8 @@ export type NotifyMode = 'windows' | 'toast' | 'off'
 
 export type HudConfig = {
   parts: PartId[]
+  /** The person changed Parts from the default; the desktop then shows git too. */
+  partsExplicit: boolean
   budgetSession: number
   budgetDaily: number
   budgetBlocksAgents: boolean
@@ -19,6 +21,7 @@ export const ALL_PARTS: PartId[] = ['turn', 'speed', 'cost', 'cache', 'context',
 
 export const DEFAULT_CONFIG: HudConfig = {
   parts: [...ALL_PARTS],
+  partsExplicit: false,
   budgetSession: 0,
   budgetDaily: 0,
   budgetBlocksAgents: false,
@@ -64,8 +67,10 @@ export function parseConfig(o: Record<string, unknown>): { config: HudConfig; pr
 
   if (o.parts !== undefined) {
     const parts = typeof o.parts === 'string' ? parseParts(o.parts) : null
-    if (parts) config.parts = parts
-    else problems.push('parts: unknown or empty entry, using default')
+    if (parts) {
+      config.parts = parts
+      config.partsExplicit = parts.join(',') !== ALL_PARTS.join(',')
+    } else problems.push('parts: unknown or empty entry, using default')
   }
   readNumbers(['budgetSession', 'budgetDaily'])
   for (const key of ['budgetBlocksAgents', 'autoWarm'] as const) {

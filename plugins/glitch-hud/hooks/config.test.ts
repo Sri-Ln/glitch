@@ -58,3 +58,9 @@ test('config: every bad value falls back and is named', async () => {
     'autoWarmMaxIdle: must be a number ≥ 0, using 120',
   ])
 })
+
+test('config: Parts counts as chosen only when it differs from the default', async () => {
+  expect(parseConfig({ parts: 'turn,speed,cost,cache,context,git' }).config.partsExplicit).toBe(false)
+  expect(parseConfig({ parts: 'cost,cache,git' }).config.partsExplicit).toBe(true)
+  expect(parseConfig({ parts: 'bogus' }).config.partsExplicit).toBe(false)
+})

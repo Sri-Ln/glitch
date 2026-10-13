@@ -9,16 +9,18 @@ Glitch is a kit of Claude Code mods, published from this folder as a marketplace
 
 ## The HUD
 
-One line above the prompt, drawn as text with theme colors and icons on every surface:
+One line above the prompt. In the terminal it is text with theme colors and icons:
 
 | Part | Example | Source |
 |---|---|---|
 | turn | `#12` | count of main-session turns |
 | speed | `⚡ 84 tok/s` | output tokens divided by streaming time of the last main response (ignores answers under 20 tokens or 0.5 s) |
-| cost | `$0.42 │ $3.10` | this turn │ this session, colored by budget level |
+| cost | `$0.42 │ $3.10` | this turn │ this session (one figure while they are equal), colored by budget level |
 | cache | `⧗ 47:12 ↻` | countdown to prompt-cache expiry (`cacheTtlMinutes`, 60 by default); `…` while a turn runs |
 | context | `▓▓▓▓░░ 63%` | context window used; amber from 65%, red from 85% |
 | git | ` main ±4 ↑1` | branch, changed files, ahead/behind; hidden outside a repo |
+
+**Desktop, VS Code and mobile.** These apps draw the band with vector icons, a real context bar and worded values (`Turn 12`, `$0.42 turn · $3.10 session`, `47:12 left`, `63% context`). Hover an icon or the bar for details: the cost tooltip lists the caps, the cache tooltip how long is left. The desktop already shows the branch above the band, so git is left out there unless you change **Parts** in the settings or run `/glitch hud parts …`.
 
 **Width.** As the window narrows, parts drop in the order git, speed, turn (then the context bar becomes just the percent). The row never wraps.
 
