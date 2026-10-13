@@ -1,6 +1,6 @@
-import type { EngineInterface } from 'claude-code'
-
 import type { GitInfo } from '../types'
+
+export type RunFn = (argv: readonly string[], init: { timeoutMs: number }) => Promise<{ exitCode: number; stdout: string }>
 
 export const GIT_ARGV: readonly string[] = ['git', 'status', '--porcelain=v2', '--branch']
 
@@ -28,8 +28,12 @@ export function parseStatus(stdout: string): GitInfo | null {
   return { branch, changed, ahead, behind }
 }
 
-export async function readGit($: EngineInterface): Promise<GitInfo | null> {
-  const ran = await $.process.run(GIT_ARGV, { timeoutMs: 5000 }).catch(() => null)
-  if (!ran || ran.exitCode !== 0) return null
-  return parseStatus(ran.stdout)
+// The engine's process call is injected, so this stays free of `$`.
+export async function readGit(run: RunFn): Promise<GitInfo | null> {
+  try {
+    const ran = await run(GIT_ARGV, { timeoutMs: 5000 })
+    return ran.exitCode === 0 ? parseStatus(ran.stdout) : null
+  } catch {
+    return null
+  }
 }

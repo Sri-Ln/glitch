@@ -1,5 +1,3 @@
-import type { EngineInterface } from 'claude-code'
-
 import type { HudTheme } from '../types'
 
 // glitch-core's default theme, used when glitch-core is not installed. Keep it
@@ -16,18 +14,9 @@ export const FALLBACK_THEME: HudTheme = {
   icons: 'symbols',
 }
 
-const CORE_THEME = { plugin: 'glitch-core', key: 'theme' } as const
-
 const isTheme = (v: unknown): v is HudTheme =>
   typeof v === 'object' && v !== null && typeof (v as HudTheme).accent === 'string' && Array.isArray((v as HudTheme).bar)
 
-// The kit's theme as glitch-core publishes it. Read while drawing, so a theme
-// switch redraws the band.
-export async function readTheme($: EngineInterface): Promise<HudTheme> {
-  try {
-    const { value } = await $.state.get(CORE_THEME)
-    return isTheme(value) ? value : FALLBACK_THEME
-  } catch {
-    return FALLBACK_THEME
-  }
-}
+// The kit's theme as glitch-core publishes it (read by register.tsx while
+// drawing, so a theme switch redraws the band).
+export const toTheme = (value: unknown): HudTheme => (isTheme(value) ? value : FALLBACK_THEME)

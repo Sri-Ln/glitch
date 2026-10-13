@@ -1,10 +1,9 @@
-import type { EngineInterface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
+import type { NotifyIO } from './notify'
 import { notify, projectName, toastArgv } from './notify'
 
-// The test body's `$` has no env/process nouns, so notify runs against a stub
-// holding only the members it uses. Calls are recorded and asserted outside it.
+// notify takes its engine calls as an injected NotifyIO; the stub records them.
 type Stub = {
   env?: Record<string, string>
   run?: () => { exitCode: number, stdout: string, stderr: string }
@@ -13,25 +12,21 @@ type Stub = {
 
 function stubEngine(s: Stub = {}) {
   const calls = { run: 0, notify: 0, toasts: [] as string[] }
-  const $ = {
-    env: { get: async (k: string) => s.env?.[k] },
-    process: {
-      run: async () => {
-        calls.run++
-        if (!s.run) throw new Error('must not run')
-        return s.run()
-      },
+  const $: NotifyIO = {
+    os: async () => s.env?.OS,
+    run: async () => {
+      calls.run++
+      if (!s.run) throw new Error('must not run')
+      return s.run()
     },
-    ui: {
-      notify: async () => {
-        calls.notify++
-        return s.notify?.() ?? { isSent: false, reason: 'no-channel' }
-      },
-      toast: (text: string) => {
-        calls.toasts.push(text)
-      },
+    notifyClaude: async () => {
+      calls.notify++
+      return s.notify?.() ?? { isSent: false }
     },
-  } as unknown as EngineInterface
+    toast: text => {
+      calls.toasts.push(text)
+    },
+  }
   return { $, calls }
 }
 

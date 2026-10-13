@@ -1,6 +1,11 @@
-import type { EngineInterface } from 'claude-code'
-
 import type { NotifyMode } from './config'
+
+export type NotifyIO = {
+  os: () => Promise<string | null | undefined>
+  run: (argv: readonly string[], init: { timeoutMs: number }) => Promise<{ exitCode: number }>
+  notifyClaude: (text: string, options: { title: string }) => Promise<{ isSent: boolean }>
+  toast: (text: string, options: { timeoutMs: number }) => void
+}
 
 export const projectName = (cwd: string): string => cwd.split(/[\\/]/).filter(Boolean).pop() ?? 'session'
 
@@ -24,16 +29,16 @@ export function toastArgv(title: string, message: string): string[] {
 
 // Native Windows toast, else Claude Code's own notification, else a toast in the
 // session. Says which one carried it.
-export async function notify($: EngineInterface, mode: NotifyMode, title: string, message: string): Promise<'windows' | 'claude' | 'toast' | 'off'> {
+export async function notify(io: NotifyIO, mode: NotifyMode, title: string, message: string): Promise<'windows' | 'claude' | 'toast' | 'off'> {
   if (mode === 'off') return 'off'
   if (mode === 'windows') {
-    if ((await $.env.get('OS').catch(() => null)) === 'Windows_NT') {
-      const ran = await $.process.run(toastArgv(title, message), { timeoutMs: 15_000 }).catch(() => null)
+    if ((await io.os().catch(() => null)) === 'Windows_NT') {
+      const ran = await io.run(toastArgv(title, message), { timeoutMs: 15_000 }).catch(() => null)
       if (ran?.exitCode === 0) return 'windows'
     }
-    const sent = await $.ui.notify(message, { title }).catch(() => null)
+    const sent = await io.notifyClaude(message, { title }).catch(() => null)
     if (sent?.isSent) return 'claude'
   }
-  $.ui.toast(`${title}: ${message}`, { timeoutMs: 30_000 })
+  io.toast(`${title}: ${message}`, { timeoutMs: 30_000 })
   return 'toast'
 }

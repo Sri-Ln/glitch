@@ -1,4 +1,3 @@
-import type { EngineInterface } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
 import { GIT_ARGV, parseStatus, readGit } from './git'
@@ -23,7 +22,6 @@ test('git: no branch header is not a repo', async () => {
 })
 
 type Run = (argv: readonly string[], init?: unknown) => Promise<{ exitCode: number; stdout: string; stderr: string }>
-const engine = (run: Run) => ({ process: { run } }) as unknown as EngineInterface
 
 test('git: readGit hides on failure', async () => {
   let argv: readonly string[] = []
@@ -31,16 +29,16 @@ test('git: readGit hides on failure', async () => {
     argv = a
     return { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' }
   }
-  expect(await readGit(engine(run))).toBeNull()
+  expect(await readGit(run)).toBeNull()
   expect(argv).toEqual(GIT_ARGV)
 })
 
 test('git: readGit parses a good run', async () => {
   const run: Run = async () => ({ exitCode: 0, stdout: CLEAN, stderr: '' })
-  expect(await readGit(engine(run))).toEqual({ branch: 'main', changed: 0, ahead: 0, behind: 0 })
+  expect(await readGit(run)).toEqual({ branch: 'main', changed: 0, ahead: 0, behind: 0 })
 })
 
 test('git: readGit hides when the run rejects', async () => {
   const run: Run = () => Promise.reject(new Error('timed out'))
-  expect(await readGit(engine(run))).toBeNull()
+  expect(await readGit(run)).toBeNull()
 })
