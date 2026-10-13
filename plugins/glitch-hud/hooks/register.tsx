@@ -126,14 +126,19 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    const result = await next(e)
-    if (e.agentId !== undefined) return result
-    await refreshUsage($)
-    const now = await $.clock.now()
-    await update($, cache, c => ({ ...c, expiresAt: now + CACHE_TTL_MS, secondsLeft: CACHE_TTL_MS / 1000, warnedMark: 0, isBusy: false }))
-    await update($, budget, b => ({ ...b, demoPercent: null }))
-    void refreshGit($)
-    return result
+    try {
+      const result = await next(e)
+      if (e.agentId !== undefined) return result
+      await refreshUsage($)
+      const now = await $.clock.now()
+      await update($, cache, c => ({ ...c, expiresAt: now + CACHE_TTL_MS, secondsLeft: CACHE_TTL_MS / 1000, warnedMark: 0 }))
+      await update($, budget, b => ({ ...b, demoPercent: null }))
+      void refreshGit($)
+      return result
+    } finally {
+      // A turn that threw must not leave the band busy.
+      if (e.agentId === undefined) await update($, cache, c => ({ ...c, isBusy: false }))
+    }
   })
 
   on('prompt.submit', async ($, e, next) => {
@@ -145,6 +150,9 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    // Kept outside the try so a drawing error never runs the chain beneath twice.
+    let drawn: unknown = null
+    let isDrawn = false
     try {
       const s = await read($, stats)
       const v = await read($, view)
@@ -164,7 +172,8 @@ export const register: Register = (on, options) => {
       const { shown, compactContext } = fitParts(parts, width, e.props.bodyColumns)
 
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
-      const drawn = await Promise.resolve(next(e)).catch(() => null)
+      drawn = await Promise.resolve(next(e)).catch(() => null)
+      isDrawn = true
       const below = drawn && typeof drawn === 'object' && (drawn as { type?: string }).type !== 'engine' ? drawn : null
 
       const { Box, Button, Text } = $.ui.resolve(e)
@@ -187,7 +196,7 @@ export const register: Register = (on, options) => {
         </Box>
       )
     } catch {
-      return next(e)
+      return isDrawn && drawn ? (drawn as never) : next(e)
     }
   })
 

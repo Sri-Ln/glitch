@@ -6,13 +6,35 @@ const BAND = (bodyColumns: number) =>
   ({ component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 4, bodyColumns, scroll: { offset: 0, bodyRows: 4 }, view: {} } as never }) as const
 
 let usd = 0
-const session = async ($: Engine, on: On, gitOut: string | null = '# branch.oid abc\n# branch.head main\n') => {
+let toasts: string[] = []
+let gitOut: string | null = null
+let step: { chunks: unknown[]; ms: number } = { chunks: [], ms: 0 }
+const MAIN = '# branch.oid abc\n# branch.head main\n'
+const STEP_RESULT = { turnId: 't', index: 0, answer: 'hi', toolUses: [] }
+
+// Every answer sits beneath the plugin and is registered before the first `$` call.
+const session = async ($: Engine, on: On, git: string | null = MAIN) => {
   usd = 0
+  toasts = []
+  gitOut = git
+  step = { chunks: [], ms: 0 }
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined } as never
+  })
+  on('session.cwd', () => ({ value: 'C:\\repo' }) as never)
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
   mock.store(on)
   mock.env(on, { OS: 'Windows_NT' })
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, tokens: 630_000, percent: 63 }, rateLimits: [], cost: { usd } } }) as never)
   on('process.run', () => ({ value: gitOut === null ? { exitCode: 128, stdout: '', stderr: '' } : { exitCode: 0, stdout: gitOut, stderr: '' } }) as never)
+  on('turn.step', async function* () {
+    if (step.chunks.length === 0) return STEP_RESULT as never
+    yield step.chunks[0] as never
+    await clock.advance(step.ms)
+    for (const c of step.chunks.slice(1)) yield c as never
+    return STEP_RESULT as never
+  })
   on('turn.start', () => ({ turnId: 't' }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
   // Nothing beneath the plugin draws: an empty box, so a stepped-aside band has no text.
@@ -63,7 +85,9 @@ test('band: the countdown ticks and pauses while busy', async ($, on) => {
   await clock.advance(61_000)
   expect(await rowText($, 160)).toContain('58:59')
   await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'again', turnId: 't2' })
-  expect(await rowText($, 160)).not.toContain('58:')
+  const busy = await rowText($, 160)
+  expect(busy).not.toContain('58:')
+  expect(busy).toContain('…')
 })
 
 test('band: not a git repo hides the git part', async ($, on) => {
@@ -88,4 +112,91 @@ test('band: × hides it for the session', async ($, on) => {
   await ui.press({ key: 'glitch-hide' })
   await ui.unmount()
   expect(await rowText($, 160)).toBe('')
+})
+
+const STEP = { turnId: 't', index: 0, model: 'm', messageCount: 1 }
+
+const runStep = async ($: Engine, input: object) => {
+  const stream = ($.turn.step as unknown as (e: object) => AsyncGenerator<unknown, unknown>)(input)
+  const got: unknown[] = []
+  for (;;) {
+    const r = await stream.next()
+    if (r.done) return { got, result: r.value }
+    got.push(r.value)
+  }
+}
+
+const USAGE = (output: number) => ({ input_tokens: 10, output_tokens: output, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'm' })
+
+const STEP_CHUNKS = [
+  { kind: 'text', index: 0, text: 'he', ref: 1 },
+  { kind: 'text', index: 0, text: 'llo', ref: 2 },
+  { kind: 'stop', stopReason: 'end_turn', usage: USAGE(100), ref: 3 },
+]
+
+test('band: speed is output tokens over the time from the first chunk, chunks pass unchanged', async ($, on) => {
+  const clock = await session($, on)
+  step = { chunks: STEP_CHUNKS, ms: 2000 }
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'hi', turnId: 't' })
+  const { got, result } = await runStep($, STEP)
+  expect(got).toEqual(STEP_CHUNKS)
+  expect(result).toEqual(STEP_RESULT)
+  expect(await rowText($, 160)).toContain('50 tok/s')
+})
+
+test('band: a short or quick response leaves the speed alone', async ($, on) => {
+  await session($, on)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'hi', turnId: 't' })
+  step = { chunks: [STEP_CHUNKS[0], { ...STEP_CHUNKS[2], usage: USAGE(5) }], ms: 2000 }
+  await runStep($, STEP)
+  expect(await rowText($, 160)).not.toContain('tok/s')
+})
+
+test('band: a subagent step does not change the speed', async ($, on) => {
+  const clock = await session($, on)
+  step = { chunks: STEP_CHUNKS, ms: 2000 }
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'hi', turnId: 't' })
+  const { got } = await runStep($, { ...STEP, agentId: 'a1' })
+  expect(got).toEqual(STEP_CHUNKS)
+  expect(await rowText($, 160)).not.toContain('tok/s')
+})
+
+test('band: cache marks notify once each, never while a turn runs, and re-arm', { options: { notify: 'toast' } }, async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  await clock.advance(50 * 60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 10 min'])
+  await clock.advance(5 * 60_000)
+  expect(toasts).toHaveLength(2)
+  expect(toasts[1]).toContain('in 5 min')
+  await clock.advance(60_000)
+  expect(toasts).toHaveLength(2)
+
+  // A running turn holds the warnings back; the next answer re-arms them.
+  toasts.length = 0
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'again', turnId: 't2' })
+  await clock.advance(60 * 60_000)
+  expect(toasts).toEqual([])
+  await ($.turn.complete as (e: unknown) => Promise<unknown>)({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't2', reason: 'answer' })
+  await clock.advance(50 * 60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 10 min'])
+})
+
+test('session.start: bad settings toast once with the problem', { options: { parts: 'cost,,bogus' } }, async ($, on) => {
+  await session($, on)
+  expect(toasts).toHaveLength(1)
+  expect(toasts[0]).toContain('Glitch HUD: parts:')
+})
+
+test('session.start: good settings toast nothing', async ($, on) => {
+  await session($, on)
+  expect(toasts).toEqual([])
+})
+
+test('band: git refreshes on the 30 s timer while idle', async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  gitOut = '# branch.oid abc\n# branch.head feature\n'
+  await clock.advance(30_000)
+  expect(await rowText($, 160)).toContain('feature')
 })
