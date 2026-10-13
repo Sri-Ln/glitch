@@ -25,7 +25,7 @@ const start = async ($: Engine, on: On, store: Record<string, unknown> = {}) => 
   await $.session.start({ source: 'startup', cwd: 'C:\repo', surface: 'terminal', isInteractive: true } as never)
 }
 
-const run = async ($: Engine, args: string) => (await $.command.run({ command: 'glitch', args })).text ?? ''
+const run = async ($: Engine, args: string) => (await $.command.run({ command: 'glitch', args } as never)).text ?? ''
 
 const themeName = async ($: Engine) => (await run($, '')).match(/theme (\w+)/)?.[1]
 

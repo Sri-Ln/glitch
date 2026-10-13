@@ -51,7 +51,7 @@ const turn = async ($: Engine, cost: number) => {
   usd = cost
   await ($.turn.complete as (e: unknown) => Promise<unknown>)({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't', reason: 'answer' })
 }
-const run = async ($: Engine, args: string, command = 'glitch-hud') => (await $.command.run({ command, args })).text ?? ''
+const run = async ($: Engine, args: string, command = 'glitch-hud') => (await $.command.run({ command, args } as never)).text ?? ''
 const agent = ($: Engine) => $.tool.call({ tool: 'Agent', description: 'x', prompt: 'y', subagent_type: 'general-purpose' } as never)
 
 test('hud: toggles the band and sets parts', async ($, on) => {

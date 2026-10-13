@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderNode } from 'claude-code'
 
 import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
 import { blockReason, dailyTotal, dayKey, levelOf, prune, record, spendToday } from './budget'
@@ -268,7 +268,7 @@ export const register: Register = (on, options) => {
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
       drawn = await Promise.resolve(next(e)).catch(() => null)
       isDrawn = true
-      const below = drawn && typeof drawn === 'object' && (drawn as { type?: string }).type !== 'engine' ? drawn : null
+      const below = drawn && typeof drawn === 'object' && (drawn as { type?: string }).type !== 'engine' ? (drawn as RenderNode) : null
 
       const { Box, Button, Text } = $.ui.resolve(e)
       return (
