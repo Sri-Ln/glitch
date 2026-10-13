@@ -3,7 +3,7 @@ import type { EngineInterface, Register, RenderNode, Timer } from 'claude-code'
 
 import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
 import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, withConfigCaps } from './budget'
-import { dueMark, shouldAutoWarm, warnMarks } from './cache'
+import { dueMark, endDemo, isDemoOver, shouldAutoWarm, startDemo, warnMarks } from './cache'
 import { BUDGET_USAGE, DEMO_USAGE, ROUTED, USAGE, WARM_PROMPT, budgetAlerts, budgetSummary, parseBudgetArg, splitArgs, warmMessage } from './commands'
 import { ALL_PARTS, parseConfig, parseParts } from './config'
 import type { HudConfig } from './config'
@@ -58,9 +58,9 @@ async function refreshGit($: EngineInterface): Promise<void> {
   await update($, git, () => info)
 }
 
-export async function warnCache($: EngineInterface, config: HudConfig, minutes: number): Promise<void> {
+export async function warnCache($: EngineInterface, config: HudConfig, minutes: number, isDemo: boolean): Promise<void> {
   const title = `${projectName(await $.session.cwd().catch(() => ''))} — Glitch`
-  await notify(engineIO($), config.notify, title, `Prompt cache expires in ${minutes} min`)
+  await notify(engineIO($), config.notify, title, `Prompt cache expires in ${minutes} min${isDemo ? ' (demo)' : ''}`)
 }
 
 export async function keepWarm($: EngineInterface, ttlMs: number): Promise<string> {
@@ -68,7 +68,7 @@ export async function keepWarm($: EngineInterface, ttlMs: number): Promise<strin
   const reply = await $.model.fork({ prompt: WARM_PROMPT }).catch(() => ({ isAnswered: false as const, reason: 'request refused' }))
   if (reply.isAnswered) {
     const now = await $.clock.now()
-    await update($, cache, c => ({ ...c, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true }))
+    await update($, cache, c => ({ ...c, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true, real: null }))
   }
   return warmMessage(reply, ttlMs / 1000)
 }
@@ -131,9 +131,9 @@ async function demoCommand($: EngineInterface, what: string | undefined, value: 
   if (what === 'cache' && Number.isFinite(n) && n > 0) {
     const seconds = Math.round(n * 60)
     const now = await $.clock.now()
-    await update($, cache, c => ({ ...c, expiresAt: now + seconds * 1000, secondsLeft: seconds, warnedMark: 0 }))
+    await update($, cache, c => startDemo(c, now, seconds))
     await update($, view, v => ({ ...v, isHidden: false }))
-    return `Cache demo: ${value} min left until the next answer resets it.`
+    return `Cache demo: ${value} min left; the real countdown comes back when it ends or at the next answer.`
   }
   if (what === 'budget' && Number.isFinite(n) && n >= 0) {
     await update($, budget, b => ({ ...b, demoPercent: n }))
@@ -208,15 +208,23 @@ export const register: Register = (on, options) => {
       try {
         const c = await read($, cache)
         if (c.expiresAt === null) return
-        const left = Math.max(0, Math.floor((c.expiresAt - (await $.clock.now())) / 1000))
+        const now = await $.clock.now()
+        // A demo that has run out (and shown "expired" a moment) gives the real deadline back.
+        if (isDemoOver(c, now)) {
+          await update($, cache, x => endDemo(x, now))
+          return
+        }
+        const left = Math.max(0, Math.floor((c.expiresAt - now) / 1000))
         if (left !== c.secondsLeft) await update($, cache, x => ({ ...x, secondsLeft: left }))
         if (c.isBusy) return
         const marks = warnMarks(config.cacheWarnMinutes, c.ttlMs ?? config.cacheTtlMs)
         const mark = dueMark(left, marks, c.warnedMark)
         if (mark === null) return
         await update($, cache, x => ({ ...x, warnedMark: mark }))
-        await warnCache($, config, Math.ceil(left / 60))
-        await autoWarm($, config, mark, marks)
+        const isDemo = !!c.real
+        await warnCache($, config, Math.ceil(left / 60), isDemo)
+        // A demo's warning is only a preview: it never sends a real (paid) ping.
+        if (!isDemo) await autoWarm($, config, mark, marks)
       } catch {
         // The next tick tries again.
       }
@@ -273,7 +281,7 @@ export const register: Register = (on, options) => {
       // or failed before any request leaves the countdown as it was.
       if (e.reason === 'answer' || e.usage) {
         const now = await $.clock.now()
-        await update($, cache, c => ({ ...c, expiresAt: now + config.cacheTtlMs, secondsLeft: config.cacheTtlMs / 1000, warnedMark: 0 }))
+        await update($, cache, c => ({ ...c, expiresAt: now + config.cacheTtlMs, secondsLeft: config.cacheTtlMs / 1000, warnedMark: 0, real: null }))
       }
       await update($, budget, b => ({ ...b, demoPercent: null }))
       void refreshGit($)
@@ -294,7 +302,7 @@ export const register: Register = (on, options) => {
       } catch {
         // The next record re-bases under the new id either way.
       }
-      await update($, cache, c => ({ ...c, expiresAt: null, secondsLeft: null, warnedMark: 0 })).catch(() => undefined)
+      await update($, cache, c => ({ ...c, expiresAt: null, secondsLeft: null, warnedMark: 0, real: null })).catch(() => undefined)
     }
     return next(e)
   })

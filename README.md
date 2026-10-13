@@ -78,7 +78,7 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 | `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list without spaces, e.g. `cost,cache,context` |
 | `/glitch budget [+N \| N \| off \| on]` | hud | show, raise, set, disable or re-enable this session's caps |
 | `/glitch warm` | hud | keep-warm ping now |
-| `/glitch demo cache <min>` | hud | preview the cache part and warnings at N minutes left |
+| `/glitch demo cache <min>` | hud | preview the cache part and warnings at N minutes left; demo warnings say "(demo)", never auto-warm, and the real countdown comes back when the demo runs out or at the next answer |
 | `/glitch demo budget <pct>` | hud | preview the budget levels at N percent |
 
 An unknown subcommand shows the help card. `/glitch budget +N` and `N` change this session's cap only; `off` disables both caps for this session.

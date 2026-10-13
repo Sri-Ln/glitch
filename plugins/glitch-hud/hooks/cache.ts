@@ -1,6 +1,27 @@
-import type { Level } from '../types'
+import type { CacheState, Level } from '../types'
 
 const HOUR_MS = 60 * 60_000
+/** How long a run-out demo shows "expired" before the real countdown is back. */
+export const DEMO_HOLD_MS = 5000
+
+/** A demo countdown of `seconds`; the real deadline is set aside, once, to come back. */
+export const startDemo = (c: CacheState, now: number, seconds: number): CacheState => ({
+  ...c,
+  expiresAt: now + seconds * 1000,
+  secondsLeft: seconds,
+  warnedMark: 0,
+  real: c.real ?? { expiresAt: c.expiresAt, warnedMark: c.warnedMark },
+})
+
+export const isDemoOver = (c: CacheState, now: number): boolean => !!c.real && c.expiresAt !== null && now >= c.expiresAt + DEMO_HOLD_MS
+
+/** The real deadline back in place of a demo's. */
+export function endDemo(c: CacheState, now: number): CacheState {
+  if (!c.real) return c
+  const { expiresAt, warnedMark } = c.real
+  const secondsLeft = expiresAt === null ? null : Math.max(0, Math.floor((expiresAt - now) / 1000))
+  return { ...c, expiresAt, secondsLeft, warnedMark, real: null }
+}
 
 // The warning mark to announce now, if any: the smallest mark whose window
 // holds `secondsLeft`, when it is below the last one announced (0 = none yet).

@@ -40,6 +40,8 @@ export type CacheState = {
   warmedSincePrompt: boolean
   /** The cache lifetime the countdown runs from, ms; absent reads as an hour. */
   ttlMs?: number
+  /** The real deadline, set aside while `/glitch demo cache` runs; absent or null when no demo runs. */
+  real?: { expiresAt: number | null; warnedMark: number } | null
 }
 
 export type Budget = {

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cacheLevel, clockText, defaultMarks, dueMark, shouldAutoWarm, warnMarks } from './cache'
+import { DEMO_HOLD_MS, cacheLevel, clockText, defaultMarks, dueMark, endDemo, isDemoOver, shouldAutoWarm, startDemo, warnMarks } from './cache'
 
 test('cache: each mark fires once, smallest window first', async () => {
   const marks = [10, 5]
@@ -37,6 +37,19 @@ test('cache: marks left unset fit the lifetime; typed marks are kept below it', 
   expect(warnMarks(null, 5 * 60_000)).toEqual([2, 1])
   expect(warnMarks([10, 3, 1], 5 * 60_000)).toEqual([3, 1])
   expect(warnMarks([15], 60 * 60_000)).toEqual([15])
+})
+
+test('cache: a demo sets the real deadline aside once and gives it back', async () => {
+  const c = { expiresAt: 3_600_000, secondsLeft: 3000, warnedMark: 10, isBusy: false, lastPromptAt: 0, warmedSincePrompt: false }
+  const demo = startDemo(c, 600_000, 60)
+  expect(demo).toEqual({ ...c, expiresAt: 660_000, secondsLeft: 60, warnedMark: 0, real: { expiresAt: 3_600_000, warnedMark: 10 } })
+  // A second demo keeps the first's saved deadline.
+  expect(startDemo(demo, 620_000, 30).real).toEqual({ expiresAt: 3_600_000, warnedMark: 10 })
+  expect(isDemoOver(demo, 660_000)).toBe(false)
+  expect(isDemoOver(demo, 660_000 + DEMO_HOLD_MS)).toBe(true)
+  expect(isDemoOver(c, 9_999_999)).toBe(false)
+  expect(endDemo(demo, 665_000)).toEqual({ ...c, secondsLeft: 2935, real: null })
+  expect(endDemo(startDemo({ ...c, expiresAt: null, secondsLeft: null }, 0, 60), 65_000).secondsLeft).toBeNull()
 })
 
 test('cache: clock text', async () => {
