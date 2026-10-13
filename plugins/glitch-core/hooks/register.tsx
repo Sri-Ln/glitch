@@ -63,7 +63,11 @@ export const register: Register = (on, options) => {
     } catch {
       $.ui.toast('Glitch: could not apply theme', { timeoutMs: 8000 })
     }
-    await $.command.register({ name: 'glitch', description: 'Glitch kit: themes, HUD, budget, cache keep-warm (/glitch for help)' })
+    try {
+      await $.command.register({ name: 'glitch', description: 'Glitch kit: themes, HUD, budget, cache keep-warm (/glitch for help)' })
+    } catch {
+      $.ui.toast('Glitch: could not register /glitch', { timeoutMs: 8000 })
+    }
     return started
   })
 

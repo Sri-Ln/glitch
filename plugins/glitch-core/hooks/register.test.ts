@@ -8,7 +8,7 @@ const installedAs = (on: On, names: string[]) =>
   on('command.list', () => ({ value: names.map(name => ({ name, description: '', source: 'plugin' })) }) as never)
 
 // The plugin's store, kept in the `store` object the test passes so it can read what was saved.
-const start = async ($: Engine, on: On, store: Record<string, unknown> = {}) => {
+const start = async ($: Engine, on: On, store: Record<string, unknown> = {}, opts: { registerFails?: boolean; toasts?: string[] } = {}) => {
   on('store.get', (_$, e) => ({ value: store[e.key] }) as never)
   on('store.set', (_$, e) => {
     store[e.key] = e.value
@@ -20,7 +20,17 @@ const start = async ($: Engine, on: On, store: Record<string, unknown> = {}) => 
   })
   on('store.keys', () => ({ value: Object.keys(store) }) as never)
   mock.clock(on)
-  on('command.register', () => ({ value: { command: 'glitch' } }) as never)
+  on('command.register', () => {
+    if (opts.registerFails) throw new Error('register refused')
+    return { value: { command: 'glitch' } } as never
+  })
+  if (opts.toasts) {
+    const toasts = opts.toasts
+    on('ui.toast', (_$, e) => {
+      toasts.push(e.text)
+      return { value: undefined } as never
+    })
+  }
   on('session.start', async () => ({ cwd: 'C:\repo' }) as never)
   await $.session.start({ source: 'startup', cwd: 'C:\repo', surface: 'terminal', isInteractive: true } as never)
 }
@@ -92,4 +102,11 @@ test('glitch: no or unknown subcommand shows the help card', async ($, on) => {
   expect(help).toContain('/glitch theme [name|default]')
   expect(help).toContain('/glitch budget, demo, hud, warm — glitch-hud (not installed)')
   expect(await run($, 'nope')).toBe(help)
+})
+
+test('glitch: a refused /glitch registration toasts and the theme still applies', { options: { theme: 'neon' } }, async ($, on) => {
+  const toasts: string[] = []
+  await start($, on, {}, { registerFails: true, toasts })
+  expect(toasts).toEqual(['Glitch: could not register /glitch'])
+  expect(await themeName($)).toBe('neon')
 })
