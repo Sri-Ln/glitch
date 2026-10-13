@@ -1,0 +1,23 @@
+{
+  "name": "glitch-core",
+  "version": "0.1.0",
+  "description": "Glitch kit core: shared themes and the /glitch command.",
+  "author": { "name": "Lakshminarayan S", "email": "lakshminarayan.s@northeastern.edu" },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "theme": {
+      "type": "string",
+      "title": "Theme",
+      "description": "Default look for every Glitch plugin; /glitch theme <name> overrides it",
+      "default": "glitch",
+      "options": ["glitch", "neon", "mono", "sunset", "matrix", "paper"]
+    },
+    "custom": {
+      "type": "string",
+      "title": "Custom theme tokens",
+      "description": "JSON object overriding tokens, e.g. {\"accent\":\"#ff6ad5\",\"bar\":\"█░\"}",
+      "default": ""
+    }
+  }
+}

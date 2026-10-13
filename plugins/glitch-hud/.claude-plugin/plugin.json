@@ -1,0 +1,20 @@
+{
+  "name": "glitch-hud",
+  "version": "0.1.0",
+  "description": "Glitch HUD: one band above the prompt with turn, speed, cost and budget, prompt-cache countdown with keep-warm, context and git.",
+  "author": { "name": "Lakshminarayan S", "email": "lakshminarayan.s@northeastern.edu" },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "dependencies": ["glitch-core"],
+  "userConfig": {
+    "parts": { "type": "string", "title": "Parts", "description": "Comma list, in order: turn,speed,cost,cache,context,git", "default": "turn,speed,cost,cache,context,git" },
+    "budgetSession": { "type": "number", "title": "Session budget (USD)", "description": "0 turns it off", "default": 0 },
+    "budgetDaily": { "type": "number", "title": "Daily budget (USD)", "description": "Across sessions, per local day; 0 turns it off", "default": 0 },
+    "budgetBlocksAgents": { "type": "boolean", "title": "Block subagents at a cap", "description": "Refuse new subagents once a budget cap is reached", "default": false },
+    "cacheTtlMinutes": { "type": "string", "title": "Prompt cache lifetime", "description": "1 hour (default on most plans) or 5 minutes", "default": "60", "options": ["60", "5"] },
+    "cacheWarnMinutes": { "type": "string", "title": "Cache warnings (minutes left)", "description": "Comma list, e.g. 10,5", "default": "10,5" },
+    "notify": { "type": "string", "title": "Warnings", "description": "windows: native toast; toast: inside Claude Code; off: colors only", "default": "windows", "options": ["windows", "toast", "off"] },
+    "autoWarm": { "type": "boolean", "title": "Keep the cache warm by itself", "description": "Ping at the last warning while you were active recently", "default": false },
+    "autoWarmMaxIdle": { "type": "number", "title": "Auto keep-warm idle limit (minutes)", "description": "No auto ping after this long without a prompt from you", "default": 120 }
+  }
+}
