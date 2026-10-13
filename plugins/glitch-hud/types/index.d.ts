@@ -38,6 +38,8 @@ export type CacheState = {
   lastPromptAt: number
   /** A keep-warm ran since the person's last prompt. */
   warmedSincePrompt: boolean
+  /** The cache lifetime the countdown runs from, ms; absent reads as an hour. */
+  ttlMs?: number
 }
 
 export type Budget = {

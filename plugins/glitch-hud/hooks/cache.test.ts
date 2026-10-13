@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { cacheLevel, clockText, dueMark, shouldAutoWarm } from './cache'
+import { cacheLevel, clockText, defaultMarks, dueMark, shouldAutoWarm, warnMarks } from './cache'
 
 test('cache: each mark fires once, smallest window first', async () => {
   const marks = [10, 5]
@@ -19,6 +19,24 @@ test('cache: colors at 20 and 10 minutes, none while busy', async () => {
   expect(cacheLevel(10 * 60, false)).toBe('alert')
   expect(cacheLevel(60, true)).toBe('ok')
   expect(cacheLevel(null, false)).toBe('ok')
+})
+
+test('cache: colors scale with the lifetime, a third and a sixth of it', async () => {
+  expect(cacheLevel(20 * 60, false, 60 * 60_000)).toBe('warn')
+  expect(cacheLevel(5 * 60, false, 5 * 60_000)).toBe('ok')
+  expect(cacheLevel(101, false, 5 * 60_000)).toBe('ok')
+  expect(cacheLevel(100, false, 5 * 60_000)).toBe('warn')
+  expect(cacheLevel(51, false, 5 * 60_000)).toBe('warn')
+  expect(cacheLevel(50, false, 5 * 60_000)).toBe('alert')
+})
+
+test('cache: marks left unset fit the lifetime; typed marks are kept below it', async () => {
+  expect(defaultMarks(60 * 60_000)).toEqual([10, 5])
+  expect(defaultMarks(5 * 60_000)).toEqual([2, 1])
+  expect(warnMarks(null, 60 * 60_000)).toEqual([10, 5])
+  expect(warnMarks(null, 5 * 60_000)).toEqual([2, 1])
+  expect(warnMarks([10, 3, 1], 5 * 60_000)).toEqual([3, 1])
+  expect(warnMarks([15], 60 * 60_000)).toEqual([15])
 })
 
 test('cache: clock text', async () => {

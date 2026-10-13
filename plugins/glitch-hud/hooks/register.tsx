@@ -3,7 +3,7 @@ import type { EngineInterface, Register, RenderNode, Timer } from 'claude-code'
 
 import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
 import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, withConfigCaps } from './budget'
-import { dueMark, shouldAutoWarm } from './cache'
+import { dueMark, shouldAutoWarm, warnMarks } from './cache'
 import { BUDGET_USAGE, DEMO_USAGE, ROUTED, USAGE, WARM_PROMPT, budgetAlerts, budgetSummary, parseBudgetArg, splitArgs, warmMessage } from './commands'
 import { ALL_PARTS, parseConfig, parseParts } from './config'
 import type { HudConfig } from './config'
@@ -163,10 +163,10 @@ async function answerHud($: EngineInterface, config: HudConfig, args: string): P
 }
 
 // The last warning mark may keep the cache warm by itself.
-async function autoWarm($: EngineInterface, config: HudConfig, mark: number): Promise<void> {
+async function autoWarm($: EngineInterface, config: HudConfig, mark: number, marks: number[]): Promise<void> {
   if (!config.autoWarm) return
   const c = await read($, cache)
-  const ok = shouldAutoWarm({ mark, marks: config.cacheWarnMinutes, now: await $.clock.now(), lastPromptAt: c.lastPromptAt, maxIdleMin: config.autoWarmMaxIdle, warmedSincePrompt: c.warmedSincePrompt })
+  const ok = shouldAutoWarm({ mark, marks, now: await $.clock.now(), lastPromptAt: c.lastPromptAt, maxIdleMin: config.autoWarmMaxIdle, warmedSincePrompt: c.warmedSincePrompt })
   if (ok) $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })
 }
 
@@ -199,6 +199,9 @@ export const register: Register = (on, options) => {
       await update($, budget, b => withConfigCaps(b, config, total))
     }
 
+    // The colors and the fitted marks read the lifetime from the state.
+    await update($, cache, c => ({ ...c, ttlMs: config.cacheTtlMs }))
+
     for (const t of timers) t.cancel()
     // Each tick catches its own failure: one rejection must never end the interval.
     const countdown = $.clock.every(1000, async () => {
@@ -208,11 +211,12 @@ export const register: Register = (on, options) => {
         const left = Math.max(0, Math.floor((c.expiresAt - (await $.clock.now())) / 1000))
         if (left !== c.secondsLeft) await update($, cache, x => ({ ...x, secondsLeft: left }))
         if (c.isBusy) return
-        const mark = dueMark(left, config.cacheWarnMinutes, c.warnedMark)
+        const marks = warnMarks(config.cacheWarnMinutes, c.ttlMs ?? config.cacheTtlMs)
+        const mark = dueMark(left, marks, c.warnedMark)
         if (mark === null) return
         await update($, cache, x => ({ ...x, warnedMark: mark }))
         await warnCache($, config, Math.ceil(left / 60))
-        await autoWarm($, config, mark)
+        await autoWarm($, config, mark, marks)
       } catch {
         // The next tick tries again.
       }

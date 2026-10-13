@@ -44,6 +44,13 @@ test('parts: colors follow budget, cache and context levels', async () => {
   expect(levelColor(T, 'ok')).toBe(T.good)
 })
 
+test('parts: a 5-minute cache is not red from the start', async () => {
+  const short = (secondsLeft: number) => segments('cache', { ...D, cache: { ...cache, secondsLeft, ttlMs: 5 * 60_000 } }, false)[1]?.color
+  expect(short(5 * 60)).toBeUndefined()
+  expect(short(100)).toBe(T.warn)
+  expect(short(50)).toBe(T.alert)
+})
+
 test('parts: ascii icons', async () => {
   const ascii = { ...D, theme: { ...T, icons: 'ascii' as const } }
   expect(text('speed', ascii)).toBe('> 84 tok/s')

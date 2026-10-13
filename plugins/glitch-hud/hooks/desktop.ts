@@ -101,7 +101,7 @@ export function richPart(id: PartId, d: PartData, compact: boolean): RichPart {
     }
     case 'cache': {
       const left = d.cache.secondsLeft
-      const level = cacheLevel(left, d.isWorking)
+      const level = cacheLevel(left, d.isWorking, d.cache.ttlMs)
       const color = level === 'ok' ? t.accent : levelColor(t, level)
       const value = d.isWorking ? '…' : left === null ? '—' : left === 0 ? 'expired' : clockText(left)
       return {

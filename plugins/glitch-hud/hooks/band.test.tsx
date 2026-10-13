@@ -151,6 +151,21 @@ test('band: a 5-minute cache lifetime counts down from 05:00 and warns at its ma
   expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 2 min'])
 })
 
+test('band: a 5-minute lifetime with no marks set warns at 2 and 1 min, no start-up toast', { options: { cacheTtlMinutes: '5', notify: 'toast' } }, async ($, on) => {
+  const clock = await session($, on)
+  expect(toasts).toEqual([])
+  await turn($, 0.1)
+  await clock.advance(3 * 60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 2 min'])
+  await clock.advance(60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 2 min', 'repo — Glitch: Prompt cache expires in 1 min'])
+})
+
+test('band: a typed mark the lifetime never reaches is named once at start-up', { options: { cacheTtlMinutes: '5', cacheWarnMinutes: '10,2', notify: 'toast' } }, async ($, on) => {
+  await session($, on)
+  expect(toasts).toEqual(['Glitch HUD: cacheWarnMinutes: marks at or above the cache lifetime are ignored'])
+})
+
 test('band: the countdown ticks and pauses while busy', async ($, on) => {
   const clock = await session($, on)
   await turn($, 0.1)
