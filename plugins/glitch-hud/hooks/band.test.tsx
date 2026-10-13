@@ -2,6 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { cellWidth } from './parts'
+
 const BAND = (bodyColumns: number) =>
   ({ component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 4, bodyColumns, scroll: { offset: 0, bodyRows: 4 }, view: {} } as never }) as const
 
@@ -142,6 +144,39 @@ test('band: narrow terminal keeps one line by dropping parts', async ($, on) => 
   expect(row).not.toContain('main')
   expect(row).not.toContain('tok/s')
   expect(row).toContain('63%')
+})
+
+type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] } | string
+
+// Cells the row takes as the terminal lays it out: each child of a row Box is
+// one flex item, and `columnGap` sits between every two of them.
+const cells = (n: unknown): number => {
+  if (typeof n === 'string') return cellWidth(n)
+  const node = n as Exclude<Node, string>
+  if (node.type === 'Button') return cellWidth(String(node.props?.label ?? ''))
+  const kids = node.children ?? []
+  const widths = kids.map(cells)
+  if (node.type === 'Box' && node.props?.flexDirection === 'column') return Math.max(0, ...widths)
+  const gap = Number(node.props?.columnGap ?? 0)
+  return widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, kids.length - 1)
+}
+
+test('band: at every width the row fits with its controls, and × stays', async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  let gitShownAt = 0
+  for (let columns = 40; columns <= 100; columns++) {
+    const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'terminal', ...BAND(columns) })
+    const drawn = (await ui.drawn()) as unknown as { children: unknown[] }
+    const used = cells(drawn.children[0])
+    const hide = await ui.find({ key: 'glitch-hide' })
+    const texts = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('')
+    await ui.unmount()
+    expect({ columns, fits: used <= columns, hide: hide !== undefined }).toEqual({ columns, fits: true, hide: true })
+    if (!gitShownAt && texts.includes('main')) gitShownAt = columns
+  }
+  // Just above the threshold where git joins the row, it still fits.
+  expect(gitShownAt).toBeGreaterThan(40)
 })
 
 test('band: × hides it for the session', async ($, on) => {

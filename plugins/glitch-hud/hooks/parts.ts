@@ -69,7 +69,7 @@ export function segments(id: PartId, d: PartData, compact: boolean): Segment[] {
 }
 
 // Which parts fit in `columns` cells on one line: drop by DROP_ORDER, then
-// collapse the context bar to its percent. `reserve` holds the × button.
+// collapse the context bar to its percent. `reserve` holds the row's controls.
 export function fitParts(
   parts: PartId[],
   width: (id: PartId, compact: boolean) => number,

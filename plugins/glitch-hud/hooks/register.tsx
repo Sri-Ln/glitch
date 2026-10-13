@@ -25,6 +25,7 @@ export const view = atom({ plugin: 'glitch-hud', key: 'view' } as const, INITIAL
 const MIN_TOKENS = 20
 const MIN_SECONDS = 0.5
 const GIT_EVERY_MS = 30_000
+const ROW_GAP = 2
 
 export async function refreshUsage($: EngineInterface): Promise<void> {
   const usage = await $.session.usage().catch(() => null)
@@ -316,7 +317,12 @@ export const register: Register = (on, options) => {
       const parts = (v.parts ?? config.parts).filter(id => id !== 'git' || data.git !== null)
       const width = (id: (typeof parts)[number], compact: boolean) =>
         cellWidth(segments(id, data, compact && id === 'context').map(x => x.text).join(''))
-      const { shown, compactContext } = fitParts(parts, width, e.props.bodyColumns, 2, 4)
+      // The controls are flex items of the gapped row too: ↻ and × take one cell and
+      // a gap each, the spacer a gap. The cache part is never dropped, so ↻ shows
+      // exactly when it is asked for here.
+      const showsWarm = parts.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking
+      const reserve = (showsWarm ? 1 + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP)
+      const { shown, compactContext } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
 
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
       drawn = await Promise.resolve(next(e)).catch(() => null)
@@ -326,7 +332,7 @@ export const register: Register = (on, options) => {
       const { Box, Button, Text } = $.ui.resolve(e)
       return (
         <Box flexDirection="column">
-          <Box flexDirection="row" columnGap={2} flexWrap="nowrap" overflow="hidden">
+          <Box flexDirection="row" columnGap={ROW_GAP} flexWrap="nowrap" overflow="hidden">
             {shown.map(id => (
               <Box key={id} flexDirection="row" flexShrink={0}>
                 {segments(id, data, compactContext && id === 'context').map((seg, n) => (
@@ -336,7 +342,7 @@ export const register: Register = (on, options) => {
                 ))}
               </Box>
             ))}
-            {shown.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking ? (
+            {showsWarm ? (
               <Button key="glitch-warm" label="↻" plain onPress={async () => $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })} />
             ) : null}
             <Box flexGrow={1} />
