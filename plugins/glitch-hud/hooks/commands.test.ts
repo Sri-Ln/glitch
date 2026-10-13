@@ -9,12 +9,15 @@ let usd = 0
 let toasts: string[] = []
 let store: Record<string, unknown> = {}
 let fork: unknown = { isAnswered: false, reason: 'nothing-to-fork' }
+let sessionId = 's1'
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
-const start = async ($: Engine, on: On) => {
-  usd = 0
+// `at` is what the session already cost and what the store already holds.
+const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<string, unknown> } = {}) => {
+  usd = at.usd ?? 0
   toasts = []
-  store = {}
+  store = { ...(at.store ?? {}) }
+  sessionId = 's1'
   fork = { isAnswered: false, reason: 'nothing-to-fork' }
   const clock = mock.clock(on, { now: new Date(2026, 9, 12, 10).getTime() })
   on('store.get', (_$, e) => ({ value: store[e.key] }) as never)
@@ -31,6 +34,8 @@ const start = async ($: Engine, on: On) => {
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, percent: 10 }, rateLimits: [], cost: { usd } } }) as never)
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: '' } }) as never)
   on('session.cwd', () => ({ value: 'C:\\repo' }) as never)
+  on('session.id', () => ({ value: sessionId }) as never)
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }) as never)
   on('ui.toast', (_$, e) => {
     toasts.push(e.text)
     return { value: undefined } as never
@@ -105,11 +110,63 @@ test('budget: reaching the cap toasts', { options: { budgetSession: 10 } }, asyn
   expect(toasts).toContain('Glitch: session spend $10.50 reached the $10.00 cap')
 })
 
-test('budget: the daily ledger is kept in the store', { options: { budgetDaily: 10 } }, async ($, on) => {
+test('budget: the daily ledger keeps one store key per day and session', { options: { budgetDaily: 10 } }, async ($, on) => {
   await start($, on)
   await turn($, 2)
-  const ledger = store['ledger'] as Record<string, Record<string, number>>
-  expect(Object.values(ledger['2026-10-12'] ?? {})).toEqual([2])
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2 })
+})
+
+test('budget: two sessions on one store both count today', { options: { budgetDaily: 10 } }, async ($, on) => {
+  // Another Claude Code process already wrote its own key today.
+  await start($, on, { store: { 'ledger:2026-10-12:other': 3 } })
+  await turn($, 2)
+  expect(store['ledger:2026-10-12:other']).toBe(3)
+  expect(store['ledger:2026-10-12:s1']).toBe(2)
+  expect(await run($, 'budget')).toBe('Session $2.00 / off · Today $5.00 / $10.00 (50%)')
+})
+
+test('budget: a /clear under a new session id does not count twice', { options: { budgetDaily: 11 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 2)
+  // The process goes on under a new id; its cost starts over.
+  sessionId = 's2'
+  await turn($, 0.5)
+  await turn($, 0.75)
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:s2': 0.75 })
+  expect(await run($, 'budget')).toBe('Session $0.75 / off · Today $2.75 / $11.00 (25%)')
+})
+
+test('budget: a new session id whose total goes on is not counted twice', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 2)
+  sessionId = 's2'
+  await turn($, 2.5)
+  await turn($, 3)
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:s2': 0.5 })
+})
+
+test('budget: session.end on /clear records the spend so far', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 2)
+  usd = 2.25
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } } as never)
+  expect(store['ledger:2026-10-12:s1']).toBe(2.25)
+})
+
+test('budget: a resumed session adds to its key from an earlier run today', { options: { budgetDaily: 4 } }, async ($, on) => {
+  // The earlier run spent $1 today; the resumed session's total starts at that $1.
+  await start($, on, { usd: 1, store: { 'ledger:2026-10-12:s1': 1 } })
+  await turn($, 1.5)
+  await turn($, 1.75)
+  expect(store['ledger:2026-10-12:s1']).toBe(1.75)
+  expect(await run($, 'budget')).toBe('Session $1.75 / off · Today $1.75 / $4.00 (44%)')
+})
+
+test('budget: ledger keys older than 7 days are pruned', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on, { store: { 'ledger:2026-10-05:old': 9, 'ledger:2026-10-06:kept': 4, theme: 'neon' } })
+  await turn($, 1)
+  expect(store).toEqual({ 'ledger:2026-10-06:kept': 4, theme: 'neon', 'ledger:2026-10-12:s1': 1 })
+  expect(await run($, 'budget')).toBe('Session $1.00 / off · Today $1.00 / $10.00 (10%)')
 })
 
 test('warm: refuses while a turn runs', async ($, on) => {

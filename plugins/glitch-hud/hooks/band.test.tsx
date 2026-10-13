@@ -45,6 +45,7 @@ const session = async ($: Engine, on: On, git: string | null = MAIN) => {
     return <Box />
   })
   on('command.register', () => ({ value: { command: 'glitch-hud' } }) as never)
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }) as never)
   on('session.start', async () => ({ cwd: 'C:\\repo' }) as never)
   await $.session.start({ source: 'startup', cwd: 'C:\\repo', surface: 'terminal', isInteractive: true } as never)
 
@@ -99,6 +100,23 @@ test('band: the countdown ticks and pauses while busy', async ($, on) => {
   const busy = await rowText($, 160)
   expect(busy).not.toContain('58:')
   expect(busy).toContain('…')
+})
+
+test('band: a /clear drops the countdown', { options: { notify: 'toast' } }, async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  expect(await rowText($, 160)).toContain('60:00')
+  await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } } as never)
+  expect(await rowText($, 160)).not.toContain('60:00')
+  await clock.advance(55 * 60_000)
+  expect(toasts).toEqual([])
+})
+
+test('band: an exit leaves the countdown', async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 's1', resume: { id: 's1' } } as never)
+  expect(await rowText($, 160)).toContain('60:00')
 })
 
 test('band: not a git repo hides the git part', async ($, on) => {

@@ -53,6 +53,14 @@ export type Budget = {
   notified: { session: Level; daily: Level }
   /** `/glitch demo budget <pct>`: shown level until the next answer. */
   demoPercent: number | null
+  /** The session id the day figures were counted for. */
+  sessionId: string
+  /** Session total at the last record. */
+  lastTotal: number
+  /** The ledger key this run writes. */
+  ledgerKey: string
+  /** What `ledgerKey` held when this run first wrote it (an earlier run of a resumed session). */
+  priorForKey: number
 }
 
 export type GitInfo = { branch: string; changed: number; ahead: number; behind: number }

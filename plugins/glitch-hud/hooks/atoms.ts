@@ -22,6 +22,10 @@ export const initialBudget = (config: HudConfig): Budget => ({
   dailySpent: 0,
   notified: { session: 'ok', daily: 'ok' },
   demoPercent: null,
+  sessionId: '',
+  lastTotal: 0,
+  ledgerKey: '',
+  priorForKey: 0,
 })
 
 export const INITIAL_BUDGET: Budget = initialBudget(DEFAULT_CONFIG)

@@ -2,8 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderNode } from 'claude-code'
 
 import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
-import { blockReason, dailyTotal, dayKey, levelOf, prune, record, spendToday } from './budget'
-import type { Ledger } from './budget'
+import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday } from './budget'
 import { dueMark, shouldAutoWarm } from './cache'
 import { BUDGET_USAGE, DEMO_USAGE, ROUTED, USAGE, WARM_PROMPT, budgetAlerts, budgetSummary, parseBudgetArg, splitArgs, warmMessage } from './commands'
 import { ALL_PARTS, parseConfig, parseParts } from './config'
@@ -62,8 +61,6 @@ export async function warnCache($: EngineInterface, config: HudConfig, minutes: 
   await notify(engineIO($), config.notify, title, `Prompt cache expires in ${minutes} min`)
 }
 
-const STORE_LEDGER = 'ledger'
-
 export async function keepWarm($: EngineInterface, ttlMs: number): Promise<string> {
   if ((await read($, cache)).isBusy) return 'Claude is working, so the cache is warm already.'
   const reply = await $.model.fork({ prompt: WARM_PROMPT })
@@ -74,17 +71,32 @@ export async function keepWarm($: EngineInterface, ttlMs: number): Promise<strin
   return warmMessage(reply, ttlMs / 1000)
 }
 
-// Records today's spend in the cross-session ledger and fires the budget warnings.
+const storedNumber = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+
+// Records this session's spend today under its own ledger key, prunes old days,
+// sums today over every session's key, and fires the budget warnings.
 export async function recordSpend($: EngineInterface, config: HudConfig): Promise<void> {
   const total = (await read($, stats)).total
   const now = await $.clock.now()
-  const today = spendToday(await read($, budget), total, now)
   const sessionId = await $.session.id().catch(() => 'session')
-  const saved = ((await $.store.get(STORE_LEDGER).catch(() => undefined)) ?? {}) as Ledger
-  const ledger = record(prune(saved, now), today.day, sessionId, today.spent)
-  await $.store.set(STORE_LEDGER, ledger).catch(() => undefined)
-  const daily = dailyTotal(ledger, today.day)
-  await update($, budget, x => ({ ...x, day: today.day, dayBase: today.dayBase, dailySpent: daily }))
+  const based = rebase(await read($, budget), sessionId, total)
+  const today = spendToday(based, total, now)
+  const key = ledgerKey(today.day, sessionId)
+  // A key first written by this run may hold an earlier run's spend (a resume): add to it.
+  const prior = key === based.ledgerKey ? based.priorForKey : storedNumber(await $.store.get(key).catch(() => undefined))
+  const mine = prior + today.spent
+  await $.store.set(key, mine).catch(() => undefined)
+
+  let daily = mine
+  for (const k of await $.store.keys().catch(() => [] as string[])) {
+    const entry = parseLedgerKey(k)
+    if (!entry || k === key) continue
+    if (isExpired(entry.day, now)) await $.store.delete(k).catch(() => undefined)
+    else if (entry.day === today.day) daily += storedNumber(await $.store.get(k).catch(() => undefined))
+  }
+  await update($, budget, x => ({
+    ...x, sessionId, day: today.day, dayBase: today.dayBase, lastTotal: total, ledgerKey: key, priorForKey: prior, dailySpent: daily,
+  }))
 
   const b = await read($, budget)
   if (b.isOff) return
@@ -171,7 +183,8 @@ export const register: Register = (on, options) => {
     if ((await read($, budget)).day === '') {
       const now = await $.clock.now()
       const total = (await read($, stats)).total
-      await update($, budget, () => ({ ...initialBudget(config), day: dayKey(now), dayBase: total }))
+      const sessionId = await $.session.id().catch(() => 'session')
+      await update($, budget, () => ({ ...initialBudget(config), day: dayKey(now), dayBase: total, lastTotal: total, sessionId }))
     }
 
     $.clock.every(1000, async () => {
@@ -233,6 +246,21 @@ export const register: Register = (on, options) => {
       // A turn that threw must not leave the band busy.
       if (e.agentId === undefined) await update($, cache, c => ({ ...c, isBusy: false }))
     }
+  })
+
+  // A /clear ends this conversation and the process goes on under a new id: record
+  // its spend once more, and drop the countdown (its cache is no use to the next one).
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') {
+      try {
+        await refreshUsage($)
+        await recordSpend($, config)
+      } catch {
+        // The next record re-bases under the new id either way.
+      }
+      await update($, cache, c => ({ ...c, expiresAt: null, secondsLeft: null, warnedMark: 0 })).catch(() => undefined)
+    }
+    return next(e)
   })
 
   on('prompt.submit', async ($, e, next) => {

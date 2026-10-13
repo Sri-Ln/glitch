@@ -1,11 +1,12 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Budget } from '../types'
-import { blockReason, costLevel, crossed, dailyTotal, dayKey, levelOf, prune, record, spendToday, usd, worse } from './budget'
+import { blockReason, costLevel, crossed, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, usd, worse } from './budget'
 
 const B = (over: Partial<Budget> = {}): Budget => ({
   sessionCap: 0, dailyCap: 0, isOff: false, day: '2026-10-12', dayBase: 0, dailySpent: 0,
-  notified: { session: 'ok', daily: 'ok' }, demoPercent: null, ...over,
+  notified: { session: 'ok', daily: 'ok' }, demoPercent: null,
+  sessionId: 's1', lastTotal: 0, ledgerKey: '', priorForKey: 0, ...over,
 })
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime()
 
@@ -29,13 +30,28 @@ test('budget: day keys are local dates', async () => {
   expect(dayKey(at(2026, 1, 5, 0))).toBe('2026-01-05')
 })
 
-test('budget: the ledger sums sessions per day and prunes old days', async () => {
-  let l = record({}, '2026-10-12', 's1', 1.5)
-  l = record(l, '2026-10-12', 's2', 2)
-  l = record(l, '2026-10-12', 's1', 1.75)
-  l = record(l, '2026-10-01', 's0', 9)
-  expect(dailyTotal(l, '2026-10-12')).toBe(3.75)
-  expect(Object.keys(prune(l, at(2026, 10, 12)))).toEqual(['2026-10-12'])
+test('budget: ledger keys hold a day and a session id', async () => {
+  expect(ledgerKey('2026-10-12', 'ab-12')).toBe('ledger:2026-10-12:ab-12')
+  expect(parseLedgerKey('ledger:2026-10-12:ab-12')).toEqual({ day: '2026-10-12', sessionId: 'ab-12' })
+  expect(parseLedgerKey('ledger')).toBeNull()
+  expect(parseLedgerKey('theme')).toBeNull()
+  expect(parseLedgerKey('ledger:2026-10-12:')).toBeNull()
+})
+
+test('budget: ledger days older than 7 local days expire', async () => {
+  expect(isExpired('2026-10-06', at(2026, 10, 12))).toBe(false)
+  expect(isExpired('2026-10-05', at(2026, 10, 12))).toBe(true)
+  expect(isExpired('2026-10-12', at(2026, 10, 12, 0))).toBe(false)
+  // Calendar days, not 24-hour steps, across a month end.
+  expect(isExpired('2026-02-25', at(2026, 3, 3, 0))).toBe(false)
+  expect(isExpired('2026-02-24', at(2026, 3, 3, 23))).toBe(true)
+})
+
+test('budget: a new session id re-bases today at the total, or at 0 when the total started over', async () => {
+  expect(rebase(B({ sessionId: 's1', dayBase: 1 }), 's1', 5)).toMatchObject({ sessionId: 's1', dayBase: 1 })
+  expect(rebase(B({ sessionId: '', dayBase: 1 }), 's1', 5)).toMatchObject({ sessionId: 's1', dayBase: 1 })
+  expect(rebase(B({ sessionId: 's1', dayBase: 1, lastTotal: 4 }), 's2', 5)).toMatchObject({ sessionId: 's2', dayBase: 5 })
+  expect(rebase(B({ sessionId: 's1', dayBase: 1, lastTotal: 4 }), 's2', 0.5)).toMatchObject({ sessionId: 's2', dayBase: 0 })
 })
 
 test('budget: crossing midnight starts today at the session total', async () => {

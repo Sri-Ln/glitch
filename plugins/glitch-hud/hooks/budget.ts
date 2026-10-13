@@ -25,21 +25,29 @@ export const dayKey = (ms: number): string => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-/** day → session id → USD that session spent that day. */
-export type Ledger = Record<string, Record<string, number>>
+// The daily ledger: one store key per (local day, session id) holding the USD that
+// session spent that day. Each session writes only its own key, so sessions
+// running side by side never overwrite each other's spend.
+export const LEDGER_PREFIX = 'ledger:'
 
-export const record = (ledger: Ledger, day: string, sessionId: string, spent: number): Ledger => ({
-  ...ledger,
-  [day]: { ...(ledger[day] ?? {}), [sessionId]: spent },
-})
+export const ledgerKey = (day: string, sessionId: string): string => `${LEDGER_PREFIX}${day}:${sessionId}`
 
-export const dailyTotal = (ledger: Ledger, day: string): number => Object.values(ledger[day] ?? {}).reduce((a, b) => a + b, 0)
+export function parseLedgerKey(key: string): { day: string; sessionId: string } | null {
+  const m = /^ledger:(\d{4}-\d{2}-\d{2}):(.+)$/.exec(key)
+  return m ? { day: m[1] as string, sessionId: m[2] as string } : null
+}
 
-const DAY_MS = 24 * 60 * 60 * 1000
+/** True when `day` is older than the last `keepDays` local calendar days. */
+export function isExpired(day: string, nowMs: number, keepDays = 7): boolean {
+  const now = new Date(nowMs)
+  return day < dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (keepDays - 1)).getTime())
+}
 
-export function prune(ledger: Ledger, nowMs: number, keepDays = 7): Ledger {
-  const oldest = dayKey(nowMs - (keepDays - 1) * DAY_MS)
-  return Object.fromEntries(Object.entries(ledger).filter(([day]) => day >= oldest))
+// A /clear or a resume keeps the process under a new session id. Today then counts
+// from the total now, or from 0 when the new session's total started over.
+export function rebase(b: Budget, sessionId: string, total: number): Budget {
+  if (!b.sessionId || b.sessionId === sessionId) return { ...b, sessionId }
+  return { ...b, sessionId, dayBase: total < b.lastTotal ? 0 : total }
 }
 
 // What this session spent on the current local day. A new day starts at the
