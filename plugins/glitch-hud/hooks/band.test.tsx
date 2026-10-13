@@ -8,7 +8,8 @@ const BAND = (bodyColumns: number) =>
 let usd = 0
 let toasts: string[] = []
 let gitOut: string | null = null
-let step: { chunks: unknown[]; ms: number } = { chunks: [], ms: 0 }
+// `lead`: time before the first chunk; `ms`: time from the first chunk to the rest.
+let step: { chunks: unknown[]; ms: number; lead?: number } = { chunks: [], ms: 0 }
 const MAIN = '# branch.oid abc\n# branch.head main\n'
 const STEP_RESULT = { turnId: 't', index: 0, answer: 'hi', toolUses: [] }
 
@@ -30,6 +31,7 @@ const session = async ($: Engine, on: On, git: string | null = MAIN) => {
   on('process.run', () => ({ value: gitOut === null ? { exitCode: 128, stdout: '', stderr: '' } : { exitCode: 0, stdout: gitOut, stderr: '' } }) as never)
   on('turn.step', async function* () {
     if (step.chunks.length === 0) return STEP_RESULT as never
+    await clock.advance(step.lead ?? 0)
     yield step.chunks[0] as never
     await clock.advance(step.ms)
     for (const c of step.chunks.slice(1)) yield c as never
@@ -135,8 +137,8 @@ const STEP_CHUNKS = [
 ]
 
 test('band: speed is output tokens over the time from the first chunk, chunks pass unchanged', async ($, on) => {
-  const clock = await session($, on)
-  step = { chunks: STEP_CHUNKS, ms: 2000 }
+  await session($, on)
+  step = { chunks: STEP_CHUNKS, ms: 2000, lead: 3000 }
   await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'hi', turnId: 't' })
   const { got, result } = await runStep($, STEP)
   expect(got).toEqual(STEP_CHUNKS)
@@ -152,8 +154,16 @@ test('band: a short or quick response leaves the speed alone', async ($, on) => 
   expect(await rowText($, 160)).not.toContain('tok/s')
 })
 
+test('band: a response under half a second leaves the speed alone', async ($, on) => {
+  await session($, on)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'hi', turnId: 't' })
+  step = { chunks: STEP_CHUNKS, ms: 300 }
+  await runStep($, STEP)
+  expect(await rowText($, 160)).not.toContain('tok/s')
+})
+
 test('band: a subagent step does not change the speed', async ($, on) => {
-  const clock = await session($, on)
+  await session($, on)
   step = { chunks: STEP_CHUNKS, ms: 2000 }
   await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'hi', turnId: 't' })
   const { got } = await runStep($, { ...STEP, agentId: 'a1' })
