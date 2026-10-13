@@ -2,7 +2,7 @@
   "name": "glitch-core",
   "version": "0.1.0",
   "description": "Glitch kit core: shared themes and the /glitch command.",
-  "author": { "name": "Lakshminarayan S", "email": "lakshminarayan.s@northeastern.edu" },
+  "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
   "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
