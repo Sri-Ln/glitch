@@ -47,11 +47,12 @@ test('budget: ledger days older than 7 local days expire', async () => {
   expect(isExpired('2026-02-24', at(2026, 3, 3, 23))).toBe(true)
 })
 
-test('budget: a new session id re-bases today at the total, or at 0 when the total started over', async () => {
+test('budget: a new session id re-bases today at the total, since nothing under it is spent yet', async () => {
   expect(rebase(B({ sessionId: 's1', dayBase: 1 }), 's1', 5)).toMatchObject({ sessionId: 's1', dayBase: 1 })
   expect(rebase(B({ sessionId: '', dayBase: 1 }), 's1', 5)).toMatchObject({ sessionId: 's1', dayBase: 1 })
-  expect(rebase(B({ sessionId: 's1', dayBase: 1, lastTotal: 4 }), 's2', 5)).toMatchObject({ sessionId: 's2', dayBase: 5 })
-  expect(rebase(B({ sessionId: 's1', dayBase: 1, lastTotal: 4 }), 's2', 0.5)).toMatchObject({ sessionId: 's2', dayBase: 0 })
+  expect(rebase(B({ sessionId: 's1', dayBase: 1, lastTotal: 4 }), 's2', 5)).toMatchObject({ sessionId: 's2', dayBase: 5, lastTotal: 5 })
+  // A resumed session's total can sit below the last one: its earlier spend is already on its days.
+  expect(rebase(B({ sessionId: 's1', dayBase: 1, lastTotal: 4 }), 's2', 0.5)).toMatchObject({ sessionId: 's2', dayBase: 0.5, lastTotal: 0.5 })
 })
 
 test('budget: crossing midnight starts today at the session total', async () => {

@@ -148,6 +148,7 @@ test('budget: a /clear under a new session id does not count twice', { options: 
   await turn($, 2)
   // The process goes on under a new id; its cost starts over.
   sessionId = 's2'
+  usd = 0
   await turn($, 0.5)
   await turn($, 0.75)
   expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:s2': 0.75 })
@@ -160,7 +161,30 @@ test('budget: a new session id whose total goes on is not counted twice', { opti
   sessionId = 's2'
   await turn($, 2.5)
   await turn($, 3)
-  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:s2': 0.5 })
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:s2': 1 })
+  expect(await run($, 'budget')).toBe('Session $3.00 / off · Today $3.00 / $10.00 (30%)')
+})
+
+test('budget: a /resume in the process does not count the resumed spend twice', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 2)
+  // Resume X: an earlier run spent $1 of it today, and its total starts at that $1.
+  sessionId = 'X'
+  usd = 1
+  store['ledger:2026-10-12:X'] = 1
+  await turn($, 1.25)
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:X': 1.25 })
+  expect(await run($, 'budget')).toBe('Session $1.25 / off · Today $3.25 / $10.00 (33%)')
+})
+
+test('budget: a /clear right after a /resume adds nothing to the resumed key', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 2)
+  sessionId = 'X'
+  usd = 1
+  store['ledger:2026-10-12:X'] = 1
+  await $.session.end({ reason: 'clear', sessionId: 'X', resume: { id: 'X' } } as never)
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:X': 1 })
 })
 
 test('budget: session.end on /clear records the spend so far', { options: { budgetDaily: 10 } }, async ($, on) => {

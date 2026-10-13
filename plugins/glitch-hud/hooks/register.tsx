@@ -227,6 +227,9 @@ export const register: Register = (on, options) => {
   on('turn.start', async ($, e, next) => {
     const total = (await $.session.usage().catch(() => null))?.cost?.usd ?? (await read($, stats)).total
     await update($, stats, s => ({ ...s, turn: s.turn + 1, costAtStart: total, total, turnCost: 0 }))
+    // A /clear or a /resume since the last turn: re-base before this turn spends.
+    const sessionId = await $.session.id().catch(() => 'session')
+    await update($, budget, b => rebase(b, sessionId, total))
     await update($, cache, c => ({ ...c, isBusy: true }))
     return next(e)
   })
