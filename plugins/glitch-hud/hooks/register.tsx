@@ -32,12 +32,13 @@ const COST_UNREADABLE = "Glitch: can't read the session cost right now; budget c
 const LEDGER_FAILED = "Glitch: can't read or save the daily spend ledger right now; today's total may be incomplete."
 
 // A failed read marks cost and context stale (the band shows —, not a frozen
-// number) and says so once per session; the next good read clears it.
+// number) and says so once per conversation (session id); the next good read clears it.
 export async function refreshUsage($: EngineInterface): Promise<void> {
   const usage = await $.session.usage().catch(() => null)
   if (!usage) {
-    const warned = (await read($, stats)).staleWarned === true
-    await update($, stats, s => ({ ...s, isStale: true, staleWarned: true }))
+    const sessionId = await $.session.id().catch(() => 'session')
+    const warned = (await read($, stats)).staleWarnedFor === sessionId
+    await update($, stats, s => ({ ...s, isStale: true, staleWarnedFor: sessionId }))
     if (!warned) {
       try {
         $.ui.toast(COST_UNREADABLE, { timeoutMs: 10_000 })
@@ -100,7 +101,8 @@ export async function recordSpend($: EngineInterface, config: HudConfig): Promis
   const based = rebase(await read($, budget), sessionId, total)
   const today = spendToday(based, total, now)
   const key = ledgerKey(today.day, sessionId)
-  // Any ledger call that fails leaves today's total short: said once per session.
+  // Any ledger call that fails leaves today's total short: said once per conversation
+  // (session id), and only when a daily cap is in force.
   let isShort = false
   const missed = () => {
     isShort = true
@@ -118,12 +120,13 @@ export async function recordSpend($: EngineInterface, config: HudConfig): Promis
     if (isExpired(entry.day, now)) await $.store.delete(k).catch(missed)
     else if (entry.day === today.day) daily += storedNumber(await $.store.get(k).catch(missed))
   }
-  const warned = (await read($, budget)).ledgerWarned === true
+  const was = await read($, budget)
+  const tells = isShort && was.dailyCap > 0 && !was.isOff && was.ledgerWarnedFor !== sessionId
   await update($, budget, x => ({
     ...x, sessionId, day: today.day, dayBase: today.dayBase, lastTotal: total, ledgerKey: key, priorForKey: prior, dailySpent: daily,
-    ledgerWarned: x.ledgerWarned === true || isShort,
+    ...(tells ? { ledgerWarnedFor: sessionId } : {}),
   }))
-  if (isShort && !warned) {
+  if (tells) {
     try {
       $.ui.toast(LEDGER_FAILED, { timeoutMs: 10_000 })
     } catch {

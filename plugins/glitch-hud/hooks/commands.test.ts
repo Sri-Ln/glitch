@@ -13,6 +13,7 @@ let sessionId = 's1'
 // While set, the host refuses the plugin's store calls / its state writes.
 let storeFails = false
 let stateRefused = false
+let usageFails = false
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
 // `at` is what the session already cost and what the store already holds.
@@ -24,6 +25,7 @@ const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<strin
   fork = { isAnswered: false, reason: 'nothing-to-fork' }
   storeFails = false
   stateRefused = false
+  usageFails = false
   // Only where a test refuses writes: every write passing a test hook slows the long countdowns.
   if (at.refusable) on('state.set', (_$, e, next) => (stateRefused ? ({ deny: 'state refused' } as never) : next(e)))
   const clock = mock.clock(on, { now: new Date(2026, 9, 12, 10).getTime() })
@@ -49,7 +51,10 @@ const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<strin
     return { value: Object.keys(store) } as never
   })
   mock.env(on, {})
-  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, percent: 10 }, rateLimits: [], cost: { usd } } }) as never)
+  on('session.usage', () => {
+    if (usageFails) throw new Error('usage refused')
+    return { value: { startedAt: 0, context: { window: 1_000_000, percent: 10 }, rateLimits: [], cost: { usd } } } as never
+  })
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: '' } }) as never)
   on('session.cwd', () => ({ value: 'C:\\repo' }) as never)
   on('session.id', () => ({ value: sessionId }) as never)
@@ -318,6 +323,44 @@ test('budget: a store that fails toasts once that today may be incomplete', { op
   await turn($, 3)
   expect(store['ledger:2026-10-12:s1']).toBe(3)
   expect(toasts).toHaveLength(1)
+})
+
+const LEDGER_TOAST = "Glitch: can't read or save the daily spend ledger right now; today's total may be incomplete."
+const COST_TOAST = "Glitch: can't read the session cost right now; budget caps can't be checked until it's back."
+
+test('budget: a failing ledger stays silent without a daily cap', { options: { budgetSession: 10 } }, async ($, on) => {
+  await start($, on)
+  storeFails = true
+  await turn($, 1)
+  expect(toasts).toEqual([])
+})
+
+test('budget: a failing ledger stays silent while caps are off', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await run($, 'budget off')
+  storeFails = true
+  await turn($, 1)
+  expect(toasts).toEqual([])
+  // Caps back on: now it matters, and it is said.
+  await run($, 'budget on')
+  await turn($, 2)
+  expect(toasts).toEqual([LEDGER_TOAST])
+})
+
+test('once per session: a new session id says the failures again', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 1)
+  storeFails = true
+  usageFails = true
+  await turn($, 1.5)
+  await turn($, 2)
+  expect(toasts).toEqual([COST_TOAST, LEDGER_TOAST])
+  // A /clear or a resume goes on under a new id: a new conversation.
+  sessionId = 's2'
+  await turn($, 2.5)
+  expect(toasts).toEqual([COST_TOAST, LEDGER_TOAST, COST_TOAST, LEDGER_TOAST])
+  await turn($, 3)
+  expect(toasts).toHaveLength(4)
 })
 
 test('demo: cache and budget previews', async ($, on) => {
