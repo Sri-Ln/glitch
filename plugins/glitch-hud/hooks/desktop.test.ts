@@ -31,13 +31,26 @@ test('desktop: cache placeholders', async () => {
   expect(text('cache', { ...D, cache: { ...cache, secondsLeft: null } })).toBe('—')
 })
 
-test('desktop: icons carry a tooltip and the level color', async () => {
+test('desktop: icons are fixed-size images in the level color, described by alt', async () => {
   const cost = richPart('cost', { ...D, budget: { ...budget, sessionCap: 3 } }, false).graphic
-  expect(cost?.source).toContain('<title>This turn $0.42 · Session $3.10 · Session cap $3.00</title>')
   expect(cost?.source).toContain(T.alert)
   expect(cost?.alt).toBe('This turn $0.42 · Session $3.10 · Session cap $3.00')
-  expect(richPart('cache', D, false).graphic?.source).toContain('Prompt cache expires in 47:12. Press ↻ to keep it warm.')
+  expect(cost).toMatchObject({ width: 14, height: 14 })
+  expect(richPart('cache', D, false).graphic?.alt).toBe('Prompt cache countdown. Press ↻ to keep it warm.')
   expect(richPart('turn', D, false).graphic).toBeNull()
+})
+
+// A source that changed each second made the desktop redraw (blink) every icon.
+test('desktop: the markup does not change as the countdown ticks', async () => {
+  const at = (secondsLeft: number) => richPart('cache', { ...D, cache: { ...cache, secondsLeft } }, false).graphic
+  expect(at(47 * 60 + 12)).toEqual(at(47 * 60 + 11))
+  expect(at(47 * 60 + 12)?.source).not.toContain('<title>')
+  expect(richPart('context', D, false).graphic?.source).not.toContain('<title>')
+})
+
+test('desktop: a session cap shows beside the cost', async () => {
+  expect(text('cost', { ...D, budget: { ...budget, sessionCap: 5 } })).toBe('$0.42 turn · $3.10 of $5.00 session')
+  expect(text('cost', { ...D, budget: { ...budget, sessionCap: 5, isOff: true } })).toBe('$0.42 turn · $3.10 session')
 })
 
 test('desktop: the daily cap shows in the cost tooltip; an off budget shows no caps', async () => {
@@ -48,7 +61,8 @@ test('desktop: the daily cap shows in the cost tooltip; an off budget shows no c
 
 test('desktop: the context bar fills to the percent; compact drops it', async () => {
   const bar = richPart('context', D, false).graphic
-  expect(bar?.source).toContain('<title>Context 63% full</title>')
+  expect(bar?.alt).toBe('Context 63% full')
+  expect(bar).toMatchObject({ width: 48, height: 8 })
   expect(bar?.source).toContain('<rect width="30" height="8"')
   expect(barSvg(0, '#fff', '#000', 'x').source).not.toContain('fill="#fff"')
   expect(barSvg(1, '#fff', '#000', 'x').source).toContain('<rect width="8" height="8" rx="4" fill="#fff"')
@@ -56,8 +70,7 @@ test('desktop: the context bar fills to the percent; compact drops it', async ()
   expect(richPart('context', D, true).graphic).toBeNull()
 })
 
-test('desktop: markup is escaped and colors are checked', async () => {
-  expect(iconSvg('speed', '#c77dff', 'a <b> & "c"').source).toContain('<title>a &lt;b&gt; &amp; &quot;c&quot;</title>')
+test('desktop: colors are checked before they reach the markup', async () => {
   expect(safeColor('#00e5ff')).toBe('#00e5ff')
   expect(safeColor('cyan')).toBe('cyan')
   expect(safeColor('red"/><script>')).toBe('currentColor')

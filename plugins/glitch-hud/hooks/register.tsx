@@ -315,7 +315,7 @@ export const register: Register = (on, options) => {
         theme: await loadTheme($),
         isWorking: e.props.isWorking || (await read($, cache)).isBusy,
       }
-      // Surfaces with Svg (desktop, VS Code, mobile) get icons, a real bar and tooltips.
+      // Surfaces with Svg (desktop, VS Code, mobile) get icons and a real bar.
       // The desktop shows the branch in its own row, so git is left out there unless
       // the person chose the parts.
       const rich = e.surface !== 'terminal'
@@ -353,7 +353,7 @@ export const register: Register = (on, options) => {
                 const p = richPart(id, data, compactContext && id === 'context')
                 return (
                   <Box key={id} flexDirection="row" flexShrink={0} alignItems="center" columnGap={1}>
-                    {p.graphic ? <Svg source={p.graphic.source} alt={p.graphic.alt} isInteractive /> : null}
+                    {p.graphic ? <Svg source={p.graphic.source} alt={p.graphic.alt} width={p.graphic.width} height={p.graphic.height} /> : null}
                     <Box flexDirection="row">{texts(id, p.segments)}</Box>
                   </Box>
                 )
