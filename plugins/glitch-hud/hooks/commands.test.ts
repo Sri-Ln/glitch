@@ -10,26 +10,44 @@ let toasts: string[] = []
 let store: Record<string, unknown> = {}
 let fork: unknown = { isAnswered: false, reason: 'nothing-to-fork' }
 let sessionId = 's1'
+// While set, the host refuses the plugin's store calls / its state writes.
+let storeFails = false
+let stateRefused = false
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
 // `at` is what the session already cost and what the store already holds.
-const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<string, unknown> } = {}) => {
+const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<string, unknown>; refusable?: boolean } = {}) => {
   usd = at.usd ?? 0
   toasts = []
   store = { ...(at.store ?? {}) }
   sessionId = 's1'
   fork = { isAnswered: false, reason: 'nothing-to-fork' }
+  storeFails = false
+  stateRefused = false
+  // Only where a test refuses writes: every write passing a test hook slows the long countdowns.
+  if (at.refusable) on('state.set', (_$, e, next) => (stateRefused ? ({ deny: 'state refused' } as never) : next(e)))
   const clock = mock.clock(on, { now: new Date(2026, 9, 12, 10).getTime() })
-  on('store.get', (_$, e) => ({ value: store[e.key] }) as never)
+  const refuse = () => {
+    if (storeFails) throw new Error('store refused')
+  }
+  on('store.get', (_$, e) => {
+    refuse()
+    return { value: store[e.key] } as never
+  })
   on('store.set', (_$, e) => {
+    refuse()
     store[e.key] = e.value
     return { value: undefined } as never
   })
   on('store.delete', (_$, e) => {
+    refuse()
     delete store[e.key]
     return { value: undefined } as never
   })
-  on('store.keys', () => ({ value: Object.keys(store) }) as never)
+  on('store.keys', () => {
+    refuse()
+    return { value: Object.keys(store) } as never
+  })
   mock.env(on, {})
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, percent: 10 }, rateLimits: [], cost: { usd } } }) as never)
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: '' } }) as never)
@@ -67,6 +85,9 @@ test('hud: toggles the band and sets parts', async ($, on) => {
   expect(await run($, 'hud')).toBe('Glitch HUD hidden.')
   expect(await run($, 'hud')).toBe('Glitch HUD shown.')
   expect(await run($, 'hud parts cost,cache')).toBe('HUD parts: cost, cache.')
+  expect(await run($, 'hud parts cost, cache')).toBe('HUD parts: cost, cache.')
+  expect(await run($, 'hud parts  turn ,  git ')).toBe('HUD parts: turn, git.')
+  expect(await run($, 'hud parts cost cache')).toBe('Unknown part. Parts: turn, speed, cost, cache, context, git.')
   expect(await run($, 'hud parts cost,bogus')).toBe('Unknown part. Parts: turn, speed, cost, cache, context, git.')
 })
 
@@ -235,6 +256,68 @@ test('auto-warm: the last mark pings once when idle time allows', { options: { a
   fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 200_000, cache_creation_input_tokens: 0 } }
   await clock.advance(55 * 60_000)
   expect(toasts).toEqual(['Glitch: Cache kept warm (200k tokens read from cache). Next expiry in 60:00.'])
+})
+
+test('auto-warm: no ping once the person was idle past autoWarmMaxIdle', { options: { autoWarm: true, autoWarmMaxIdle: 30, notify: 'off' } }, async ($, on) => {
+  on('prompt.submit', () => ({ text: 'hi' }) as never)
+  const clock = await start($, on)
+  await ($.prompt.submit as unknown as (e: unknown) => Promise<unknown>)({ text: 'hi', origin: { kind: 'composer' }, turnId: 't' })
+  await turn($, 0.1)
+  fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 200_000, cache_creation_input_tokens: 0 } }
+  // The last mark (5 min left) comes 55 minutes after the prompt.
+  await clock.advance(55 * 60_000)
+  expect(toasts).toEqual([])
+})
+
+test('auto-warm: no second ping without a prompt between', { timeoutMs: 20_000, options: { autoWarm: true, notify: 'off' } }, async ($, on) => {
+  on('prompt.submit', () => ({ text: 'hi' }) as never)
+  const clock = await start($, on)
+  const submit = () => ($.prompt.submit as unknown as (e: unknown) => Promise<unknown>)({ text: 'hi', origin: { kind: 'composer' }, turnId: 't' })
+  await submit()
+  await turn($, 0.1)
+  fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 200_000, cache_creation_input_tokens: 0 } }
+  await clock.advance(55 * 60_000)
+  expect(toasts).toHaveLength(1)
+  // The ping reset the countdown; its last mark comes again, with no prompt since.
+  await clock.advance(55 * 60_000)
+  expect(toasts).toHaveLength(1)
+  // A prompt of the person's own re-arms it.
+  await submit()
+  await clock.advance(5 * 60_000)
+  expect(toasts).toHaveLength(1)
+  await turn($, 0.2)
+  await clock.advance(55 * 60_000)
+  expect(toasts).toHaveLength(2)
+})
+
+test('budget: lowering the session cap below the spend so far', { options: { budgetSession: 10, budgetBlocksAgents: true } }, async ($, on) => {
+  await start($, on)
+  await turn($, 5)
+  expect(await agent($)).toMatchObject({ result: 'ran' })
+  expect(await run($, 'budget 3')).toBe('Session cap: $3.00.')
+  expect(await run($, 'budget')).toBe('Session $5.00 / $3.00 (167%) · Today $5.00 / off')
+  // Already over: the subagent is refused at once, and the next answer does not toast the crossing again.
+  expect(await agent($)).toMatchObject({ deny: 'Glitch budget cap $3.00 reached (session). Ask the user to raise it with /glitch budget +N.' })
+  await turn($, 5.5)
+  expect(toasts.filter(t => t.includes('cap'))).toEqual([])
+})
+
+test('/glitch: an answer that fails falls through to the hooks beneath', async ($, on) => {
+  await start($, on, { refusable: true })
+  stateRefused = true
+  expect(await run($, 'hud', 'glitch')).toBe('core')
+})
+
+test('budget: a store that fails toasts once that today may be incomplete', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  storeFails = true
+  await turn($, 1)
+  await turn($, 2)
+  expect(toasts).toEqual(["Glitch: can't read or save the daily spend ledger right now; today's total may be incomplete."])
+  storeFails = false
+  await turn($, 3)
+  expect(store['ledger:2026-10-12:s1']).toBe(3)
+  expect(toasts).toHaveLength(1)
 })
 
 test('demo: cache and budget previews', async ($, on) => {

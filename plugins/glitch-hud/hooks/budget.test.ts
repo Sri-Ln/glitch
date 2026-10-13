@@ -25,6 +25,19 @@ test('budget: cost level is the worse cap, demo wins, off is ok', async () => {
   expect(costLevel(B({ sessionCap: 1, isOff: true }), 5)).toBe('ok')
 })
 
+test('budget: cost level follows the daily cap alone when the session cap is off', async () => {
+  expect(costLevel(B({ sessionCap: 0, dailyCap: 10, dailySpent: 10 }), 50)).toBe('over')
+  expect(costLevel(B({ sessionCap: 0, dailyCap: 10, dailySpent: 8 }), 50)).toBe('warn')
+  expect(costLevel(B({ sessionCap: 0, dailyCap: 0, dailySpent: 99 }), 50)).toBe('ok')
+})
+
+// The demo only paints the band: it never refuses a subagent, nor lets one through a cap.
+test('budget: block reason ignores the demo percent', async () => {
+  expect(blockReason(B({ sessionCap: 5, demoPercent: 100 }), 1)).toBeNull()
+  expect(blockReason(B({ demoPercent: 100 }), 1)).toBeNull()
+  expect(blockReason(B({ sessionCap: 5, demoPercent: 0 }), 5)).toBe('Glitch budget cap $5.00 reached (session). Ask the user to raise it with /glitch budget +N.')
+})
+
 test('budget: day keys are local dates', async () => {
   expect(dayKey(at(2026, 10, 12))).toBe('2026-10-12')
   expect(dayKey(at(2026, 1, 5, 0))).toBe('2026-01-05')

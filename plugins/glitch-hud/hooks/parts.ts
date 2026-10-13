@@ -38,6 +38,8 @@ export function segments(id: PartId, d: PartData, compact: boolean): Segment[] {
     case 'speed':
       return [{ text: `${i.speed} `, color: t.info }, { text: s.speed === null ? '—' : `${s.speed} tok/s`, bold: true }]
     case 'cost': {
+      // Unreadable usage: — rather than a number that looks frozen.
+      if (s.isStale) return [{ text: `${i.cost} `, color: t.muted }, { text: '—', bold: true }]
       const color = levelColor(t, costLevel(d.budget, s.total))
       // On the first turn the two read the same: one figure, not a pair.
       const turn = s.turnCost === null ? '—' : usd(s.turnCost)
@@ -55,6 +57,7 @@ export function segments(id: PartId, d: PartData, compact: boolean): Segment[] {
       return [{ text: `${i.cache} `, color }, { text: value, bold: true, ...(level === 'ok' ? {} : { color }) }]
     }
     case 'context': {
+      if (s.isStale) return [{ text: `${i.context} `, color: t.muted }, { text: '—', bold: true }]
       const color = s.context >= 85 ? t.alert : s.context >= 65 ? t.warn : t.info
       return compact
         ? [{ text: `${i.context} `, color }, { text: `${s.context}%`, bold: true }]

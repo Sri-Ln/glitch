@@ -75,7 +75,7 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 | `/glitch` | core | help card: theme and the subcommands each plugin answers |
 | `/glitch theme [name\|default]` | core | list themes, or switch and persist |
 | `/glitch hud` | hud | show or hide the band |
-| `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list without spaces, e.g. `cost,cache,context` |
+| `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list, e.g. `cost,cache,context` or `cost, cache` |
 | `/glitch budget [+N \| N \| off \| on]` | hud | show, raise, set, disable or re-enable this session's caps |
 | `/glitch warm` | hud | keep-warm ping now |
 | `/glitch demo cache <min>` | hud | preview the cache part and warnings at N minutes left |

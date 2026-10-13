@@ -6,7 +6,7 @@ import { DEFAULT_CONFIG } from './config'
 import type { HudConfig } from './config'
 
 export const INITIAL_STATS: Stats = {
-  turn: 0, speed: null, turnCost: null, total: 0, context: 0, costAtStart: 0,
+  turn: 0, speed: null, turnCost: null, total: 0, context: 0, costAtStart: 0, isStale: false, staleWarned: false,
 }
 
 export const INITIAL_CACHE: CacheState = {

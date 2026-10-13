@@ -28,11 +28,27 @@ const MIN_SECONDS = 0.5
 const GIT_EVERY_MS = 30_000
 const ROW_GAP = 2
 
+const COST_UNREADABLE = "Glitch: can't read the session cost right now; budget caps can't be checked until it's back."
+const LEDGER_FAILED = "Glitch: can't read or save the daily spend ledger right now; today's total may be incomplete."
+
+// A failed read marks cost and context stale (the band shows —, not a frozen
+// number) and says so once per session; the next good read clears it.
 export async function refreshUsage($: EngineInterface): Promise<void> {
   const usage = await $.session.usage().catch(() => null)
-  if (!usage) return
+  if (!usage) {
+    const warned = (await read($, stats)).staleWarned === true
+    await update($, stats, s => ({ ...s, isStale: true, staleWarned: true }))
+    if (!warned) {
+      try {
+        $.ui.toast(COST_UNREADABLE, { timeoutMs: 10_000 })
+      } catch {
+        // Nothing else to tell.
+      }
+    }
+    return
+  }
   const total = usage.cost?.usd ?? 0
-  await update($, stats, s => ({ ...s, total, turnCost: s.turn === 0 ? null : total - s.costAtStart, context: usage.context.percent ?? s.context }))
+  await update($, stats, s => ({ ...s, isStale: false, total, turnCost: s.turn === 0 ? null : total - s.costAtStart, context: usage.context.percent ?? s.context }))
 }
 
 // Engine calls handed to the pure helpers: `$` stays in this file.
@@ -84,21 +100,36 @@ export async function recordSpend($: EngineInterface, config: HudConfig): Promis
   const based = rebase(await read($, budget), sessionId, total)
   const today = spendToday(based, total, now)
   const key = ledgerKey(today.day, sessionId)
+  // Any ledger call that fails leaves today's total short: said once per session.
+  let isShort = false
+  const missed = () => {
+    isShort = true
+    return undefined
+  }
   // A key first written by this run may hold an earlier run's spend (a resume): add to it.
-  const prior = key === based.ledgerKey ? based.priorForKey : storedNumber(await $.store.get(key).catch(() => undefined))
+  const prior = key === based.ledgerKey ? based.priorForKey : storedNumber(await $.store.get(key).catch(missed))
   const mine = prior + today.spent
-  await $.store.set(key, mine).catch(() => undefined)
+  await $.store.set(key, mine).catch(missed)
 
   let daily = mine
-  for (const k of await $.store.keys().catch(() => [] as string[])) {
+  for (const k of await $.store.keys().catch(() => (missed(), [] as string[]))) {
     const entry = parseLedgerKey(k)
     if (!entry || k === key) continue
-    if (isExpired(entry.day, now)) await $.store.delete(k).catch(() => undefined)
-    else if (entry.day === today.day) daily += storedNumber(await $.store.get(k).catch(() => undefined))
+    if (isExpired(entry.day, now)) await $.store.delete(k).catch(missed)
+    else if (entry.day === today.day) daily += storedNumber(await $.store.get(k).catch(missed))
   }
+  const warned = (await read($, budget)).ledgerWarned === true
   await update($, budget, x => ({
     ...x, sessionId, day: today.day, dayBase: today.dayBase, lastTotal: total, ledgerKey: key, priorForKey: prior, dailySpent: daily,
+    ledgerWarned: x.ledgerWarned === true || isShort,
   }))
+  if (isShort && !warned) {
+    try {
+      $.ui.toast(LEDGER_FAILED, { timeoutMs: 10_000 })
+    } catch {
+      // The caps below are still checked.
+    }
+  }
 
   const b = await read($, budget)
   if (b.isOff) return
@@ -144,10 +175,11 @@ async function demoCommand($: EngineInterface, what: string | undefined, value: 
 
 // One answer for `/glitch-hud <args>` and the routed `/glitch <args>`.
 async function answerHud($: EngineInterface, config: HudConfig, args: string): Promise<string> {
-  const [sub = '', a, b] = splitArgs(args)
+  const [sub = '', a, b, ...more] = splitArgs(args)
   if (sub === 'hud') {
     if (a === 'parts') {
-      const parts = b ? parseParts(b) : null
+      // `cost, cache` arrives split at the space: the list is the rest of the line.
+      const parts = b ? parseParts([b, ...more].join(' ')) : null
       if (!parts) return `Unknown part. Parts: ${ALL_PARTS.join(', ')}.`
       await update($, view, v => ({ ...v, parts, isHidden: false }))
       return `HUD parts: ${parts.join(', ')}.`
@@ -225,8 +257,9 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', async ($, e, next) => {
-    const total = (await $.session.usage().catch(() => null))?.cost?.usd ?? (await read($, stats)).total
-    await update($, stats, s => ({ ...s, turn: s.turn + 1, costAtStart: total, total, turnCost: 0 }))
+    const usage = await $.session.usage().catch(() => null)
+    const total = usage?.cost?.usd ?? (await read($, stats)).total
+    await update($, stats, s => ({ ...s, turn: s.turn + 1, costAtStart: total, total, turnCost: 0, isStale: usage ? false : s.isStale }))
     await update($, cache, c => ({ ...c, isBusy: true }))
     return next(e)
   })
@@ -270,8 +303,9 @@ export const register: Register = (on, options) => {
       void refreshGit($)
       return result
     } finally {
-      // A turn that threw must not leave the band busy.
-      if (e.agentId === undefined) await update($, cache, c => ({ ...c, isBusy: false }))
+      // A turn that threw must not leave the band busy; a failure here must not
+      // hide the turn's own error.
+      if (e.agentId === undefined) await update($, cache, c => ({ ...c, isBusy: false })).catch(() => undefined)
     }
   })
 
@@ -386,8 +420,9 @@ export const register: Register = (on, options) => {
   // `/glitch hud|budget|warm|demo` reaches this plugin through glitch-core; the host
   // refuses a nested command run, so the answer is given here. Anything else goes on.
   on('command.run', { command: 'glitch-hud' }, async ($, e) => ({ text: await answerHud($, config, e.args) }))
+  // A failed answer falls through to the hooks beneath, as an unknown subcommand does.
   on('command.run', { command: 'glitch' }, async ($, e, next) =>
-    ROUTED.includes(splitArgs(e.args)[0] ?? '') ? { text: await answerHud($, config, e.args) } : next(e))
+    ROUTED.includes(splitArgs(e.args)[0] ?? '') ? { text: await answerHud($, config, e.args) } : next(e)).catch(($, e, next) => next(e))
 
   // The only refusing hook: at a cap, new subagents are refused. A crash in the
   // check lets the call through.
