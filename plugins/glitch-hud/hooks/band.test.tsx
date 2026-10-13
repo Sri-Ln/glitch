@@ -82,18 +82,61 @@ test('band: nothing before the first turn', async ($, on) => {
   expect(await rowText($, 120)).toBe('')
 })
 
-for (const surface of ['terminal', 'desktop'] as const) {
-  test(`band (${surface}): shows turn, cost, cache, context and git after a turn`, async ($, on) => {
-    await session($, on)
-    await turn($, 0.42)
-    const row = await rowText($, 160, surface)
-    expect(row).toContain('#1')
-    expect(row).toContain('$0.42')
-    expect(row).toContain('60:00')
-    expect(row).toContain('63%')
-    expect(row).toContain('main')
-  })
-}
+test('band (terminal): shows turn, cost, cache, context and git after a turn', async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  const row = await rowText($, 160)
+  expect(row).toContain('#1')
+  expect(row).toContain('$0.42')
+  expect(row).not.toContain('│')
+  expect(row).toContain('60:00')
+  expect(row).toContain('63%')
+  expect(row).toContain('main')
+})
+
+// The desktop draws the branch in its own row above the band: git is left out there.
+test('band (desktop): worded values, icons and a bar with tooltips, no git', async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  const row = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('')
+  const svgs = await ui.findAll({ type: 'Svg' })
+  await ui.unmount()
+  expect(row).toContain('Turn 1')
+  expect(row).toContain('$0.42 session')
+  expect(row).toContain('60:00 left')
+  expect(row).toContain('63% context')
+  expect(row).not.toContain('main')
+  expect(svgs.map(x => x.props.alt)).toEqual([
+    'Output speed of the last answer',
+    'Session $0.42',
+    'Prompt cache expires in 60:00. Press ↻ to keep it warm.',
+    'Context 63% full',
+  ])
+  expect(svgs.every(x => x.props.isInteractive === true && String(x.props.source).includes('<title>'))).toBe(true)
+})
+
+test('band (desktop): git shows once the person picks the parts', async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  await $.command.run({ command: 'glitch-hud', args: 'hud parts cost,git' } as never)
+  const row = await rowText($, 160, 'desktop')
+  expect(row).toContain('main')
+  expect(row).not.toContain('Turn')
+})
+
+test('band (desktop): Parts changed in the settings shows git', { options: { parts: 'cache,git' } }, async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  expect(await rowText($, 160, 'desktop')).toContain('main')
+})
+
+test('band (desktop): the second turn shows turn and session cost', async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  await turn($, 0.5)
+  expect(await rowText($, 160, 'desktop')).toContain('$0.08 turn · $0.50 session')
+})
 
 test('band: a 5-minute cache lifetime counts down from 05:00 and warns at its marks', { options: { cacheTtlMinutes: '5', cacheWarnMinutes: '2', notify: 'toast' } }, async ($, on) => {
   const clock = await session($, on)

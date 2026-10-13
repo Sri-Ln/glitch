@@ -11,6 +11,7 @@ import { readGit } from './git'
 import type { RunFn } from './git'
 import { notify, projectName } from './notify'
 import type { NotifyIO } from './notify'
+import { richPart, richWidth } from './desktop'
 import { cellWidth, fitParts, segments } from './parts'
 import type { PartData } from './parts'
 import { toTheme } from './theme'
@@ -314,9 +315,16 @@ export const register: Register = (on, options) => {
         theme: await loadTheme($),
         isWorking: e.props.isWorking || (await read($, cache)).isBusy,
       }
-      const parts = (v.parts ?? config.parts).filter(id => id !== 'git' || data.git !== null)
+      // Surfaces with Svg (desktop, VS Code, mobile) get icons, a real bar and tooltips.
+      // The desktop shows the branch in its own row, so git is left out there unless
+      // the person chose the parts.
+      const rich = e.surface !== 'terminal'
+      const chosen = v.parts !== null || config.partsExplicit
+      const parts = (v.parts ?? config.parts).filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
       const width = (id: (typeof parts)[number], compact: boolean) =>
-        cellWidth(segments(id, data, compact && id === 'context').map(x => x.text).join(''))
+        rich
+          ? richWidth(richPart(id, data, compact && id === 'context'))
+          : cellWidth(segments(id, data, compact && id === 'context').map(x => x.text).join(''))
       // The controls are flex items of the gapped row too: ↻ and × take one cell and
       // a gap each, the spacer a gap. The cache part is never dropped, so ↻ shows
       // exactly when it is asked for here.
@@ -329,23 +337,42 @@ export const register: Register = (on, options) => {
       isDrawn = true
       const below = drawn && typeof drawn === 'object' && (drawn as { type?: string }).type !== 'engine' ? (drawn as RenderNode) : null
 
-      const { Box, Button, Text } = $.ui.resolve(e)
+      const ui = $.ui.resolve(e)
+      const { Box, Button, Text } = ui
+      const texts = (id: string, segs: { text: string; color?: string; bold?: boolean; dim?: boolean }[]) =>
+        segs.map((seg, n) => (
+          <Text key={`${id}-${n}`} color={seg.color} bold={seg.bold} dimColor={seg.dim}>
+            {seg.text}
+          </Text>
+        ))
+      const Svg = 'Svg' in ui ? ui.Svg : null
+      const items = rich && Svg
+        ? [
+            <Box key="glitch-parts" flexDirection="row" flexGrow={1} justifyContent="space-between" columnGap={ROW_GAP} overflow="hidden">
+              {shown.map(id => {
+                const p = richPart(id, data, compactContext && id === 'context')
+                return (
+                  <Box key={id} flexDirection="row" flexShrink={0} alignItems="center" columnGap={1}>
+                    {p.graphic ? <Svg source={p.graphic.source} alt={p.graphic.alt} isInteractive /> : null}
+                    <Box flexDirection="row">{texts(id, p.segments)}</Box>
+                  </Box>
+                )
+              })}
+            </Box>,
+          ]
+        : shown.map(id => (
+            <Box key={id} flexDirection="row" flexShrink={0}>
+              {texts(id, segments(id, data, compactContext && id === 'context'))}
+            </Box>
+          ))
       return (
         <Box flexDirection="column">
-          <Box flexDirection="row" columnGap={ROW_GAP} flexWrap="nowrap" overflow="hidden">
-            {shown.map(id => (
-              <Box key={id} flexDirection="row" flexShrink={0}>
-                {segments(id, data, compactContext && id === 'context').map((seg, n) => (
-                  <Text key={`${id}-${n}`} color={seg.color} bold={seg.bold} dimColor={seg.dim}>
-                    {seg.text}
-                  </Text>
-                ))}
-              </Box>
-            ))}
+          <Box flexDirection="row" columnGap={ROW_GAP} flexWrap="nowrap" overflow="hidden" alignItems="center">
+            {items}
             {showsWarm ? (
               <Button key="glitch-warm" label="↻" plain onPress={async () => $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })} />
             ) : null}
-            <Box flexGrow={1} />
+            {rich && Svg ? null : <Box flexGrow={1} />}
             <Button key="glitch-hide" label="×" plain role="dismiss" dimColor onPress={() => update($, view, x => ({ ...x, isHidden: true }))} />
           </Box>
           {below}

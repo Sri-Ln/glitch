@@ -39,10 +39,11 @@ export function segments(id: PartId, d: PartData, compact: boolean): Segment[] {
       return [{ text: `${i.speed} `, color: t.info }, { text: s.speed === null ? '—' : `${s.speed} tok/s`, bold: true }]
     case 'cost': {
       const color = levelColor(t, costLevel(d.budget, s.total))
+      // On the first turn the two read the same: one figure, not a pair.
+      const turn = s.turnCost === null ? '—' : usd(s.turnCost)
       return [
         { text: `${i.cost} `, color },
-        { text: s.turnCost === null ? '—' : usd(s.turnCost), bold: true, color },
-        { text: ' │ ', dim: true },
+        ...(turn === usd(s.total) ? [] : [{ text: turn, bold: true, color }, { text: ' │ ', dim: true }]),
         { text: usd(s.total), bold: true, color },
       ]
     }

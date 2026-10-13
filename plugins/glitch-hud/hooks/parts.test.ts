@@ -31,6 +31,11 @@ test('parts: placeholders before data, busy and expired cache', async () => {
   expect(segments('git', { ...D, git: null }, false)).toEqual([])
 })
 
+test('parts: the turn cost is left out while it equals the session total (the first turn)', async () => {
+  expect(text('cost', { ...D, stats: { ...stats, turnCost: 3.1 } })).toBe('$ $3.10')
+  expect(text('cost', { ...D, stats: { ...stats, turnCost: 3.098 } })).toBe('$ $3.10')
+})
+
 test('parts: colors follow budget, cache and context levels', async () => {
   const over = { ...D, budget: { ...budget, sessionCap: 3 } }
   expect(segments('cost', over, false).find(s => s.text.includes('$3.10'))?.color).toBe(T.alert)
