@@ -44,6 +44,7 @@ const session = async ($: Engine, on: On, git: string | null = MAIN) => {
     const { Box } = $.ui.resolve(e)
     return <Box />
   })
+  on('command.register', () => ({ value: { command: 'glitch-hud' } }) as never)
   on('session.start', async () => ({ cwd: 'C:\\repo' }) as never)
   await $.session.start({ source: 'startup', cwd: 'C:\\repo', surface: 'terminal', isInteractive: true } as never)
 
