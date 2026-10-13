@@ -2,7 +2,7 @@
   "name": "glitch-hud",
   "version": "0.1.0",
   "description": "Glitch HUD: one band above the prompt with turn, speed, cost and budget, prompt-cache countdown with keep-warm, context and git.",
-  "author": { "name": "Lakshminarayan S", "email": "lakshminarayan.s@northeastern.edu" },
+  "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
   "license": "MIT",
   "types": "./types/index.d.ts",
   "dependencies": ["glitch-core"],
