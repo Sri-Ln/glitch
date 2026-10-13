@@ -2,6 +2,7 @@
 // register.tsx: the load-time scan only follows atoms declared in the file that
 // reads and writes them.
 import type { Budget, CacheState, GitInfo, Stats, View } from '../types'
+import { DEFAULT_CONFIG } from './config'
 import type { HudConfig } from './config'
 
 export const INITIAL_STATS: Stats = {
@@ -23,9 +24,7 @@ export const initialBudget = (config: HudConfig): Budget => ({
   demoPercent: null,
 })
 
-export const INITIAL_BUDGET: Budget = initialBudget({
-  parts: [], budgetSession: 0, budgetDaily: 0, budgetBlocksAgents: false, cacheWarnMinutes: [10, 5], notify: 'windows', autoWarm: false, autoWarmMaxIdle: 120,
-})
+export const INITIAL_BUDGET: Budget = initialBudget(DEFAULT_CONFIG)
 
 export const INITIAL_GIT: GitInfo | null = null
 

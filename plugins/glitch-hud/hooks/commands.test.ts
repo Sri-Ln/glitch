@@ -126,6 +126,13 @@ test('warm: a fork that read the cache resets the deadline', async ($, on) => {
   expect(await run($, 'warm')).toBe('Cache kept warm (200k tokens read from cache). Next expiry in 60:00.')
 })
 
+test('warm: the next expiry follows the cache lifetime setting', { options: { cacheTtlMinutes: '5', cacheWarnMinutes: '2' } }, async ($, on) => {
+  await start($, on)
+  await turn($, 0.1)
+  fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 } }
+  expect(await run($, 'warm')).toBe('Cache kept warm (1k tokens read from cache). Next expiry in 05:00.')
+})
+
 test('warm: an expired cache is said to be re-written', async ($, on) => {
   await start($, on)
   await turn($, 0.1)

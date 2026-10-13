@@ -6,6 +6,22 @@ test('config: defaults when nothing is set', async () => {
   expect(parseConfig({})).toEqual({ config: DEFAULT_CONFIG, problems: [] })
   expect(DEFAULT_CONFIG.parts).toEqual(['turn', 'speed', 'cost', 'cache', 'context', 'git'])
   expect(DEFAULT_CONFIG.cacheWarnMinutes).toEqual([10, 5])
+  expect(DEFAULT_CONFIG.cacheTtlMs).toBe(60 * 60_000)
+})
+
+test('config: a 5-minute cache lifetime drops the marks it can never reach', async () => {
+  const { config, problems } = parseConfig({ cacheTtlMinutes: '5', cacheWarnMinutes: '10,5,3,1' })
+  expect(config.cacheTtlMs).toBe(5 * 60_000)
+  expect(config.cacheWarnMinutes).toEqual([3, 1])
+  expect(problems).toEqual(['cacheWarnMinutes: marks at or above the cache lifetime are ignored'])
+  expect(parseConfig({ cacheTtlMinutes: '5', cacheWarnMinutes: '3' }).problems).toEqual([])
+  expect(parseConfig({ cacheTtlMinutes: 60 }).config.cacheTtlMs).toBe(60 * 60_000)
+})
+
+test('config: an unknown cache lifetime falls back to 60 minutes', async () => {
+  const { config, problems } = parseConfig({ cacheTtlMinutes: '30' })
+  expect(config.cacheTtlMs).toBe(60 * 60_000)
+  expect(problems).toEqual(['cacheTtlMinutes: must be 60 or 5, using 60'])
 })
 
 test('config: parts keep the given order and drop duplicates', async () => {

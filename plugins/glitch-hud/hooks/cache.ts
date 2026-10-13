@@ -1,6 +1,5 @@
 import type { Level } from '../types'
 
-export const CACHE_TTL_MS = 60 * 60 * 1000
 const WARN_S = 20 * 60
 const ALERT_S = 10 * 60
 

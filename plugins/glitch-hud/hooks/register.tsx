@@ -4,7 +4,7 @@ import type { EngineInterface, Register, RenderNode } from 'claude-code'
 import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
 import { blockReason, dailyTotal, dayKey, levelOf, prune, record, spendToday } from './budget'
 import type { Ledger } from './budget'
-import { CACHE_TTL_MS, dueMark, shouldAutoWarm } from './cache'
+import { dueMark, shouldAutoWarm } from './cache'
 import { BUDGET_USAGE, DEMO_USAGE, ROUTED, USAGE, WARM_PROMPT, budgetAlerts, budgetSummary, parseBudgetArg, splitArgs, warmMessage } from './commands'
 import { ALL_PARTS, parseConfig, parseParts } from './config'
 import type { HudConfig } from './config'
@@ -64,14 +64,14 @@ export async function warnCache($: EngineInterface, config: HudConfig, minutes: 
 
 const STORE_LEDGER = 'ledger'
 
-export async function keepWarm($: EngineInterface): Promise<string> {
+export async function keepWarm($: EngineInterface, ttlMs: number): Promise<string> {
   if ((await read($, cache)).isBusy) return 'Claude is working, so the cache is warm already.'
   const reply = await $.model.fork({ prompt: WARM_PROMPT })
   if (reply.isAnswered) {
     const now = await $.clock.now()
-    await update($, cache, c => ({ ...c, expiresAt: now + CACHE_TTL_MS, secondsLeft: CACHE_TTL_MS / 1000, warnedMark: 0, warmedSincePrompt: true }))
+    await update($, cache, c => ({ ...c, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true }))
   }
-  return warmMessage(reply, CACHE_TTL_MS / 1000)
+  return warmMessage(reply, ttlMs / 1000)
 }
 
 // Records today's spend in the cross-session ledger and fires the budget warnings.
@@ -129,7 +129,7 @@ async function demoCommand($: EngineInterface, what: string | undefined, value: 
 }
 
 // One answer for `/glitch-hud <args>` and the routed `/glitch <args>`.
-async function answerHud($: EngineInterface, args: string): Promise<string> {
+async function answerHud($: EngineInterface, config: HudConfig, args: string): Promise<string> {
   const [sub = '', a, b] = splitArgs(args)
   if (sub === 'hud') {
     if (a === 'parts') {
@@ -143,7 +143,7 @@ async function answerHud($: EngineInterface, args: string): Promise<string> {
     return hidden ? 'Glitch HUD hidden.' : 'Glitch HUD shown.'
   }
   if (sub === 'budget') return budgetCommand($, a)
-  if (sub === 'warm') return keepWarm($)
+  if (sub === 'warm') return keepWarm($, config.cacheTtlMs)
   if (sub === 'demo') return demoCommand($, a, b)
   return USAGE
 }
@@ -153,7 +153,7 @@ async function autoWarm($: EngineInterface, config: HudConfig, mark: number): Pr
   if (!config.autoWarm) return
   const c = await read($, cache)
   const ok = shouldAutoWarm({ mark, marks: config.cacheWarnMinutes, now: await $.clock.now(), lastPromptAt: c.lastPromptAt, maxIdleMin: config.autoWarmMaxIdle, warmedSincePrompt: c.warmedSincePrompt })
-  if (ok) $.ui.toast(`Glitch: ${await keepWarm($)}`, { timeoutMs: 8000 })
+  if (ok) $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })
 }
 
 export const register: Register = (on, options) => {
@@ -225,7 +225,7 @@ export const register: Register = (on, options) => {
       await refreshUsage($)
       await recordSpend($, config).catch(() => undefined)
       const now = await $.clock.now()
-      await update($, cache, c => ({ ...c, expiresAt: now + CACHE_TTL_MS, secondsLeft: CACHE_TTL_MS / 1000, warnedMark: 0 }))
+      await update($, cache, c => ({ ...c, expiresAt: now + config.cacheTtlMs, secondsLeft: config.cacheTtlMs / 1000, warnedMark: 0 }))
       await update($, budget, b => ({ ...b, demoPercent: null }))
       void refreshGit($)
       return result
@@ -284,7 +284,7 @@ export const register: Register = (on, options) => {
               </Box>
             ))}
             {shown.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking ? (
-              <Button key="glitch-warm" label="↻" plain onPress={async () => $.ui.toast(`Glitch: ${await keepWarm($)}`, { timeoutMs: 8000 })} />
+              <Button key="glitch-warm" label="↻" plain onPress={async () => $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })} />
             ) : null}
             <Box flexGrow={1} />
             <Button key="glitch-hide" label="×" plain role="dismiss" dimColor onPress={() => update($, view, x => ({ ...x, isHidden: true }))} />
@@ -299,9 +299,9 @@ export const register: Register = (on, options) => {
 
   // `/glitch hud|budget|warm|demo` reaches this plugin through glitch-core; the host
   // refuses a nested command run, so the answer is given here. Anything else goes on.
-  on('command.run', { command: 'glitch-hud' }, async ($, e) => ({ text: await answerHud($, e.args) }))
+  on('command.run', { command: 'glitch-hud' }, async ($, e) => ({ text: await answerHud($, config, e.args) }))
   on('command.run', { command: 'glitch' }, async ($, e, next) =>
-    ROUTED.includes(splitArgs(e.args)[0] ?? '') ? { text: await answerHud($, e.args) } : next(e))
+    ROUTED.includes(splitArgs(e.args)[0] ?? '') ? { text: await answerHud($, config, e.args) } : next(e))
 
   // The only refusing hook: at a cap, new subagents are refused. A crash in the
   // check lets the call through.

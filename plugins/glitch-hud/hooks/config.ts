@@ -8,6 +8,8 @@ export type HudConfig = {
   budgetDaily: number
   budgetBlocksAgents: boolean
   cacheWarnMinutes: number[]
+  /** How long the prompt cache lives after a request: 60 or 5 minutes. */
+  cacheTtlMs: number
   notify: NotifyMode
   autoWarm: boolean
   autoWarmMaxIdle: number
@@ -21,6 +23,7 @@ export const DEFAULT_CONFIG: HudConfig = {
   budgetDaily: 0,
   budgetBlocksAgents: false,
   cacheWarnMinutes: [10, 5],
+  cacheTtlMs: 60 * 60_000,
   notify: 'windows',
   autoWarm: false,
   autoWarmMaxIdle: 120,
@@ -71,10 +74,21 @@ export function parseConfig(o: Record<string, unknown>): { config: HudConfig; pr
     if (b !== null) config[key] = b
     else problems.push(`${key}: must be true or false, using ${DEFAULT_CONFIG[key]}`)
   }
+  if (o.cacheTtlMinutes !== undefined) {
+    const ttl = String(o.cacheTtlMinutes).trim()
+    if (ttl === '60' || ttl === '5') config.cacheTtlMs = Number(ttl) * 60_000
+    else problems.push('cacheTtlMinutes: must be 60 or 5, using 60')
+  }
   if (o.cacheWarnMinutes !== undefined) {
     const marks = typeof o.cacheWarnMinutes === 'string' ? parseMarks(o.cacheWarnMinutes) : null
     if (marks) config.cacheWarnMinutes = marks
     else problems.push(`cacheWarnMinutes: must be minutes between 1 and 59, using ${DEFAULT_CONFIG.cacheWarnMinutes.join(',')}`)
+  }
+  // A mark at or above the lifetime would be due the moment an answer lands.
+  const reachable = config.cacheWarnMinutes.filter(m => m * 60_000 < config.cacheTtlMs)
+  if (reachable.length < config.cacheWarnMinutes.length) {
+    config.cacheWarnMinutes = reachable
+    problems.push('cacheWarnMinutes: marks at or above the cache lifetime are ignored')
   }
   if (o.notify !== undefined) {
     if (o.notify === 'windows' || o.notify === 'toast' || o.notify === 'off') config.notify = o.notify

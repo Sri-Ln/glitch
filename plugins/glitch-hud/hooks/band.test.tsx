@@ -82,6 +82,14 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
+test('band: a 5-minute cache lifetime counts down from 05:00 and warns at its marks', { options: { cacheTtlMinutes: '5', cacheWarnMinutes: '2', notify: 'toast' } }, async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  expect(await rowText($, 160)).toContain('05:00')
+  await clock.advance(3 * 60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 2 min'])
+})
+
 test('band: the countdown ticks and pauses while busy', async ($, on) => {
   const clock = await session($, on)
   await turn($, 0.1)
