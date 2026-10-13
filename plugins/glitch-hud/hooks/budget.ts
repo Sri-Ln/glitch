@@ -58,6 +58,23 @@ export function spendToday(b: Budget, total: number, nowMs: number): { day: stri
   return { day, dayBase, spent: Math.max(0, total - dayBase) }
 }
 
+// The caps from /config, applied again when the plugin reloads with new options; a
+// session cap set with /glitch budget stays. A cap that moved re-arms its warnings
+// from where the spend stands now, as /glitch budget does.
+export function withConfigCaps(b: Budget, c: { budgetSession: number; budgetDaily: number }, sessionSpent: number): Budget {
+  const sessionCap = b.sessionCapOverridden ? b.sessionCap : c.budgetSession
+  const dailyCap = c.budgetDaily
+  return {
+    ...b,
+    sessionCap,
+    dailyCap,
+    notified: {
+      session: sessionCap === b.sessionCap ? b.notified.session : levelOf(sessionSpent, sessionCap),
+      daily: dailyCap === b.dailyCap ? b.notified.daily : levelOf(b.dailySpent, dailyCap),
+    },
+  }
+}
+
 export function blockReason(b: Budget, sessionSpent: number): string | null {
   if (b.isOff) return null
   if (b.sessionCap > 0 && sessionSpent >= b.sessionCap) {

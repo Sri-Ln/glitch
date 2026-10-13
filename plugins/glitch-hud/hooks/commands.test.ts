@@ -78,6 +78,21 @@ test('budget: show, raise, set, off and on', { options: { budgetSession: 5 } }, 
   expect(await run($, 'budget x')).toBe('Usage: /glitch budget [+N | N | off | on]')
 })
 
+test('budget: a cap set with /glitch budget survives a reload', { options: { budgetSession: 5 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 1)
+  await run($, 'budget +2')
+  await $.session.start({ source: 'startup', cwd: 'C:\\repo', surface: 'terminal', isInteractive: true } as never)
+  expect(await run($, 'budget')).toBe('Session $1.00 / $7.00 (14%) · Today $1.00 / off')
+})
+
+test('budget: a reload without an override keeps the settings cap', { options: { budgetSession: 5 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 1)
+  await $.session.start({ source: 'startup', cwd: 'C:\\repo', surface: 'terminal', isInteractive: true } as never)
+  expect(await run($, 'budget')).toBe('Session $1.00 / $5.00 (20%) · Today $1.00 / off')
+})
+
 test('budget: subagents are refused at the cap when asked to', { options: { budgetSession: 1, budgetBlocksAgents: true } }, async ($, on) => {
   await start($, on)
   await turn($, 1.5)

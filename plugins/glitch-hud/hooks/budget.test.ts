@@ -1,12 +1,12 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Budget } from '../types'
-import { blockReason, costLevel, crossed, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, usd, worse } from './budget'
+import { blockReason, costLevel, crossed, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, usd, withConfigCaps, worse } from './budget'
 
 const B = (over: Partial<Budget> = {}): Budget => ({
   sessionCap: 0, dailyCap: 0, isOff: false, day: '2026-10-12', dayBase: 0, dailySpent: 0,
   notified: { session: 'ok', daily: 'ok' }, demoPercent: null,
-  sessionId: 's1', lastTotal: 0, ledgerKey: '', priorForKey: 0, ...over,
+  sessionId: 's1', lastTotal: 0, ledgerKey: '', priorForKey: 0, sessionCapOverridden: false, ...over,
 })
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime()
 
@@ -65,6 +65,17 @@ test('budget: block reason names the cap that was reached', async () => {
   expect(blockReason(B({ sessionCap: 5 }), 5)).toBe('Glitch budget cap $5.00 reached (session). Ask the user to raise it with /glitch budget +N.')
   expect(blockReason(B({ dailyCap: 10, dailySpent: 10 }), 0)).toBe('Glitch budget cap $10.00 reached (daily). Ask the user to run /glitch budget off for this session, or raise budgetDaily in /config.')
   expect(blockReason(B({ sessionCap: 5, isOff: true }), 50)).toBeNull()
+})
+
+test('budget: settings caps apply unless /glitch budget set the session cap', async () => {
+  const caps = { budgetSession: 8, budgetDaily: 20 }
+  expect(withConfigCaps(B({ sessionCap: 5, dailyCap: 10 }), caps, 1)).toMatchObject({ sessionCap: 8, dailyCap: 20 })
+  expect(withConfigCaps(B({ sessionCap: 7, dailyCap: 10, sessionCapOverridden: true }), caps, 1)).toMatchObject({ sessionCap: 7, dailyCap: 20 })
+  // A changed cap starts its warnings from where the spend stands now.
+  const moved = withConfigCaps(B({ sessionCap: 5, dailyCap: 10, dailySpent: 19, notified: { session: 'over', daily: 'over' } }), caps, 6.5)
+  expect(moved.notified).toEqual({ session: 'warn', daily: 'alert' })
+  const same = withConfigCaps(B({ sessionCap: 8, dailyCap: 20, notified: { session: 'ok', daily: 'ok' } }), caps, 7.5)
+  expect(same.notified).toEqual({ session: 'ok', daily: 'ok' })
 })
 
 test('budget: crossed reports only a rise', async () => {

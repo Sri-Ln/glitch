@@ -26,6 +26,7 @@ export const initialBudget = (config: HudConfig): Budget => ({
   lastTotal: 0,
   ledgerKey: '',
   priorForKey: 0,
+  sessionCapOverridden: false,
 })
 
 export const INITIAL_BUDGET: Budget = initialBudget(DEFAULT_CONFIG)

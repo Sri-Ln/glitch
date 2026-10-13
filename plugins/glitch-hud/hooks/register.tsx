@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderNode } from 'claude-code'
 
 import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
-import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday } from './budget'
+import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, withConfigCaps } from './budget'
 import { dueMark, shouldAutoWarm } from './cache'
 import { BUDGET_USAGE, DEMO_USAGE, ROUTED, USAGE, WARM_PROMPT, budgetAlerts, budgetSummary, parseBudgetArg, splitArgs, warmMessage } from './commands'
 import { ALL_PARTS, parseConfig, parseParts } from './config'
@@ -120,7 +120,7 @@ async function budgetCommand($: EngineInterface, arg: string | undefined): Promi
     return parsed.kind === 'off' ? 'Budget caps off for this session.' : 'Budget caps on.'
   }
   const cap = parsed.kind === 'add' ? b.sessionCap + parsed.n : parsed.n
-  await update($, budget, x => ({ ...x, sessionCap: cap, notified: { ...x.notified, session: levelOf(total, cap) } }))
+  await update($, budget, x => ({ ...x, sessionCap: cap, sessionCapOverridden: true, notified: { ...x.notified, session: levelOf(total, cap) } }))
   return `Session cap: $${cap.toFixed(2)}.`
 }
 
@@ -180,11 +180,14 @@ export const register: Register = (on, options) => {
     await refreshGit($)
     // Today's spend counts from this session's total now: a resumed session's
     // earlier cost belongs to the days it was spent on.
+    const total = (await read($, stats)).total
     if ((await read($, budget)).day === '') {
       const now = await $.clock.now()
-      const total = (await read($, stats)).total
       const sessionId = await $.session.id().catch(() => 'session')
       await update($, budget, () => ({ ...initialBudget(config), day: dayKey(now), dayBase: total, lastTotal: total, sessionId }))
+    } else {
+      // A reload (new /config options): the state lived on, the caps follow the settings.
+      await update($, budget, b => withConfigCaps(b, config, total))
     }
 
     $.clock.every(1000, async () => {

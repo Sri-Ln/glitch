@@ -61,6 +61,8 @@ export type Budget = {
   ledgerKey: string
   /** What `ledgerKey` held when this run first wrote it (an earlier run of a resumed session). */
   priorForKey: number
+  /** `/glitch budget +N | N` set the session cap; the settings cap no longer applies. */
+  sessionCapOverridden: boolean
 }
 
 export type GitInfo = { branch: string; changed: number; ahead: number; behind: number }
