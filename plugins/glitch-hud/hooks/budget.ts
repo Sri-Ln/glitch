@@ -52,8 +52,12 @@ export function spendToday(b: Budget, total: number, nowMs: number): { day: stri
 
 export function blockReason(b: Budget, sessionSpent: number): string | null {
   if (b.isOff) return null
-  const hint = 'Ask the user to raise it with /glitch budget +N.'
-  if (b.sessionCap > 0 && sessionSpent >= b.sessionCap) return `Glitch budget cap ${usd(b.sessionCap)} reached (session). ${hint}`
-  if (b.dailyCap > 0 && b.dailySpent >= b.dailyCap) return `Glitch budget cap ${usd(b.dailyCap)} reached (daily). ${hint}`
+  if (b.sessionCap > 0 && sessionSpent >= b.sessionCap) {
+    return `Glitch budget cap ${usd(b.sessionCap)} reached (session). Ask the user to raise it with /glitch budget +N.`
+  }
+  // `/glitch budget +N` moves the session cap only, so the daily cap names what lifts it.
+  if (b.dailyCap > 0 && b.dailySpent >= b.dailyCap) {
+    return `Glitch budget cap ${usd(b.dailyCap)} reached (daily). Ask the user to run /glitch budget off for this session, or raise budgetDaily in /config.`
+  }
   return null
 }

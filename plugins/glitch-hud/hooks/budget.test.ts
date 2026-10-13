@@ -47,7 +47,7 @@ test('budget: crossing midnight starts today at the session total', async () => 
 test('budget: block reason names the cap that was reached', async () => {
   expect(blockReason(B({ sessionCap: 5 }), 4.99)).toBeNull()
   expect(blockReason(B({ sessionCap: 5 }), 5)).toBe('Glitch budget cap $5.00 reached (session). Ask the user to raise it with /glitch budget +N.')
-  expect(blockReason(B({ dailyCap: 10, dailySpent: 10 }), 0)).toBe('Glitch budget cap $10.00 reached (daily). Ask the user to raise it with /glitch budget +N.')
+  expect(blockReason(B({ dailyCap: 10, dailySpent: 10 }), 0)).toBe('Glitch budget cap $10.00 reached (daily). Ask the user to run /glitch budget off for this session, or raise budgetDaily in /config.')
   expect(blockReason(B({ sessionCap: 5, isOff: true }), 50)).toBeNull()
 })
 
