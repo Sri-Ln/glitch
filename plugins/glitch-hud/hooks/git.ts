@@ -2,8 +2,10 @@ import type { GitInfo } from '../types'
 
 export type RunFn = (argv: readonly string[], init: { timeoutMs: number }) => Promise<{ exitCode: number; stdout: string }>
 
-export const GIT_ARGV: readonly string[] = ['git', 'status', '--porcelain=v2', '--branch']
+export const GIT_ARGV: readonly string[] = ['git', '--no-optional-locks', 'status', '--porcelain=v2', '--branch']
 
+// `--no-optional-locks`: the status refresh never takes index.lock, so it cannot
+// race the person's own git commands.
 // `git status --porcelain=v2 --branch`: headers start with `# branch.`, entries
 // with 1 (changed), 2 (renamed), u (unmerged) or ? (untracked); ! is ignored.
 export function parseStatus(stdout: string): GitInfo | null {

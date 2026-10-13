@@ -31,6 +31,7 @@ test('git: readGit hides on failure', async () => {
   }
   expect(await readGit(run)).toBeNull()
   expect(argv).toEqual(GIT_ARGV)
+  expect(GIT_ARGV).toEqual(['git', '--no-optional-locks', 'status', '--porcelain=v2', '--branch'])
 })
 
 test('git: readGit parses a good run', async () => {
