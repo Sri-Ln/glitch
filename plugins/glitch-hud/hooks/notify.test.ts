@@ -50,9 +50,16 @@ test('notify: the PowerShell script escapes quotes and XML', async () => {
   expect(script).toContain('ToastNotificationManager')
 })
 
+test('notify: Unicode single quotes are doubled too', async () => {
+  const script = toastArgv('Bob’s app', 'x')[6] ?? ''
+  expect(script).toContain('Bob’’s app')
+})
+
 test('notify: windows toast first on Windows', async () => {
-  const { $ } = stubEngine({ env: { OS: 'Windows_NT' }, run: () => ({ exitCode: 0, stdout: '', stderr: '' }) })
+  const { $, calls } = stubEngine({ env: { OS: 'Windows_NT' }, run: () => ({ exitCode: 0, stdout: '', stderr: '' }) })
   expect(await notify($, 'windows', 'proj — Glitch', 'Prompt cache expires in 5 min')).toBe('windows')
+  expect(calls.run).toBe(1)
+  expect(calls.notify).toBe(0)
 })
 
 test('notify: falls back to Claude Code, then a toast', async () => {
@@ -62,6 +69,8 @@ test('notify: falls back to Claude Code, then a toast', async () => {
     notify: () => ({ isSent: false, reason: 'no-channel' }),
   })
   expect(await notify($, 'windows', 'proj — Glitch', 'Cache 5 min')).toBe('toast')
+  expect(calls.run).toBe(1)
+  expect(calls.notify).toBe(1)
   expect(calls.toasts).toEqual(['proj — Glitch: Cache 5 min'])
 })
 
@@ -77,4 +86,6 @@ test('notify: off and toast modes', async () => {
   expect(calls.toasts).toEqual([])
   expect(await notify($, 'toast', 't', 'm')).toBe('toast')
   expect(calls.toasts).toEqual(['t: m'])
+  expect(calls.run).toBe(0)
+  expect(calls.notify).toBe(0)
 })

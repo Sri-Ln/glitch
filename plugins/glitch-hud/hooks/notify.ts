@@ -8,7 +8,7 @@ export const projectName = (cwd: string): string => cwd.split(/[\\/]/).filter(Bo
 const POWERSHELL_APP_ID = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'
 
 const xml = (s: string): string => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c)
-const quoted = (s: string): string => `'${s.replace(/'/g, "''")}'`
+const quoted = (s: string): string => `'${s.replace(/['‘’‚‛]/g, m => m + m)}'`
 
 export function toastArgv(title: string, message: string): string[] {
   const toast = `<toast><visual><binding template="ToastGeneric"><text>${xml(title)}</text><text>${xml(message)}</text></binding></visual></toast>`
