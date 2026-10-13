@@ -15,6 +15,7 @@ test('themes: a known name resolves to that theme', async () => {
 test('themes: an unknown name falls back and says why', async () => {
   const r = resolveTheme('vaporwave', '')
   expect(r.theme.name).toBe('glitch')
+  expect(resolveTheme('constructor', '').problems).toEqual(['unknown theme "constructor", using glitch'])
   expect(r.problems).toEqual(['unknown theme "vaporwave", using glitch'])
 })
 

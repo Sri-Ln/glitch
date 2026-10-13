@@ -23,7 +23,7 @@ export function resolveTheme(name: string | undefined, custom: string | undefine
   const problems: string[] = []
   let base = THEMES[DEFAULT_THEME] as Theme
   if (name) {
-    const known = THEMES[name]
+    const known = Object.hasOwn(THEMES, name) ? THEMES[name] : undefined
     if (known) base = known
     else problems.push(`unknown theme "${name}", using ${DEFAULT_THEME}`)
   }
