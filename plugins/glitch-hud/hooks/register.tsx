@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderNode } from 'claude-code'
+import type { EngineInterface, Register, RenderNode, Timer } from 'claude-code'
 
 import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
 import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, withConfigCaps } from './budget'
@@ -172,6 +172,9 @@ async function autoWarm($: EngineInterface, config: HudConfig, mark: number): Pr
 
 export const register: Register = (on, options) => {
   const { config, problems } = parseConfig(options as Record<string, unknown>)
+  // session.start fires again in the same load (compact, resume, fork): the
+  // timers of the earlier start are stopped before new ones begin.
+  let timers: Timer[] = []
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -196,8 +199,9 @@ export const register: Register = (on, options) => {
       await update($, budget, b => withConfigCaps(b, config, total))
     }
 
+    for (const t of timers) t.cancel()
     // Each tick catches its own failure: one rejection must never end the interval.
-    $.clock.every(1000, async () => {
+    const countdown = $.clock.every(1000, async () => {
       try {
         const c = await read($, cache)
         if (c.expiresAt === null) return
@@ -214,13 +218,14 @@ export const register: Register = (on, options) => {
       }
     })
 
-    $.clock.every(GIT_EVERY_MS, async () => {
+    const gitTick = $.clock.every(GIT_EVERY_MS, async () => {
       try {
         if (!(await read($, cache)).isBusy) await refreshGit($)
       } catch {
         // The next refresh tries again.
       }
     })
+    timers = [countdown, gitTick]
     return started
   })
 
