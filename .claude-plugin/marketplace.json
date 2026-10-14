@@ -4,7 +4,7 @@
   "metadata": { "description": "Glitch: a kit of Claude Code mods — themes, a session HUD, budget guard, cache keeper and pixel pets." },
   "plugins": [
     { "name": "glitch-core", "source": "./plugins/glitch-core", "description": "Shared themes and the /glitch command.", "version": "0.2.0", "category": "mod" },
-    { "name": "glitch-hud", "source": "./plugins/glitch-hud", "description": "Band above the prompt: turn, speed, cost and budget, cache countdown with keep-warm, context, git.", "version": "0.3.2", "category": "mod" },
+    { "name": "glitch-hud", "source": "./plugins/glitch-hud", "description": "Band above the prompt: turn, speed, cost and budget, cache countdown with keep-warm, context, git.", "version": "0.4.0", "category": "mod" },
     { "name": "glitch-pets", "source": "./plugins/glitch-pets", "description": "Pick a pixel pet for the HUD: moods, a signature motion, short remarks.", "version": "0.1.0", "category": "mod" }
   ]
 }

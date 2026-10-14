@@ -12,6 +12,8 @@ import type { RunFn } from './git'
 import { notify, projectName } from './notify'
 import type { NotifyIO } from './notify'
 import { richPart, richWidth } from './desktop'
+import { PET_CELLS, isSprite } from './pet'
+import type { PetSprite } from './pet'
 import { cellWidth, fitParts, segments } from './parts'
 import type { PartData } from './parts'
 import { toTheme } from './theme'
@@ -47,6 +49,16 @@ const engineIO = ($: EngineInterface): NotifyIO => ({
   notifyClaude: (text, options) => $.ui.notify(text, options),
   toast: (text, options) => $.ui.toast(text, options),
 })
+
+// The pet glitch-pets publishes, if it is installed and on; anything malformed is no pet.
+const loadPet = async ($: EngineInterface): Promise<PetSprite | null> => {
+  try {
+    const v = (await $.state.get({ plugin: 'glitch-pets', key: 'sprite' } as never)) as { value?: unknown }
+    return isSprite(v?.value) ? v.value : null
+  } catch {
+    return null
+  }
+}
 
 const loadTheme = async ($: EngineInterface) => {
   try {
@@ -354,6 +366,8 @@ export const register: Register = (on, options) => {
       // The desktop shows the branch in its own row and the conversation above, so
       // git and the turn count are left out there unless the person chose the parts.
       const rich = e.surface !== 'terminal'
+      // The pet sits at the row's end on surfaces that draw images.
+      const pet = rich ? await loadPet($) : null
       const chosen = v.parts !== null || config.partsExplicit
       const parts = (v.parts ?? config.parts)
         .filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
@@ -366,7 +380,7 @@ export const register: Register = (on, options) => {
       // a gap each, the spacer a gap. The cache part is never dropped, so ↻ shows
       // exactly when it is asked for here.
       const showsWarm = parts.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking
-      const reserve = (showsWarm ? (rich ? 1 + 2 * WARM_PAD : 1) + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP)
+      const reserve = (showsWarm ? (rich ? 1 + 2 * WARM_PAD : 1) + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP) + (pet ? PET_CELLS + ROW_GAP : 0)
       const { shown, compact } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
 
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
@@ -416,6 +430,11 @@ export const register: Register = (on, options) => {
             {items}
             {/* One glyph: the desktop draws a Button as a native button with its whole
                 label, so a long label over an icon showed as cut-off text. */}
+            {pet && Svg ? (
+              <Box key="glitch-pet" flexShrink={0} alignItems="flex-end">
+                <Svg source={pet.source} alt={pet.alt} width={pet.width} height={pet.height} />
+              </Box>
+            ) : null}
             {showsWarm ? (
               rich ? (
                 // The desktop draws the glyph flush against its neighbours: a cell each side.
