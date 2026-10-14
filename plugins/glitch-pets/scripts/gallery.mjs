@@ -11,14 +11,17 @@ const personas = []
 for (const id of IDS) {
   try {
     personas.push((await import(`../hooks/personas/${id}.ts`)).default)
-  } catch {
-    // Not drawn yet.
+  } catch (err) {
+    // A persona whose file does not exist yet is silently skipped; any other failure is named.
+    const missing = err?.code === 'ERR_MODULE_NOT_FOUND' && new RegExp(`Cannot find module '[^']*personas[\\\\/]${id}\\.ts'`).test(String(err.message))
+    if (!missing) console.error(`skipped ${id}: ${err?.message ?? err}`)
   }
 }
 
 const out = resolve(process.argv[2] ?? '.superpowers/gallery/pets.html')
 const cell = (p, mood) => {
   const art = p.moods[mood]
+  if (!art) return '<td>missing</td>'
   const frames = art.frames.map(f => frameSvg(p.palette, f, 4))
   return `<td><div class="anim" data-fps="${art.fps}">${frames.map((s, i) => `<span${i ? ' hidden' : ''}>${s}</span>`).join('')}</div><div class="cap">${mood} · ${art.frames.length}f · ${art.fps}fps</div></td>`
 }
