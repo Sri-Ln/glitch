@@ -18,7 +18,8 @@ const MAIN = '# branch.oid abc\n# branch.head main\n'
 const STEP_RESULT = { turnId: 't', index: 0, answer: 'hi', toolUses: [] }
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
-const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { registerFails?: boolean } = {}) => {
+// `opts.store` seeds the plugin's store (another session's ledger entry, say).
+const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { registerFails?: boolean; store?: Record<string, unknown> } = {}) => {
   usd = 0
   toasts = []
   gitOut = git
@@ -34,7 +35,19 @@ const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { reg
   })
   on('session.cwd', () => ({ value: 'C:\\repo' }) as never)
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
-  mock.store(on)
+  const seeded = opts.store
+  if (seeded) {
+    on('store.get', (_$, e) => ({ value: seeded[e.key] }) as never)
+    on('store.set', (_$, e) => {
+      seeded[e.key] = e.value
+      return { value: undefined } as never
+    })
+    on('store.delete', (_$, e) => {
+      delete seeded[e.key]
+      return { value: undefined } as never
+    })
+    on('store.keys', () => ({ value: Object.keys(seeded) }) as never)
+  } else mock.store(on)
   mock.env(on, { OS: 'Windows_NT' })
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, tokens: 630_000, percent: 63 }, rateLimits: [], cost: { usd } } }) as never)
   on('process.run', () => ({ value: gitOut === null ? { exitCode: 128, stdout: '', stderr: '' } : { exitCode: 0, stdout: gitOut, stderr: '' } }) as never)
@@ -87,7 +100,7 @@ test('band (terminal): shows turn, cost, cache, context and git after a turn', a
   await turn($, 0.42)
   const row = await rowText($, 160)
   expect(row).toContain('#1')
-  expect(row).toContain('$0.42')
+  expect(row).toContain('$ 0.42 session · 0.42 today')
   expect(row).not.toContain('│')
   expect(row).toContain('60:00')
   expect(row).toContain('63%')
@@ -109,7 +122,7 @@ test('band (desktop): worded values, fixed-size icons and a bar, no git', async 
   expect(row).not.toContain('main')
   expect(svgs.map(x => x.props.alt)).toEqual([
     'Output speed of the last answer',
-    'Session $0.42',
+    'Session $0.42 · Today on this machine $0.42',
     'Prompt cache countdown. Press ↻ to keep it warm.',
     'Context 63% full',
   ])
@@ -133,11 +146,36 @@ test('band (desktop): Parts changed in the settings shows git', { options: { par
   expect(await rowText($, 160, 'desktop')).toContain('main')
 })
 
-test('band (desktop): the second turn shows turn and session cost', async ($, on) => {
+test('band (desktop): the second turn shows the reply, session and today cost', async ($, on) => {
   await session($, on)
   await turn($, 0.42)
   await turn($, 0.5)
-  expect(await rowText($, 160, 'desktop')).toContain('$0.08 turn · $0.50 session')
+  expect(await rowText($, 160, 'desktop')).toContain('$0.08 reply · $0.50 session · $0.50 today')
+})
+
+test('band: today counts another session on this machine from the first turn', async ($, on) => {
+  await session($, on, MAIN, { store: { 'ledger:2026-10-12:other': 18 } })
+  await turn($, 0.42)
+  expect(await rowText($, 160)).toContain('0.42 session · 18.42 today')
+})
+
+test('band: /glitch hud cost picks the figures and their order', async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  await turn($, 0.5)
+  expect(await $.command.run({ command: 'glitch-hud', args: 'hud cost today,reply' } as never)).toEqual({ text: 'HUD cost: today, reply.' })
+  const row = await rowText($, 160)
+  expect(row).toContain('$ 0.50 today · 0.08 reply')
+  expect(row).not.toContain('session')
+})
+
+test('band: Cost shows in the settings picks the figures', { options: { costShows: 'session' } }, async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  await turn($, 0.5)
+  const row = await rowText($, 160)
+  expect(row).toContain('$ 0.50 session')
+  expect(row).not.toContain('today')
 })
 
 test('band: a 5-minute cache lifetime counts down from 05:00 and warns at its marks', { options: { cacheTtlMinutes: '5', cacheWarnMinutes: '2', notify: 'toast' } }, async ($, on) => {

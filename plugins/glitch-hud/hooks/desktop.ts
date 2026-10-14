@@ -6,10 +6,10 @@
 // with its color or fill, never with the clock, so a redraw each second reuses it.
 // No hover tooltips: an interactive Svg is a frame of its own, which the desktop
 // drew far taller than the row and rebuilt on every tick.
-import type { PartId } from '../types'
-import { costLevel, usd } from './budget'
+import type { CostScope, PartId } from '../types'
+import { costLevel, todaySpent, usd } from './budget'
 import { cacheLevel, clockText } from './cache'
-import { cellWidth, levelColor } from './parts'
+import { cellWidth, costFigures, levelColor } from './parts'
 import type { PartData, Segment } from './parts'
 
 export type Graphic = { source: string; alt: string; width: number; height: number; cells: number }
@@ -66,14 +66,21 @@ export const barSvg = (percent: number, color: string, track: string, alt: strin
   }
 }
 
+// The cap a figure is held to, when the budget is on: none for a reply.
+const capOf = (d: PartData, scope: CostScope): number =>
+  d.budget.isOff ? 0 : scope === 'session' ? d.budget.sessionCap : scope === 'today' ? d.budget.dailyCap : 0
+
+const ofCap = (d: PartData, scope: CostScope): string => (capOf(d, scope) > 0 ? ` of ${usd(capOf(d, scope))}` : '')
+
+// Every figure, whichever the band shows: the tooltip is where they are spelled out.
 export function costTip(d: PartData): string {
   const s = d.stats
-  const b = d.budget
-  const showsTurn = s.turnCost !== null && usd(s.turnCost) !== usd(s.total)
-  const parts = [showsTurn ? `This turn ${usd(s.turnCost as number)}` : null, `Session ${usd(s.total)}`]
-  if (!b.isOff && b.sessionCap > 0) parts.push(`Session cap ${usd(b.sessionCap)}`)
-  if (!b.isOff && b.dailyCap > 0) parts.push(`Today ${usd(b.dailySpent)} of ${usd(b.dailyCap)}`)
-  return parts.filter(Boolean).join(' · ')
+  const showsReply = s.turnCost !== null && usd(s.turnCost) !== usd(s.total)
+  return [
+    showsReply ? `${d.isWorking ? 'This' : 'Last'} reply ${usd(s.turnCost as number)}` : null,
+    `Session ${usd(s.total)}${ofCap(d, 'session')}`,
+    `Today on this machine ${usd(todaySpent(d.budget, s.total))}${ofCap(d, 'today')}`,
+  ].filter(Boolean).join(' · ')
 }
 
 export function cacheTip(d: PartData): string {
@@ -98,17 +105,17 @@ export function richPart(id: PartId, d: PartData, compact: boolean): RichPart {
         segments: [{ text: s.speed === null ? '—' : String(s.speed), bold: true }, { text: ' tok/s', dim: true }],
       }
     case 'cost': {
+      // Compact keeps the figures alone; the tooltip still names them.
       const color = levelColor(t, costLevel(d.budget, s.total))
-      const showsTurn = s.turnCost !== null && usd(s.turnCost) !== usd(s.total)
-      const capped = !d.budget.isOff && d.budget.sessionCap > 0
       return {
         graphic: iconSvg('cost', color, costTip(d)),
-        segments: [
-          ...(showsTurn ? [{ text: usd(s.turnCost as number), bold: true, color }, { text: ' turn · ', dim: true }] : []),
-          { text: usd(s.total), bold: true, color },
-          ...(capped ? [{ text: ' of ', dim: true }, { text: usd(d.budget.sessionCap), color }] : []),
-          { text: ' session', dim: true },
-        ],
+        segments: costFigures(d).flatMap((f, n): Segment[] => [
+          ...(n > 0 ? [{ text: ' · ', dim: true }] : []),
+          { text: usd(f.value), bold: true, color },
+          ...(compact
+            ? []
+            : [...(capOf(d, f.scope) > 0 ? [{ text: ' of ', dim: true }, { text: usd(capOf(d, f.scope)), color }] : []), { text: ` ${f.scope}`, dim: true }]),
+        ]),
       }
     }
     case 'cache': {

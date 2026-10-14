@@ -33,4 +33,4 @@ export const INITIAL_BUDGET: Budget = initialBudget(DEFAULT_CONFIG)
 
 export const INITIAL_GIT: GitInfo | null = null
 
-export const INITIAL_VIEW: View = { isHidden: false, parts: null }
+export const INITIAL_VIEW: View = { isHidden: false, parts: null, cost: null }
