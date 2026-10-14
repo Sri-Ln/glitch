@@ -95,7 +95,7 @@ test('band (terminal): shows turn, cost, cache, context and git after a turn', a
 })
 
 // The desktop draws the branch in its own row above the band: git is left out there.
-test('band (desktop): worded values, icons and a bar with tooltips, no git', async ($, on) => {
+test('band (desktop): worded values, fixed-size icons and a bar, no git', async ($, on) => {
   await session($, on)
   await turn($, 0.42)
   const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
@@ -110,10 +110,12 @@ test('band (desktop): worded values, icons and a bar with tooltips, no git', asy
   expect(svgs.map(x => x.props.alt)).toEqual([
     'Output speed of the last answer',
     'Session $0.42',
-    'Prompt cache expires in 60:00. Press ↻ to keep it warm.',
+    'Prompt cache countdown. Press ↻ to keep it warm.',
     'Context 63% full',
   ])
-  expect(svgs.every(x => x.props.isInteractive === true && String(x.props.source).includes('<title>'))).toBe(true)
+  // Plain images at a set size: an interactive Svg drew as a tall frame on the desktop.
+  expect(svgs.every(x => x.props.isInteractive === undefined && typeof x.props.width === 'number' && typeof x.props.height === 'number')).toBe(true)
+  expect(svgs.map(x => x.props.height)).toEqual([14, 14, 14, 8])
 })
 
 test('band (desktop): git shows once the person picks the parts', async ($, on) => {
