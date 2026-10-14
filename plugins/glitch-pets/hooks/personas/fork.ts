@@ -105,6 +105,7 @@ const fork: Persona = {
     crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 7, y: 1 },
+  laptopPaw: 'o',
   voice: {
     happy: ['Done! All eight arms agree.', 'Finished, and filed in order.', 'Task complete. Next on the list?'],
     worried: ['Budget at 90%: time to prioritise.', 'The cache expires soon. Plan ahead.', 'Resources are tight. Let’s reorganise.'],

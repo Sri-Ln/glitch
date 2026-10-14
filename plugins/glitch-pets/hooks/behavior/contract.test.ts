@@ -13,6 +13,7 @@ const good = (): Persona => ({
   palette: { a: '#112233' },
   moods: Object.fromEntries(MOOD_IDS.map(m => [m, { frames: [F, F], fps: 2 }])) as unknown as Persona['moods'],
   hatAnchor: { x: 8, y: 2 },
+  laptopPaw: 'a',
   voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['one', 'two', 'three']])) as unknown as Persona['voice'],
 })
 
@@ -47,4 +48,19 @@ test('voice lists need 3 to 5 lines and fps must be positive', () => {
 
 test('the hat anchor must be inside the grid', () => {
   expect(personaProblems({ ...good(), hatAnchor: { x: 16, y: 0 } }).join()).toContain('hatAnchor')
+})
+
+test('a persona may not use a laptop palette key of its own', () => {
+  const p = good()
+  expect(personaProblems({ ...p, palette: { ...p.palette, '4': '#000000' } }).join()).toContain('reserved for the laptop')
+})
+
+test('the laptop paw must be a palette key', () => {
+  expect(personaProblems({ ...good(), laptopPaw: 'z' }).join()).toContain('laptopPaw')
+})
+
+test('a composed persona (with the laptop palette) passes when told so', () => {
+  const p = good()
+  const composed = { ...p, palette: { ...p.palette, '4': '#000000' } }
+  expect(personaProblems(composed, { composed: true })).toEqual([])
 })

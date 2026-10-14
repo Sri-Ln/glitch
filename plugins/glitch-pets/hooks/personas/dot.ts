@@ -105,6 +105,7 @@ const dot: Persona = {
     crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 7, y: 2 },
+  laptopPaw: 'k',
   voice: {
     happy: ['All done, nicely done!', 'Finished, and so neat!', 'Lovely work, all wrapped up.'],
     worried: ['The budget is nearly full, careful.', 'The cache is almost out, just so you know.', 'Let’s slow down a little, okay?'],

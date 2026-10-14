@@ -12,6 +12,7 @@ const persona: Persona = {
   palette: { a: '#ff0000', b: '#00ff00' },
   moods: Object.fromEntries(MOOD_IDS.map(m => [m, { frames: [A, B], fps: 4 }])) as unknown as Persona['moods'],
   hatAnchor: { x: 8, y: 1 },
+  laptopPaw: 'a',
   voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['a', 'b', 'c']])) as unknown as Persona['voice'],
 }
 

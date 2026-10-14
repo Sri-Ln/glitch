@@ -5,11 +5,14 @@ import { GRID, MOOD_IDS, VOICE_MOMENTS } from './types'
 
 const HEX = /^#[0-9a-f]{6}$/i
 const RESERVED = ['1', '2', '3']
+const LAPTOP_KEYS = ['4', '6', '7']
 
-export function personaProblems(p: Persona): string[] {
+/** `composed`: the persona already went through withLaptop, so it holds the laptop's keys by design. */
+export function personaProblems(p: Persona, opts: { composed?: boolean } = {}): string[] {
   const out: string[] = []
   for (const [key, color] of Object.entries(p.palette)) {
     if (RESERVED.includes(key)) out.push(`palette key "${key}" is reserved for hats`)
+    if (!opts.composed && LAPTOP_KEYS.includes(key)) out.push(`palette key "${key}" is reserved for the laptop`)
     if (key === '.' || key.length !== 1) out.push(`palette key "${key}" must be one char other than "."`)
     if (!HEX.test(color)) out.push(`palette "${key}" must be #rrggbb, got ${color}`)
   }
@@ -33,6 +36,7 @@ export function personaProblems(p: Persona): string[] {
     const lines = p.voice[moment]
     if (!lines || lines.length < 3 || lines.length > 5) out.push(`voice ${moment} needs 3 to 5 lines`)
   }
+  if (!(p.laptopPaw in p.palette)) out.push(`laptopPaw "${p.laptopPaw}" is not in the palette`)
   const { x, y } = p.hatAnchor
   if (!(x >= 0 && x < GRID.width && y >= 0 && y < GRID.height)) out.push('hatAnchor must be inside the 16 × 13 grid')
   return out

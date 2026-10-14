@@ -109,6 +109,7 @@ const blob: Persona = {
     crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 7, y: 3 },
+  laptopPaw: 'p',
   voice: {
     happy: ['Wheee! Done!', 'Bloop! That worked!', 'Squish-tastic, all finished!'],
     worried: ['Eep, budget is getting big!', 'Uh-oh, the cache is almost gone!', 'Wobble wobble, careful now!'],

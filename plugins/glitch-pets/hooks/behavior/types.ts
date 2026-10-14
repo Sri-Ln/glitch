@@ -26,11 +26,13 @@ export type Persona = {
   kind: string
   /** One line, for the gallery and the README. */
   temperament: string
-  /** Palette key → #rrggbb. The keys 1, 2 and 3 are reserved for crew hats. */
+  /** Palette key → #rrggbb. Keys 1, 2, 3 are reserved for crew hats; 4, 6, 7 for the laptop. */
   palette: Readonly<Record<string, string>>
   moods: Readonly<Record<MoodId, MoodArt>>
   /** Top-center of the head, where a crew hat's brim sits (x 0–15, y 0–12). */
   hatAnchor: { x: number; y: number }
+  /** Palette key of the pet's paw or body color; the laptop's typing paws use it. */
+  laptopPaw: string
   /** 3–5 lines per moment, in this pet's own voice. */
   voice: Readonly<Record<VoiceMoment, readonly string[]>>
 }

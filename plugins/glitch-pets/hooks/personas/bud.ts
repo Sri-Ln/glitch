@@ -108,6 +108,7 @@ const bud: Persona = {
     crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 7, y: 0 },
+  laptopPaw: 'b',
   voice: {
     happy: ['Done! Again? Again?', 'We did it! Good job, us!', 'Finished! Can we do another?'],
     worried: ['Uh oh, the budget’s almost full!', 'The cache is going away soon!', 'I’m a little nervous, are you?'],

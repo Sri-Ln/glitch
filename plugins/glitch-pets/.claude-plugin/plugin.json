@@ -1,6 +1,6 @@
 {
   "name": "glitch-pets",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Glitch pets: pick one of six pixel critters; it sits at the end of the HUD row, shows moods and says a word now and then.",
   "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
   "license": "MIT",

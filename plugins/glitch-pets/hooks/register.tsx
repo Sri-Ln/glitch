@@ -27,7 +27,7 @@ const LONG_TURN_MS = 120_000
 const SPEAKS_ON_ENTRY: Partial<Record<MoodId, VoiceMoment>> = { worried: 'worried', sleepy: 'sleepy', oops: 'oops', cheering: 'cheering', crying: 'crying' }
 
 // Pets that break the contract are left out (named once at start).
-const usable = Object.fromEntries(Object.entries(PERSONAS).filter(([, p]) => p && personaProblems(p).length === 0)) as Partial<Record<PetId, Persona>>
+const usable = Object.fromEntries(Object.entries(PERSONAS).filter(([, p]) => p && personaProblems(p, { composed: true }).length === 0)) as Partial<Record<PetId, Persona>>
 const broken = (Object.keys(PERSONAS) as PetId[]).filter(id => !usable[id])
 const available = PET_IDS.filter(id => usable[id])
 const personaFor = (id: PetId | 'off'): Persona | null => (id === 'off' ? null : (usable[id] ?? usable.screenhead ?? null))

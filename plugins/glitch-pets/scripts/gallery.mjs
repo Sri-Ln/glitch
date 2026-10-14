@@ -5,12 +5,13 @@ import { dirname, resolve } from 'node:path'
 
 import { MOOD_IDS } from '../hooks/behavior/types.ts'
 import { frameSvg } from '../hooks/behavior/player.ts'
+import { withLaptop } from '../hooks/behavior/laptop.ts'
 
 const IDS = ['screenhead', 'blob', 'pixel', 'dot', 'fork', 'bud']
 const personas = []
 for (const id of IDS) {
   try {
-    personas.push((await import(`../hooks/personas/${id}.ts`)).default)
+    personas.push(withLaptop((await import(`../hooks/personas/${id}.ts`)).default))
   } catch (err) {
     // A persona whose file does not exist yet is silently skipped; any other failure is named.
     const missing = err?.code === 'ERR_MODULE_NOT_FOUND' && new RegExp(`Cannot find module '[^']*personas[\\\\/]${id}\\.ts'`).test(String(err.message))

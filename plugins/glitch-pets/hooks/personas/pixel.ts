@@ -107,6 +107,7 @@ const pixel: Persona = {
     crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 6, y: 3 },
+  laptopPaw: 'v',
   voice: {
     happy: ['Done. Obviously.', 'Finished. You may admire me.', 'There. Purrfect, as usual.'],
     worried: ['The budget is getting hairy.', 'Cache is about to go cold. Typical.', 'I am not worried. You should be.'],

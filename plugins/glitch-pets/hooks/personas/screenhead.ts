@@ -104,6 +104,7 @@ const screenhead: Persona = {
     crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 7, y: 2 },
+  laptopPaw: 'f',
   voice: {
     happy: ['Task complete. Output: tidy.', 'Done. All tests green on my screen.', 'Finished. Logging a small celebration.'],
     worried: ['Budget at 90%. Recommending caution.', 'Cache expires in under a minute.', 'Warning: resources running low.'],

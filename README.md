@@ -59,9 +59,9 @@ With a 5-minute lifetime, warning marks at or above 5 can never fire: they are i
 
 ## glitch-pets
 
-Pick a pet and it sits at the end of the HUD row on the desktop app. It reacts to the session through moods, says a short word now and then as a toast, and keeps a daily streak. It is not drawn in the terminal; there, remarks arrive as toasts.
+Pick a pet and it sits at the end of the HUD row on the desktop app. While Claude works, your pet types on a little laptop; between turns it does its signature move. It reacts to the session through moods, says a short word now and then as a toast, and keeps a daily streak. It is not drawn in the terminal; there, remarks arrive as toasts.
 
-| Pet | Kind | Temperament | Signature motion |
+| Pet | Kind | Temperament | Signature move (idle) |
 |---|---|---|---|
 | Screenhead | screen bot | Earnest, literal and a little robotic; reports facts, proud of tidy output. | Types; code scrolls on its screen face. |
 | Byte blob | blob | Bubbly and easily startled; squeaks with joy, wobbles when worried. | Bounces: squash, stretch and a glitch slice. |
