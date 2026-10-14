@@ -9,6 +9,7 @@ let usd = 0
 let toasts: string[] = []
 let store: Record<string, unknown> = {}
 let fork: unknown = { isAnswered: false, reason: 'nothing-to-fork' }
+let forks = 0
 let sessionId = 's1'
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
@@ -41,7 +42,9 @@ const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<strin
     return { value: undefined } as never
   })
   on('ui.notify', () => ({ value: { isSent: true, channel: 'terminal_bell' } }) as never)
+  forks = 0
   on('model.fork', () => {
+    forks++
     if (fork === 'reject') throw new Error('fork refused')
     return { value: fork } as never
   })
@@ -280,9 +283,50 @@ test('auto-warm: the last mark pings once when idle time allows', { options: { a
 test('demo: cache and budget previews', async ($, on) => {
   await start($, on)
   await turn($, 0.1)
-  expect(await run($, 'demo cache 4')).toBe('Cache demo: 4 min left until the next answer resets it.')
+  expect(await run($, 'demo cache 4')).toBe('Cache demo: 4 min left; the real countdown comes back when it ends or at the next answer.')
   expect(await run($, 'demo budget 95')).toBe('Budget demo: 95% until the next answer.')
   expect(await run($, 'demo')).toBe('Usage: /glitch demo cache <minutes> | demo budget <percent>')
+})
+
+const WARM = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 200_000, cache_creation_input_tokens: 0 } }
+
+test('demo: a cache demo warns as a demo, never auto-warms, and gives the real deadline back', { options: { autoWarm: true, notify: 'toast' } }, async ($, on) => {
+  on('prompt.submit', () => ({ text: 'hi' }) as never)
+  const clock = await start($, on)
+  await ($.prompt.submit as unknown as (e: unknown) => Promise<unknown>)({ text: 'hi', origin: { kind: 'composer' }, turnId: 't' })
+  await turn($, 0.1)
+  fork = WARM
+  await clock.advance(10 * 60_000)
+  await run($, 'demo cache 4')
+  // The demo's 4 minutes sit inside the last mark (5): it warns, marked a demo, and pings nothing.
+  await clock.advance(60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 4 min (demo)'])
+  expect(forks).toBe(0)
+  // Once the demo has run out, the real deadline (50 minutes from the answer) is back.
+  await clock.advance(4 * 60_000)
+  expect(toasts).toHaveLength(1)
+  await clock.advance(34 * 60_000)
+  expect(toasts).toHaveLength(1)
+  await clock.advance(60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 4 min (demo)', 'repo — Glitch: Prompt cache expires in 10 min'])
+  // The real last mark auto-warms as before.
+  await clock.advance(5 * 60_000)
+  expect(forks).toBe(1)
+  expect(toasts.at(-1)).toBe('Glitch: Cache kept warm (200k tokens read from cache). Next expiry in 60:00.')
+})
+
+test('demo: the next answer ends a cache demo', { options: { notify: 'toast' } }, async ($, on) => {
+  const clock = await start($, on)
+  await turn($, 0.1)
+  await clock.advance(30 * 60_000)
+  await run($, 'demo cache 1')
+  await turn($, 0.2)
+  // The fresh answer's hour counts, not the demo's minute nor the old deadline.
+  toasts.length = 0
+  await clock.advance(49 * 60_000)
+  expect(toasts).toEqual([])
+  await clock.advance(60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 10 min'])
 })
 
 test('unknown subcommand shows usage', async ($, on) => {

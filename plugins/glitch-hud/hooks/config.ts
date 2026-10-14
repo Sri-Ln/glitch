@@ -1,4 +1,5 @@
 import type { CostScope, PartId } from '../types'
+import { defaultMarks } from './cache'
 
 export type NotifyMode = 'windows' | 'toast' | 'off'
 
@@ -11,7 +12,8 @@ export type HudConfig = {
   budgetSession: number
   budgetDaily: number
   budgetBlocksAgents: boolean
-  cacheWarnMinutes: number[]
+  /** The marks the person typed; null for none, then they fit the lifetime (warnMarks). */
+  cacheWarnMinutes: number[] | null
   /** How long the prompt cache lives after a request: 60 or 5 minutes. */
   cacheTtlMs: number
   notify: NotifyMode
@@ -30,7 +32,7 @@ export const DEFAULT_CONFIG: HudConfig = {
   budgetSession: 0,
   budgetDaily: 0,
   budgetBlocksAgents: false,
-  cacheWarnMinutes: [10, 5],
+  cacheWarnMinutes: null,
   cacheTtlMs: 60 * 60_000,
   notify: 'windows',
   autoWarm: false,
@@ -65,7 +67,7 @@ const bool = (v: unknown): boolean | null => (v === true || v === 'true' ? true 
 // Settings as the person stored them, made safe: each bad value falls back to its
 // default and is named in `problems`.
 export function parseConfig(o: Record<string, unknown>): { config: HudConfig; problems: string[] } {
-  const config: HudConfig = { ...DEFAULT_CONFIG, parts: [...DEFAULT_CONFIG.parts], costShows: [...DEFAULT_CONFIG.costShows], cacheWarnMinutes: [...DEFAULT_CONFIG.cacheWarnMinutes] }
+  const config: HudConfig = { ...DEFAULT_CONFIG, parts: [...DEFAULT_CONFIG.parts], costShows: [...DEFAULT_CONFIG.costShows], cacheWarnMinutes: DEFAULT_CONFIG.cacheWarnMinutes }
   const problems: string[] = []
   const readNumbers = (keys: ('budgetSession' | 'budgetDaily' | 'autoWarmMaxIdle')[]) => {
     for (const key of keys) {
@@ -100,15 +102,16 @@ export function parseConfig(o: Record<string, unknown>): { config: HudConfig; pr
     if (ttl === '60' || ttl === '5') config.cacheTtlMs = Number(ttl) * 60_000
     else problems.push('cacheTtlMinutes: must be 60 or 5, using 60')
   }
-  if (o.cacheWarnMinutes !== undefined) {
+  // Left empty, the marks fit the lifetime; only marks the person typed are checked.
+  if (o.cacheWarnMinutes !== undefined && String(o.cacheWarnMinutes).trim() !== '') {
     const marks = typeof o.cacheWarnMinutes === 'string' ? parseMarks(o.cacheWarnMinutes) : null
     if (marks) config.cacheWarnMinutes = marks
-    else problems.push(`cacheWarnMinutes: must be minutes between 1 and 59, using ${DEFAULT_CONFIG.cacheWarnMinutes.join(',')}`)
+    else problems.push(`cacheWarnMinutes: must be minutes between 1 and 59, using ${defaultMarks(config.cacheTtlMs).join(',')}`)
   }
-  // A mark at or above the lifetime would be due the moment an answer lands.
-  const reachable = config.cacheWarnMinutes.filter(m => m * 60_000 < config.cacheTtlMs)
-  if (reachable.length < config.cacheWarnMinutes.length) {
-    config.cacheWarnMinutes = reachable
+  // A typed mark at or above the lifetime would be due the moment an answer lands.
+  const typed = config.cacheWarnMinutes
+  if (typed && typed.some(m => m * 60_000 >= config.cacheTtlMs)) {
+    config.cacheWarnMinutes = typed.filter(m => m * 60_000 < config.cacheTtlMs)
     problems.push('cacheWarnMinutes: marks at or above the cache lifetime are ignored')
   }
   if (o.notify !== undefined) {

@@ -41,6 +41,10 @@ export type CacheState = {
   lastPromptAt: number
   /** A keep-warm ran since the person's last prompt. */
   warmedSincePrompt: boolean
+  /** The cache lifetime the countdown runs from, ms; absent reads as an hour. */
+  ttlMs?: number
+  /** The real deadline, set aside while `/glitch demo cache` runs; absent or null when no demo runs. */
+  real?: { expiresAt: number | null; warnedMark: number } | null
   /** A keep-warm request is running: the control reads … meanwhile. */
   isWarming: boolean
 }

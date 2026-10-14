@@ -10,6 +10,7 @@ const BAND = (bodyColumns: number) =>
 let usd = 0
 let toasts: string[] = []
 let gitOut: string | null = null
+let gitRuns = 0
 // How many of the next toasts the host refuses (throws).
 let toastThrows = 0
 // `lead`: time before the first chunk; `ms`: time from the first chunk to the rest.
@@ -23,6 +24,7 @@ const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { reg
   usd = 0
   toasts = []
   gitOut = git
+  gitRuns = 0
   toastThrows = 0
   step = { chunks: [], ms: 0 }
   on('ui.toast', (_$, e) => {
@@ -50,7 +52,10 @@ const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { reg
   } else mock.store(on)
   mock.env(on, { OS: 'Windows_NT' })
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, tokens: 630_000, percent: 63 }, rateLimits: [], cost: { usd } } }) as never)
-  on('process.run', () => ({ value: gitOut === null ? { exitCode: 128, stdout: '', stderr: '' } : { exitCode: 0, stdout: gitOut, stderr: '' } }) as never)
+  on('process.run', () => {
+    gitRuns++
+    return { value: gitOut === null ? { exitCode: 128, stdout: '', stderr: '' } : { exitCode: 0, stdout: gitOut, stderr: '' } } as never
+  })
   on('turn.step', async function* () {
     if (step.chunks.length === 0) return STEP_RESULT as never
     await clock.advance(step.lead ?? 0)
@@ -244,6 +249,21 @@ test('band: a 5-minute cache lifetime counts down from 05:00 and warns at its ma
   expect(await rowText($, 160)).toContain('05:00')
   await clock.advance(3 * 60_000)
   expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 2 min'])
+})
+
+test('band: a 5-minute lifetime with no marks set warns at 2 and 1 min, no start-up toast', { options: { cacheTtlMinutes: '5', notify: 'toast' } }, async ($, on) => {
+  const clock = await session($, on)
+  expect(toasts).toEqual([])
+  await turn($, 0.1)
+  await clock.advance(3 * 60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 2 min'])
+  await clock.advance(60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 2 min', 'repo — Glitch: Prompt cache expires in 1 min'])
+})
+
+test('band: a typed mark the lifetime never reaches is named once at start-up', { options: { cacheTtlMinutes: '5', cacheWarnMinutes: '10,2', notify: 'toast' } }, async ($, on) => {
+  await session($, on)
+  expect(toasts).toEqual(['Glitch HUD: cacheWarnMinutes: marks at or above the cache lifetime are ignored'])
 })
 
 test('band: the countdown ticks and pauses while busy', async ($, on) => {
@@ -457,6 +477,20 @@ test('band: git refreshes on the 30 s timer while idle', async ($, on) => {
   gitOut = '# branch.oid abc\n# branch.head feature\n'
   await clock.advance(30_000)
   expect(await rowText($, 160)).toContain('feature')
+})
+
+test('session.start: a second start (compact, resume, fork) does not stack the timers', { options: { notify: 'toast' } }, async ($, on) => {
+  const clock = await session($, on)
+  await $.session.start({ source: 'compact', cwd: 'C:\\repo', surface: 'terminal', isInteractive: true } as never)
+  gitRuns = 0
+  await clock.advance(30_000)
+  expect(gitRuns).toBe(1)
+  // The countdown still ticks after the second start, and warns once.
+  await turn($, 0.1)
+  await clock.advance(61_000)
+  expect(await rowText($, 160)).toContain('58:59')
+  await clock.advance(49 * 60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 10 min'])
 })
 
 const petSprite = { source: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="20"></svg>', alt: 'Bud the dog, idle', width: 24, height: 20 }
