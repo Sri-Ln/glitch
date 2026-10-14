@@ -73,7 +73,7 @@ const board = (rows: Frame, lift: number): Frame => {
 }
 // A ring of lens (M) around the left eye, with its handle (m) running down and to the right.
 const lens = (rows: Frame, dx: number): Frame =>
-  put(put(rows, [[4, 7], [5, 7], [4, 10], [5, 10], [3, 8], [3, 9], [6, 8], [6, 9]].map(([x, y]) => [x + dx, y] as Pt), 'M'), [[6 + dx, 10], [7 + dx, 11]], 'm')
+  put(put(rows, [[4, 7], [5, 7], [4, 10], [5, 10], [3, 8], [3, 9], [6, 8], [6, 9]].map(([x, y]) => [x! + dx, y] as Pt), 'M'), [[6 + dx, 10], [7 + dx, 11]], 'm')
 
 const blob: Persona = {
   id: 'blob',

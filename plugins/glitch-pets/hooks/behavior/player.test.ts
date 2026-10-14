@@ -10,9 +10,9 @@ const B: Frame = [row('b'), ...Array.from({ length: 12 }, () => row(''))]
 const persona: Persona = {
   id: 'bud', name: 'Bud', kind: 'dog', temperament: 'eager',
   palette: { a: '#ff0000', b: '#00ff00' },
-  moods: Object.fromEntries(MOOD_IDS.map(m => [m, { frames: [A, B], fps: 4 }])) as Persona['moods'],
+  moods: Object.fromEntries(MOOD_IDS.map(m => [m, { frames: [A, B], fps: 4 }])) as unknown as Persona['moods'],
   hatAnchor: { x: 8, y: 1 },
-  voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['a', 'b', 'c']])) as Persona['voice'],
+  voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['a', 'b', 'c']])) as unknown as Persona['voice'],
 }
 
 test('frameIndex steps at the mood fps and loops', () => {

@@ -31,7 +31,7 @@ const ARMS_C = ['.Oo.oO.oo.Oo.oO.', 'kk..kk..O.kk..kk']
 const working = [ARMS_A, ARMS_B, ARMS_C, ARMS_B, ARMS_A, ARMS_C].map((arms, i) => {
   const rows = [...HEAD, ...arms]
   const keys = (rows[11] as string).split('')
-  const [a, b] = ([[0, 1], [4, 5], [10, 11], [14, 15]] as const)[i % 4]
+  const [a, b] = ([[0, 1], [4, 5], [10, 11], [14, 15]] as const)[i % 4]!
   keys[a] = 'K'
   keys[b] = 'K'
   rows[11] = keys.join('')
@@ -70,7 +70,7 @@ const board = (rows: Frame, lift: number): Frame => {
 }
 // A ring of lens (M) around the left eye, handle (m) running down and to the left.
 const lens = (rows: Frame, dx: number): Frame =>
-  put(put(rows, [[4, 5], [5, 5], [4, 8], [5, 8], [3, 6], [3, 7], [6, 6], [6, 7]].map(([x, y]) => [x + dx, y] as Pt), 'M'), [[3 + dx, 8], [2 + dx, 9]], 'm')
+  put(put(rows, [[4, 5], [5, 5], [4, 8], [5, 8], [3, 6], [3, 7], [6, 6], [6, 7]].map(([x, y]) => [x! + dx, y] as Pt), 'M'), [[3 + dx, 8], [2 + dx, 9]], 'm')
 
 const fork: Persona = {
   id: 'fork',

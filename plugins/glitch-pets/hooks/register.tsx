@@ -110,7 +110,7 @@ async function answerPets($: EngineInterface, args: string): Promise<string> {
   const parsed = parsePetArg(arg)
   if (parsed.kind === 'show') return petList((await read($, view)).petId, available)
   if (parsed.kind === 'unknown') return `Unknown pet "${parsed.name}". ${petList((await read($, view)).petId, available)}`
-  const petId = parsed.kind === 'off' ? 'off' : parsed.id
+  const petId: PetId | 'off' = parsed.kind === 'off' ? 'off' : parsed.id
   await $.store.set(STORE_PET, petId).catch(() => undefined)
   await update($, view, v => ({ ...v, petId }))
   const p = personaFor(petId)
@@ -166,7 +166,7 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) {
+    if ((e as { agentId?: string }).agentId === undefined) {
       try {
         const now = await $.clock.now()
         await update($, mood, m => ({ ...m, turnSince: now }))

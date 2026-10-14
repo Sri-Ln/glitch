@@ -462,7 +462,7 @@ test('band: git refreshes on the 30 s timer while idle', async ($, on) => {
 const petSprite = { source: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="26"></svg>', alt: 'Bud the dog, idle', width: 32, height: 26 }
 
 const withPet = (on: On, value: unknown) =>
-  on('state.get', (_$, e, next) => (e.plugin === 'glitch-pets' && e.key === 'sprite' ? ({ value: { value, version: 1 } } as never) : next(e)))
+  on('state.get', (_$, e, next) => ((e.plugin as string) === 'glitch-pets' && (e as { key?: string }).key === 'sprite' ? ({ value: { value, version: 1 } } as never) : next(e)))
 
 test('desktop draws the pet before the controls', async ($, on) => {
   withPet(on, petSprite)

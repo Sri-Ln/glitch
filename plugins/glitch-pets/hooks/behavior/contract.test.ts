@@ -11,9 +11,9 @@ const good = (): Persona => ({
   kind: 'thing',
   temperament: 'calm',
   palette: { a: '#112233' },
-  moods: Object.fromEntries(MOOD_IDS.map(m => [m, { frames: [F, F], fps: 2 }])) as Persona['moods'],
+  moods: Object.fromEntries(MOOD_IDS.map(m => [m, { frames: [F, F], fps: 2 }])) as unknown as Persona['moods'],
   hatAnchor: { x: 8, y: 2 },
-  voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['one', 'two', 'three']])) as Persona['voice'],
+  voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['one', 'two', 'three']])) as unknown as Persona['voice'],
 })
 
 test('a complete persona has no problems', () => {
@@ -27,7 +27,7 @@ test('a missing mood, a short row, an unknown char and a bad color are each name
   const bad: Persona = {
     ...p,
     palette: { a: 'red', '1': '#000000' },
-    moods: { ...(moods as Persona['moods']), idle: { frames: [['.'.repeat(15), ...F.slice(1)], F.map(r => r.replace('aa', 'zz'))], fps: 2 } },
+    moods: { ...(moods as unknown as Persona['moods']), idle: { frames: [['.'.repeat(15), ...F.slice(1)], F.map(r => r.replace('aa', 'zz'))], fps: 2 } },
   }
   const problems = personaProblems(bad).join('\n')
   expect(problems).toContain('sleepy')
