@@ -475,6 +475,47 @@ test('desktop draws the pet before the controls', async ($, on) => {
   await ui.unmount()
 })
 
+// ui.findAll returns elements in tree order: the keyed ones read as the row, left to right.
+const keyOrder = async ($: Engine, surface: 'terminal' | 'desktop') => {
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(160) })
+  const keys = (await ui.findAll({})).map(x => x.key).filter((k): k is string => k !== undefined)
+  await ui.unmount()
+  return keys
+}
+
+test('desktop row: speed, cost, cache with its keep-warm, context, then pet and ✕', async ($, on) => {
+  withPet(on, petSprite)
+  await session($, on)
+  await turn($, 0.1)
+  const keys = (await keyOrder($, 'desktop')).filter(k => ['speed', 'cost', 'cache', 'context', 'glitch-warm', 'glitch-pet', 'glitch-hide'].includes(k))
+  expect(keys).toEqual(['speed', 'cost', 'cache', 'glitch-warm', 'context', 'glitch-pet', 'glitch-hide'])
+  // Pet and ✕ are siblings under the row's one columnGap: equal space either side of the pet.
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  const pet = await ui.find({ key: 'glitch-pet' })
+  expect(pet?.props.paddingX).toBeUndefined()
+  expect(pet?.props.marginX).toBeUndefined()
+  await ui.unmount()
+})
+
+test('desktop row without a pet: no pet, ✕ last', async ($, on) => {
+  withPet(on, null)
+  await session($, on)
+  await turn($, 0.1)
+  const keys = await keyOrder($, 'desktop')
+  expect(keys).not.toContain('glitch-pet')
+  expect(keys[keys.length - 1]).toBe('glitch-hide')
+  const order = keys.filter(k => ['cache', 'context', 'glitch-warm'].includes(k))
+  expect(order).toEqual(['cache', 'glitch-warm', 'context'])
+})
+
+test('terminal row: keep-warm right after the cache part, before context', async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  const keys = (await keyOrder($, 'terminal')).filter(k => ['cost', 'cache', 'context', 'glitch-warm', 'glitch-hide'].includes(k))
+  expect(keys).toEqual(['cost', 'cache', 'glitch-warm', 'context', 'glitch-hide'])
+  expect(await rowText($, 160)).toContain('⧗ 60:00')
+})
+
 test('terminal never draws the pet', async ($, on) => {
   withPet(on, petSprite)
   await session($, on)

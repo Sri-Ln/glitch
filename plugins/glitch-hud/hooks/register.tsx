@@ -372,15 +372,16 @@ export const register: Register = (on, options) => {
       const parts = (v.parts ?? config.parts)
         .filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
         .filter(id => id !== 'turn' || !rich || chosen)
-      const width = (id: (typeof parts)[number], compact: boolean) =>
-        rich
-          ? richWidth(richPart(id, data, compact))
-          : cellWidth(segments(id, data, compact).map(x => x.text).join(''))
-      // The controls are flex items of the gapped row too: ↻ and × take one cell and
-      // a gap each, the spacer a gap. The cache part is never dropped, so ↻ shows
-      // exactly when it is asked for here.
+      // The cache part is never dropped, so ↻ shows exactly when it is asked for here.
       const showsWarm = parts.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking
-      const reserve = (showsWarm ? (rich ? 1 + 2 * WARM_PAD : 1) + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP) + (pet ? PET_CELLS + ROW_GAP : 0)
+      // ↻ is part of the cache part: one cell of gap, then the glyph (padded on desktop).
+      const warmCells = 1 + (rich ? 1 + 2 * WARM_PAD : 1)
+      const width = (id: (typeof parts)[number], compact: boolean) =>
+        (rich
+          ? richWidth(richPart(id, data, compact))
+          : cellWidth(segments(id, data, compact).map(x => x.text).join(''))) + (id === 'cache' && showsWarm ? warmCells : 0)
+      // × takes one cell and a gap, the spacer a gap, the pet its cells and a gap.
+      const reserve = ROW_GAP + (1 + ROW_GAP) + (pet ? PET_CELLS + ROW_GAP : 0)
       const { shown, compact } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
 
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
@@ -405,6 +406,24 @@ export const register: Register = (on, options) => {
           // Nothing to show.
         }
       }
+      // ↻ rides with the cache part, right after its text. One glyph: the desktop
+      // draws a Button as a native button with its whole label, so a long label over
+      // an icon showed as cut-off text.
+      const warmControl = (id: string) =>
+        id === 'cache' && showsWarm
+          ? rich
+            ? (
+                // The desktop draws the glyph flush against its neighbours: a cell each side.
+                <Box key="glitch-warm-box" paddingX={WARM_PAD} flexShrink={0}>
+                  <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain dimColor onPress={warm} />
+                </Box>
+              )
+            : (
+                <Box key="glitch-warm-box" marginLeft={1} flexShrink={0}>
+                  <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain onPress={warm} />
+                </Box>
+              )
+          : null
       const items = rich && Svg
         ? [
             <Box key="glitch-parts" flexDirection="row" flexGrow={1} justifyContent="space-between" columnGap={ROW_GAP} overflow="hidden">
@@ -414,6 +433,7 @@ export const register: Register = (on, options) => {
                   <Box key={id} flexDirection="row" flexShrink={0} alignItems="center" columnGap={1}>
                     {p.graphic ? <Svg source={p.graphic.source} alt={p.graphic.alt} width={p.graphic.width} height={p.graphic.height} /> : null}
                     <Box flexDirection="row">{texts(id, p.segments)}</Box>
+                    {warmControl(id)}
                   </Box>
                 )
               })}
@@ -422,28 +442,19 @@ export const register: Register = (on, options) => {
         : shown.map(id => (
             <Box key={id} flexDirection="row" flexShrink={0}>
               {texts(id, segments(id, data, compact))}
+              {warmControl(id)}
             </Box>
           ))
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" columnGap={ROW_GAP} flexWrap="nowrap" overflow="hidden" alignItems="center">
             {items}
-            {/* One glyph: the desktop draws a Button as a native button with its whole
-                label, so a long label over an icon showed as cut-off text. */}
+            {/* Pet and ✕ are siblings under the row's one columnGap: the same space on
+                both sides of the pet, and none left behind without one. */}
             {pet && Svg ? (
               <Box key="glitch-pet" flexShrink={0} alignItems="flex-end">
                 <Svg source={pet.source} alt={pet.alt} width={pet.width} height={pet.height} />
               </Box>
-            ) : null}
-            {showsWarm ? (
-              rich ? (
-                // The desktop draws the glyph flush against its neighbours: a cell each side.
-                <Box key="glitch-warm-box" paddingX={WARM_PAD} flexShrink={0}>
-                  <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain dimColor onPress={warm} />
-                </Box>
-              ) : (
-                <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain onPress={warm} />
-              )
             ) : null}
             {rich && Svg ? null : <Box flexGrow={1} />}
             <Button key="glitch-hide" label={rich && Svg ? '✕' : '×'} plain role="dismiss" dimColor onPress={() => update($, view, x => ({ ...x, isHidden: true }))} />
