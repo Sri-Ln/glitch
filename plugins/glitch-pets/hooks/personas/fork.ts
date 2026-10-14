@@ -77,9 +77,8 @@ type Px = readonly [number, number]
 const column = (x: number, from: number, to: number): Px[] => Array.from({ length: to - from + 1 }, (_, i) => [x, from + i] as Px)
 const mark = (rows: Frame, pts: readonly Px[], ch: string): Frame => pts.reduce((r, [x, y]) => at(r, x, y, ch), rows)
 const CRY_PATHS: Px[][] = [column(4, 8, 10), column(11, 8, 10)]
-const cryBase = (rows: Frame): Frame => rows
 const crying = [0, 1, 2, 3, 4, 5].map(n =>
-  CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), [path[n % path.length] as Px, path[(n + 3) % path.length] as Px], 'T'), cryBase(mark(REST, [[4, 6], [5, 6], [10, 6], [11, 6]], 'o'))),
+  CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), mark(REST, [[4, 6], [5, 6], [10, 6], [11, 6]], 'o')),
 )
 
 const fork: Persona = {

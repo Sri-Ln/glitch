@@ -80,7 +80,7 @@ const mark = (rows: Frame, pts: readonly Px[], ch: string): Frame => pts.reduce(
 const CRY_PATHS: Px[][] = [column(4, 8, 11), column(9, 8, 11)]
 const cryBase = (rows: Frame): Frame => rows.map((r, y) => (y === 1 ? '................' : y === 2 ? '..dd......dd....' : r))
 const crying = [0, 1, 2, 3, 4, 5].map(n =>
-  CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), [path[n % path.length] as Px, path[(n + 3) % path.length] as Px], 'T'), cryBase(mark(BASE, [[4, 6], [5, 6], [8, 6], [9, 6]], 'v'))),
+  CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[4, 6], [5, 6], [8, 6], [9, 6]], 'v'))),
 )
 
 const pixel: Persona = {

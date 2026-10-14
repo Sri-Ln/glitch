@@ -1,5 +1,5 @@
 // One timer tick as a pure decision: which mood, which frame, and did anything change.
-import { CRY_FAILS, CRY_MS, budgetFraction, isCapReached, moodOf } from './behavior/moods'
+import { CHEER_MS, CRY_FAILS, CRY_MS, HAPPY_MS, OOPS_MS, budgetFraction, isCapReached, moodOf } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
 import type { MoodState } from '../types'
 import type { MoodId, Persona, Sprite } from './behavior/types'
@@ -50,3 +50,28 @@ export function failTick(count: number, event: 'fail' | 'ok', now: number): { fa
 /** A failed tool call in the main loop (not a helper's) upsets the pet. */
 export const isMainLoopError = (e: { agentId?: unknown }, result: unknown): boolean =>
   e.agentId === undefined && !!result && !!(result as { isError?: boolean }).isError
+
+const withFail = (m: MoodState, event: 'fail' | 'ok', now: number): MoodState => {
+  const f = failTick(m.failStreak, event, now)
+  return { ...m, failStreak: f.failStreak, ...(f.cryUntil !== null ? { cryUntil: f.cryUntil } : {}) }
+}
+
+/** After a tool call: a main-loop failure upsets the pet (and counts toward crying), a clean main-loop call clears the count; a helper's changes nothing. */
+export function onToolResult(m: MoodState, e: { agentId?: unknown }, result: unknown, now: number): MoodState {
+  if (e.agentId !== undefined) return m
+  if (!isMainLoopError(e, result)) return withFail(m, 'ok', now)
+  return { ...withFail(m, 'fail', now), oopsUntil: now + OOPS_MS }
+}
+
+/** After a main-loop turn ends: no turn running; an error upsets (and counts), an answer pleases (and clears the count). */
+export function onTurnEnd(m: MoodState, reason: string, now: number): MoodState {
+  const ended = { ...m, turnSince: null }
+  if (reason === 'error') return { ...withFail(ended, 'fail', now), oopsUntil: now + OOPS_MS }
+  if (reason === 'answer') return { ...withFail(ended, 'ok', now), happyUntil: now + HAPPY_MS }
+  return ended
+}
+
+/** At the first main-loop turn of a day: a milestone cheers, a broken streak cries. */
+export function onTurnStartStreak(m: MoodState, r: { cheer: boolean; broken: boolean }, now: number): MoodState {
+  return { ...m, ...(r.cheer ? { cheerUntil: now + CHEER_MS } : {}), ...(r.broken ? { cryUntil: now + CRY_MS } : {}) }
+}
