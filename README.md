@@ -70,7 +70,7 @@ Pick a pet and it sits at the end of the HUD row on the desktop app. It reacts t
 | Fork | octopus | The organised multitasker; a born lead who loves a plan. | Taps four keys with four arms. |
 | Bud | dog | Eager and loyal; cheers for everything and wants to go again. | Wags, pants and flops an ear. |
 
-Moods: idle, working, happy, tired, sleepy, worried, oops, cheering, leading, reviewing.
+Moods: idle, working, happy, tired, sleepy, worried, oops, cheering, leading, reviewing, crying. It cries when the budget cap is reached, when a daily streak of two or more days is broken, and after three failures in a row.
 
 `/glitch pet [name | off]` lists the pets, switches to one and remembers it, or empties the slot.
 

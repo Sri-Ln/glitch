@@ -70,12 +70,23 @@ const clipboard = (rows: Frame, lift: number): Frame =>
   })
 const lens = (rows: Frame, dx: number): Frame => at(at(at(rows, 4 + dx, 5, 'M'), 5 + dx, 6, 'M'), 6 + dx, 7, 'm')
 
+// Crying: eyes squeezed shut, a light-blue stream (U) with two dark ripples (T) running down it from each eye. The pet stays still.
+type Px = readonly [number, number]
+const column = (x: number, from: number, to: number): Px[] => Array.from({ length: to - from + 1 }, (_, i) => [x, from + i] as Px)
+const mark = (rows: Frame, pts: readonly Px[], ch: string): Frame => pts.reduce((r, [x, y]) => at(r, x, y, ch), rows)
+const CRY_PATHS: Px[][] = [column(4, 7, 9), column(11, 7, 9)]
+const cryBase = (rows: Frame): Frame => mark(mark(rows, [[6, 8], [10, 8]], 's'), [[6, 9], [10, 9]], 'g')
+const crying = [0, 1, 2, 3, 4, 5].map(n =>
+  CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), [path[n % path.length] as Px, path[(n + 3) % path.length] as Px], 'T'), cryBase(mark(BASE, [[4, 5], [5, 5], [10, 5], [11, 5]], 's'))),
+)
+
 const screenhead: Persona = {
   id: 'screenhead',
   name: 'Screenhead',
   kind: 'screen bot',
   temperament: 'Earnest, literal and a little robotic; reports facts, proud of tidy output.',
   palette: {
+    T: '#2f7dff', U: '#9fd0ff',
     a: '#ff4f8b', A: '#ffd1e0', f: '#7b61ff', s: '#161a33', g: '#39ff88', c: '#2de2e6', w: '#ffffff', r: '#ff4f8b',
     Z: '#9aa4d8', D: '#5ab0ff', C: '#ff4f8b', Y: '#ffd23f', L: '#39ff88', B: '#e8e2d0', b: '#7a6a4a', M: '#c9d4ff', m: '#5a5f80',
   },
@@ -90,6 +101,7 @@ const screenhead: Persona = {
     cheering: { frames: [0, 1, 2, 3, 4, 5].map(n => confetti(n % 2 ? smile : up(smile), n)), fps: 8 },
     leading: { frames: [0, 1, 0, 1].map(n => clipboard(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
+    crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 7, y: 2 },
   voice: {
@@ -98,6 +110,7 @@ const screenhead: Persona = {
     oops: ['Error detected. Rebooting optimism.', 'That did not compute.', 'Unexpected result. Investigating.'],
     cheering: ['Streak milestone reached. Celebrating.', 'Days in a row: impressive. Saving to memory.', 'Achievement unlocked.'],
     sleepy: ['Entering low-power mode.', 'Screen dimming. Wake me with a prompt.', 'Idle. Defragmenting dreams.'],
+    crying: ['Error count critical. Leaking coolant.', 'Sad.exe is running.', 'My screen is fogging up.'],
     crewDone: ['Crew review complete. Report ready.', 'All helpers checked. Results compiled.', 'Review finished. Findings logged.'],
   },
 }

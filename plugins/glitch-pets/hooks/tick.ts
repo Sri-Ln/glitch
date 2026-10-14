@@ -1,5 +1,5 @@
 // One timer tick as a pure decision: which mood, which frame, and did anything change.
-import { budgetFraction, isCapReached, moodOf } from './behavior/moods'
+import { CRY_FAILS, CRY_MS, budgetFraction, isCapReached, moodOf } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
 import type { MoodState } from '../types'
 import type { MoodId, Persona, Sprite } from './behavior/types'
@@ -31,7 +31,7 @@ export type TickResult = {
 export function tickOnce(i: TickInputs): TickResult {
   const m = i.state
   const mood = moodOf({
-    now: i.now, turnSince: m.turnSince, lastPromptAt: m.lastPromptAt, oopsUntil: m.oopsUntil, happyUntil: m.happyUntil, cheerUntil: m.cheerUntil,
+    now: i.now, turnSince: m.turnSince, lastPromptAt: m.lastPromptAt, oopsUntil: m.oopsUntil, happyUntil: m.happyUntil, cheerUntil: m.cheerUntil, cryUntil: m.cryUntil,
     capReached: isCapReached(i.budget, i.total), budget: budgetFraction(i.budget, i.total), cacheSecondsLeft: i.cacheSecondsLeft,
     helpersRunning: i.helpersRunning, reviewerRunning: i.reviewerRunning, tiredMs: i.tiredMs, sleepyMs: i.sleepyMs,
   })
@@ -39,6 +39,12 @@ export function tickOnce(i: TickInputs): TickResult {
   const since = moodChanged ? i.now : m.since
   const s = i.player.sprite(i.persona, mood, i.now - since)
   return { mood, since, moodChanged, sprite: s.source !== i.lastSource ? s : null }
+}
+
+/** The failure count after one more main-loop event: a failure adds one, an answer or a clean tool call clears it, three make the pet cry (and clear it). */
+export function failTick(count: number, event: 'fail' | 'ok', now: number): { failStreak: number; cryUntil: number | null } {
+  if (event === 'ok') return { failStreak: 0, cryUntil: null }
+  return count + 1 >= CRY_FAILS ? { failStreak: 0, cryUntil: now + CRY_MS } : { failStreak: count + 1, cryUntil: null }
 }
 
 /** A failed tool call in the main loop (not a helper's) upsets the pet. */

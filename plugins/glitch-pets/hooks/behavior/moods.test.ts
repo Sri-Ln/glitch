@@ -5,7 +5,7 @@ import type { MoodInputs } from './moods'
 
 const T = 1_000_000
 const base = (over: Partial<MoodInputs> = {}): MoodInputs => ({
-  now: T, turnSince: null, lastPromptAt: T, oopsUntil: 0, happyUntil: 0, cheerUntil: 0,
+  now: T, turnSince: null, lastPromptAt: T, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0,
   capReached: false, budget: null, cacheSecondsLeft: 3000,
   helpersRunning: 0, reviewerRunning: false, tiredMs: 600_000, sleepyMs: 600_000, ...over,
 })
@@ -23,7 +23,10 @@ test('not worried at 89%', () => expect(moodOf(base({ budget: 0.89 }))).toBe('id
 test('worried under 60 s of cache', () => expect(moodOf(base({ cacheSecondsLeft: 59 }))).toBe('worried'))
 test('cache countdown unknown is not a worry', () => expect(moodOf(base({ cacheSecondsLeft: null }))).toBe('idle'))
 test('oops beats worried', () => expect(moodOf(base({ oopsUntil: T + 1, budget: 0.95 }))).toBe('oops'))
-test('a reached cap holds oops', () => expect(moodOf(base({ capReached: true }))).toBe('oops'))
+test('a reached cap holds crying', () => expect(moodOf(base({ capReached: true }))).toBe('crying'))
+test('crying while cryUntil is ahead', () => expect(moodOf(base({ cryUntil: T + 1 }))).toBe('crying'))
+test('cryUntil === now is not crying', () => expect(moodOf(base({ cryUntil: T }))).toBe('idle'))
+test('crying beats oops', () => expect(moodOf(base({ oopsUntil: T + 1, cryUntil: T + 1 }))).toBe('crying'))
 test('cheering beats leading', () => expect(moodOf(base({ cheerUntil: T + 1, helpersRunning: 2 }))).toBe('cheering'))
 test('reviewing beats leading', () => expect(moodOf(base({ reviewerRunning: true, helpersRunning: 1 }))).toBe('reviewing'))
 test('leading beats working', () => expect(moodOf(base({ helpersRunning: 1, turnSince: T - 5 }))).toBe('leading'))

@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
-import { CHEER_MS, HAPPY_MS, OOPS_MS } from './behavior/moods'
+import { CHEER_MS, CRY_MS, HAPPY_MS, OOPS_MS } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
 import { createPlayer } from './behavior/player'
 import { STORE_STREAK, advance, asStreak } from './behavior/streak'
@@ -15,9 +15,9 @@ import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petList } from './comm
 import { parsePetsConfig } from './config'
 import type { PetsConfig } from './config'
 import { PERSONAS } from './personas/index'
-import { isMainLoopError, tickOnce } from './tick'
+import { failTick, isMainLoopError, tickOnce } from './tick'
 
-const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0 }
+const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, failStreak: 0 }
 
 export const sprite = atom({ plugin: 'glitch-pets', key: 'sprite' } as const, null as Sprite | null)
 export const mood = atom({ plugin: 'glitch-pets', key: 'mood' } as const, INITIAL_MOOD)
@@ -25,7 +25,7 @@ export const view = atom({ plugin: 'glitch-pets', key: 'view' } as const, { petI
 
 export const TICK_MS = 100
 const LONG_TURN_MS = 120_000
-const SPEAKS_ON_ENTRY: Partial<Record<MoodId, VoiceMoment>> = { worried: 'worried', sleepy: 'sleepy', oops: 'oops', cheering: 'cheering' }
+const SPEAKS_ON_ENTRY: Partial<Record<MoodId, VoiceMoment>> = { worried: 'worried', sleepy: 'sleepy', oops: 'oops', cheering: 'cheering', crying: 'crying' }
 
 // Pets that break the contract are left out (named once at start).
 const usable = Object.fromEntries(Object.entries(PERSONAS).filter(([, p]) => p && personaProblems(p).length === 0)) as Partial<Record<PetId, Persona>>
@@ -173,6 +173,7 @@ export const register: Register = (on, options) => {
         const r = advance(asStreak(await $.store.get(STORE_STREAK).catch(() => null)), now)
         if (r.changed) await $.store.set(STORE_STREAK, r.streak).catch(() => undefined)
         if (r.cheer) await update($, mood, m => ({ ...m, cheerUntil: now + CHEER_MS }))
+        if (r.broken) await update($, mood, m => ({ ...m, cryUntil: now + CRY_MS }))
       } catch {
         // The pet just misses this one.
       }
@@ -188,7 +189,14 @@ export const register: Register = (on, options) => {
         try {
           const now = await $.clock.now()
           const failed = e.reason === 'error'
-          await update($, mood, m => ({ ...m, turnSince: null, ...(failed ? { oopsUntil: now + OOPS_MS } : e.reason === 'answer' ? { happyUntil: now + HAPPY_MS } : {}) }))
+          await update($, mood, m => {
+            const f = failed ? failTick(m.failStreak, 'fail', now) : e.reason === 'answer' ? failTick(m.failStreak, 'ok', now) : null
+            return {
+              ...m, turnSince: null,
+              ...(failed ? { oopsUntil: now + OOPS_MS } : e.reason === 'answer' ? { happyUntil: now + HAPPY_MS } : {}),
+              ...(f ? { failStreak: f.failStreak, ...(f.cryUntil !== null ? { cryUntil: f.cryUntil } : {}) } : {}),
+            }
+          })
           if (!failed && e.reason === 'answer' && e.durationMs >= LONG_TURN_MS) await say($, 'happy')
         } catch {
           // Leave the mood as it was.
@@ -199,9 +207,13 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    if (isMainLoopError(e, ran)) {
+    if (e.agentId === undefined) {
+      const failed = isMainLoopError(e, ran)
       const now = await $.clock.now().catch(() => 0)
-      await update($, mood, m => ({ ...m, oopsUntil: now + OOPS_MS })).catch(() => undefined)
+      await update($, mood, m => {
+        const f = failTick(m.failStreak, failed ? 'fail' : 'ok', now)
+        return { ...m, ...(failed ? { oopsUntil: now + OOPS_MS } : {}), failStreak: f.failStreak, ...(f.cryUntil !== null ? { cryUntil: f.cryUntil } : {}) }
+      }).catch(() => undefined)
     }
     return ran
   })

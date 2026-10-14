@@ -73,12 +73,23 @@ const board = (rows: Frame, lift: number): Frame => {
 const lens = (rows: Frame, dx: number): Frame =>
   put(put(rows, [[4, 5], [5, 5], [4, 8], [5, 8], [3, 6], [3, 7], [6, 6], [6, 7]].map(([x, y]) => [x! + dx, y] as Pt), 'M'), [[3 + dx, 8], [2 + dx, 9]], 'm')
 
+// Crying: eyes squeezed shut, a light-blue stream (U) with two dark ripples (T) running down it from each eye. The pet stays still.
+type Px = readonly [number, number]
+const column = (x: number, from: number, to: number): Px[] => Array.from({ length: to - from + 1 }, (_, i) => [x, from + i] as Px)
+const mark = (rows: Frame, pts: readonly Px[], ch: string): Frame => pts.reduce((r, [x, y]) => at(r, x, y, ch), rows)
+const CRY_PATHS: Px[][] = [column(4, 8, 11), column(9, 8, 11)]
+const cryBase = (rows: Frame): Frame => rows.map((r, y) => (y === 1 ? '................' : y === 2 ? '..dd......dd....' : r))
+const crying = [0, 1, 2, 3, 4, 5].map(n =>
+  CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), [path[n % path.length] as Px, path[(n + 3) % path.length] as Px], 'T'), cryBase(mark(BASE, [[4, 6], [5, 6], [8, 6], [9, 6]], 'v'))),
+)
+
 const pixel: Persona = {
   id: 'pixel',
   name: 'Pixel',
   kind: 'cat',
   temperament: 'Dry and unimpressed, secretly proud; says little, means it.',
   palette: {
+    T: '#2f7dff', U: '#9fd0ff',
     d: '#4b3a99', v: '#9b7bff', k: '#10121a', w: '#ffffff', t: '#2de2e6', c: '#ff4f8b',
     Z: '#9aa4d8', D: '#5ab0ff', C: '#ff4f8b', Y: '#ffd23f', L: '#39ff88', B: '#e8e2d0', b: '#7a6a4a', M: '#c9d4ff', m: '#5a5f80',
   },
@@ -93,6 +104,7 @@ const pixel: Persona = {
     cheering: { frames: [0, 1, 2, 3, 4, 5].map(n => confetti(n % 2 ? smile : up(smile), n)), fps: 8 },
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, 1].map(n => lens(BASE, n)), fps: 4 },
+    crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 6, y: 3 },
   voice: {
@@ -101,6 +113,7 @@ const pixel: Persona = {
     oops: ['That was not my fault.', 'Hiss. Something broke.', 'Knocked it off the table. Oops.'],
     cheering: ['A streak. I suppose that is nice.', 'Days in a row. Fine, I am impressed.', 'Streak. Do not let it go to your head.'],
     sleepy: ['Nap time. Do not disturb.', 'Cache is cold. So am I. Zzz.', 'Wake me for something important.'],
+    crying: ['I am not crying. It’s raining.', 'Fine. I’m upset. Happy?', 'Hiss… sniff.'],
     crewDone: ['The crew is done. I checked their work.', 'Review finished. They needed me.', 'All reviewed. You are welcome.'],
   },
 }

@@ -68,3 +68,11 @@ test('a third day in a row is kept and cheers once, with a remark', async ($, on
   expect((store.streak as { count: number }).count).toBe(3)
   expect(toasts.some(t => t.startsWith('Bud: '))).toBe(true)
 })
+
+test('a broken streak resets to 1 at the first turn of the day', async ($, on) => {
+  const store: Record<string, unknown> = { streak: { lastDay: '2026-10-10', count: 5, cheered: 3 } }
+  const clock = await session($, on, store)
+  await $.turn.start({ turnId: 't1' } as never)
+  await clock.advance(150)
+  expect((store.streak as { count: number }).count).toBe(1)
+})

@@ -4,7 +4,7 @@
 /** What glitch-hud draws: one frame as an image. */
 export type Sprite = { source: string; alt: string; width: number; height: number }
 
-export type MoodId = 'idle' | 'working' | 'happy' | 'tired' | 'sleepy' | 'worried' | 'oops' | 'cheering' | 'leading' | 'reviewing'
+export type MoodId = 'idle' | 'working' | 'happy' | 'tired' | 'sleepy' | 'worried' | 'oops' | 'cheering' | 'leading' | 'reviewing' | 'crying'
 
 export type PetId = 'screenhead' | 'blob' | 'pixel' | 'dot' | 'fork' | 'bud'
 
@@ -19,6 +19,10 @@ export type MoodState = {
   oopsUntil: number
   happyUntil: number
   cheerUntil: number
+  /** Crying until (clock ms): a broken streak or repeated failures. */
+  cryUntil: number
+  /** Failures in a row in the main loop; three make the pet cry. */
+  failStreak: number
 }
 
 export type PetsView = { petId: PetId | 'off' }

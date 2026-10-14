@@ -72,12 +72,23 @@ const board = (rows: Frame, lift: number): Frame => {
 const lens = (rows: Frame, dx: number): Frame =>
   put(put(rows, [[4, 5], [5, 5], [4, 8], [5, 8], [3, 6], [3, 7], [6, 6], [6, 7]].map(([x, y]) => [x! + dx, y] as Pt), 'M'), [[3 + dx, 8], [2 + dx, 9]], 'm')
 
+// Crying: eyes squeezed shut, a light-blue stream (U) with two dark ripples (T) running down it from each eye. The pet stays still.
+type Px = readonly [number, number]
+const column = (x: number, from: number, to: number): Px[] => Array.from({ length: to - from + 1 }, (_, i) => [x, from + i] as Px)
+const mark = (rows: Frame, pts: readonly Px[], ch: string): Frame => pts.reduce((r, [x, y]) => at(r, x, y, ch), rows)
+const CRY_PATHS: Px[][] = [column(4, 8, 10), column(11, 8, 10)]
+const cryBase = (rows: Frame): Frame => rows
+const crying = [0, 1, 2, 3, 4, 5].map(n =>
+  CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), [path[n % path.length] as Px, path[(n + 3) % path.length] as Px], 'T'), cryBase(mark(REST, [[4, 6], [5, 6], [10, 6], [11, 6]], 'o'))),
+)
+
 const fork: Persona = {
   id: 'fork',
   name: 'Fork',
   kind: 'octopus',
   temperament: 'The organised multitasker; a born lead who loves a plan.',
   palette: {
+    T: '#2f7dff', U: '#9fd0ff',
     O: '#5b2a86', o: '#c264ff', s: '#f3b3ff', e: '#10121a', k: '#3a3f5c', K: '#39ff88',
     Z: '#9aa4d8', D: '#5ab0ff', C: '#ff4f8b', Y: '#ffd23f', L: '#39ff88', B: '#e8e2d0', b: '#7a6a4a', M: '#c9d4ff', m: '#5a5f80',
   },
@@ -92,6 +103,7 @@ const fork: Persona = {
     cheering: { frames: [0, 1, 2, 3, 4, 5].map(n => confetti(n % 2 ? smile : up(smile), n)), fps: 8 },
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, 1].map(n => lens(BASE, n)), fps: 4 },
+    crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 7, y: 1 },
   voice: {
@@ -100,6 +112,7 @@ const fork: Persona = {
     oops: ['Tangled an arm. Untangling.', 'One thread failed. The others are fine.', 'A hiccup. Rescheduling.'],
     cheering: ['Streak milestone! Eight arms up!', 'Days in a row, perfectly scheduled.', 'Streak achieved. On to the next one.'],
     sleepy: ['All arms at rest.', 'Inking a quiet nap.', 'Off the clock. Zzz.'],
+    crying: ['All eight arms need a hug.', 'Too many things went wrong at once.', 'Plan failed. Regrouping… sniff.'],
     crewDone: ['Crew reviewed. Every task accounted for.', 'All helpers checked against the plan.', 'Review done. The plan held up.'],
   },
 }

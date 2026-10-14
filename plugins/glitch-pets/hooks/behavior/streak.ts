@@ -19,12 +19,14 @@ const yesterdayOf = (ms: number): string => {
 const FIRST = [3, 7, 14, 30, 50, 100]
 export const isMilestone = (n: number): boolean => FIRST.includes(n) || (n > 100 && n % 100 === 0)
 
-export function advance(s: Streak | null, nowMs: number): { streak: Streak; cheer: boolean; changed: boolean } {
+export function advance(s: Streak | null, nowMs: number): { streak: Streak; cheer: boolean; changed: boolean; broken: boolean } {
   const today = dayKey(nowMs)
-  if (s && s.lastDay === today) return { streak: s, cheer: false, changed: false }
-  const count = s && s.lastDay === yesterdayOf(nowMs) ? s.count + 1 : 1
+  if (s && s.lastDay === today) return { streak: s, cheer: false, changed: false, broken: false }
+  const continues = !!s && s.lastDay === yesterdayOf(nowMs)
+  const count = continues ? (s as Streak).count + 1 : 1
+  const broken = !!s && !continues && s.count > 1
   const cheer = isMilestone(count) && (s?.cheered ?? 0) !== count
-  return { streak: { lastDay: today, count, cheered: cheer ? count : (s?.cheered ?? 0) }, cheer, changed: true }
+  return { streak: { lastDay: today, count, cheered: cheer ? count : (s?.cheered ?? 0) }, cheer, changed: true, broken }
 }
 
 export function asStreak(v: unknown): Streak | null {

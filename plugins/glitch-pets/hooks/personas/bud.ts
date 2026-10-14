@@ -68,12 +68,23 @@ const board = (rows: Frame, lift: number): Frame => {
 const lens = (rows: Frame, dx: number): Frame =>
   put(put(rows, [[5, 2], [5, 4], [4, 3], [6, 3]].map(([x, y]) => [x! + dx, y] as Pt), 'M'), [[4 + dx, 4], [3 + dx, 5]], 'm')
 
+// Crying: eyes squeezed shut, a light-blue stream (U) with two dark ripples (T) running down it from each eye. The pet stays still.
+type Px = readonly [number, number]
+const column = (x: number, from: number, to: number): Px[] => Array.from({ length: to - from + 1 }, (_, i) => [x, from + i] as Px)
+const mark = (rows: Frame, pts: readonly Px[], ch: string): Frame => pts.reduce((r, [x, y]) => at(r, x, y, ch), rows)
+const CRY_PATHS: Px[][] = [column(5, 4, 7), column(10, 4, 7)]
+const cryBase = (rows: Frame): Frame => mark(rows, [[7, 8], [8, 8]], 'c')
+const crying = [0, 1, 2, 3, 4, 5].map(n =>
+  CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), [path[n % path.length] as Px, path[(n + 3) % path.length] as Px], 'T'), cryBase(mark(BASE, [[5, 3], [10, 3]], 'K'))),
+)
+
 const bud: Persona = {
   id: 'bud',
   name: 'Bud',
   kind: 'dog',
   temperament: 'Eager and loyal; cheers for everything and wants to go again.',
   palette: {
+    T: '#2f7dff', U: '#9fd0ff',
     K: '#3b2a1a', b: '#c98a4b', c: '#f2dcc0', e: '#10121a', n: '#10121a', t: '#ff6f91', E: '#7a4a22',
     Z: '#9aa4d8', D: '#5ab0ff', C: '#ff4f8b', Y: '#ffd23f', L: '#39ff88', B: '#e8e2d0', j: '#7a6a4a', M: '#c9d4ff', m: '#5a5f80',
   },
@@ -94,6 +105,7 @@ const bud: Persona = {
     },
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
+    crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 7, y: 0 },
   voice: {
@@ -102,6 +114,7 @@ const bud: Persona = {
     oops: ['Whoops! I’ll fetch a fix!', 'Uh oh, something broke!', 'Sorry! Let’s try again!'],
     cheering: ['A streak! Best day ever!', 'So many days! Wag wag wag!', 'Streak! You’re the best!'],
     sleepy: ['Curling up for a nap…', 'Zzz… dreaming of fetch…', 'Nap time. Wake me for walkies.'],
+    crying: ['Awoo… that went badly.', 'I’m sad… pat me?', 'Whimper… let’s try again?'],
     crewDone: ['The pack is done! I checked them all!', 'Everyone did great! Review done!', 'All checked! Good pack!'],
   },
 }

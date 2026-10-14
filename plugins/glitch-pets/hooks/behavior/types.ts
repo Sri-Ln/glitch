@@ -4,10 +4,10 @@
 export const PET_IDS = ['screenhead', 'blob', 'pixel', 'dot', 'fork', 'bud'] as const
 export type PetId = (typeof PET_IDS)[number]
 
-export const MOOD_IDS = ['idle', 'working', 'happy', 'tired', 'sleepy', 'worried', 'oops', 'cheering', 'leading', 'reviewing'] as const
+export const MOOD_IDS = ['idle', 'working', 'happy', 'tired', 'sleepy', 'worried', 'oops', 'cheering', 'leading', 'reviewing', 'crying'] as const
 export type MoodId = (typeof MOOD_IDS)[number]
 
-export const VOICE_MOMENTS = ['happy', 'worried', 'oops', 'cheering', 'sleepy', 'crewDone'] as const
+export const VOICE_MOMENTS = ['happy', 'worried', 'oops', 'cheering', 'sleepy', 'crying', 'crewDone'] as const
 export type VoiceMoment = (typeof VOICE_MOMENTS)[number]
 
 /** The sprite grid: 16 columns × 13 rows. */

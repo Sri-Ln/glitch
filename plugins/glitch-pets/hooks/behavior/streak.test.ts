@@ -9,11 +9,11 @@ test('milestones', () => {
   expect([1, 2, 3, 6, 7, 14, 30, 50, 99, 100, 150, 200, 300].map(isMilestone)).toEqual([false, false, true, false, true, true, true, true, false, true, false, true, true])
 })
 test('first use starts at 1, no cheer', () => {
-  expect(advance(null, at(2026, 10, 14))).toEqual({ streak: { lastDay: '2026-10-14', count: 1, cheered: 0 }, cheer: false, changed: true })
+  expect(advance(null, at(2026, 10, 14))).toEqual({ streak: { lastDay: '2026-10-14', count: 1, cheered: 0 }, cheer: false, changed: true, broken: false })
 })
 test('same day changes nothing', () => {
   const s = { lastDay: '2026-10-14', count: 2, cheered: 0 }
-  expect(advance(s, at(2026, 10, 14, 22))).toEqual({ streak: s, cheer: false, changed: false })
+  expect(advance(s, at(2026, 10, 14, 22))).toEqual({ streak: s, cheer: false, changed: false, broken: false })
 })
 test('the next day adds one and cheers at a milestone once', () => {
   const r = advance({ lastDay: '2026-10-13', count: 2, cheered: 0 }, at(2026, 10, 14))
@@ -32,6 +32,13 @@ test('a session open across midnight advances once', () => {
   const first = advance(s, at(2026, 10, 14, 0))
   expect(first.streak.count).toBe(5)
   expect(advance(first.streak, at(2026, 10, 14, 1)).changed).toBe(false)
+})
+test('broken only when a streak above 1 lapses', () => {
+  expect(advance({ lastDay: '2026-10-11', count: 9, cheered: 7 }, at(2026, 10, 14)).broken).toBe(true)
+  expect(advance({ lastDay: '2026-10-12', count: 1, cheered: 0 }, at(2026, 10, 14)).broken).toBe(false)
+  expect(advance({ lastDay: '2026-10-13', count: 9, cheered: 7 }, at(2026, 10, 14)).broken).toBe(false)
+  expect(advance(null, at(2026, 10, 14)).broken).toBe(false)
+  expect(advance({ lastDay: '2026-10-14', count: 9, cheered: 7 }, at(2026, 10, 14)).broken).toBe(false)
 })
 test('asStreak accepts only the shape', () => {
   expect(asStreak({ lastDay: '2026-10-14', count: 3, cheered: 3 })).toEqual({ lastDay: '2026-10-14', count: 3, cheered: 3 })

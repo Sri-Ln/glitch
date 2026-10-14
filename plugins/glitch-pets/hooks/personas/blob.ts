@@ -75,12 +75,23 @@ const board = (rows: Frame, lift: number): Frame => {
 const lens = (rows: Frame, dx: number): Frame =>
   put(put(rows, [[4, 7], [5, 7], [4, 10], [5, 10], [3, 8], [3, 9], [6, 8], [6, 9]].map(([x, y]) => [x! + dx, y] as Pt), 'M'), [[6 + dx, 10], [7 + dx, 11]], 'm')
 
+// Crying: eyes squeezed shut, a light-blue stream (U) with two dark ripples (T) running down it from each eye. The pet stays still.
+type Px = readonly [number, number]
+const column = (x: number, from: number, to: number): Px[] => Array.from({ length: to - from + 1 }, (_, i) => [x, from + i] as Px)
+const mark = (rows: Frame, pts: readonly Px[], ch: string): Frame => pts.reduce((r, [x, y]) => at(r, x, y, ch), rows)
+const CRY_PATHS: Px[][] = [column(4, 10, 11), column(11, 10, 11)]
+const cryBase = (rows: Frame): Frame => mark(rows, [[6, 11], [9, 11]], 'e')
+const crying = [0, 1, 2, 3, 4, 5].map(n =>
+  CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), [path[n % path.length] as Px, path[(n + 3) % path.length] as Px], 'T'), cryBase(mark(BASE, [[4, 8], [5, 8], [10, 8], [11, 8]], 'p'))),
+)
+
 const blob: Persona = {
   id: 'blob',
   name: 'Byte blob',
   kind: 'blob',
   temperament: 'Bubbly and easily startled; squeaks with joy, wobbles when worried.',
   palette: {
+    T: '#2f7dff', U: '#9fd0ff',
     o: '#1f6f66', p: '#5ee6d0', P: '#9ff5e6', w: '#ffffff', e: '#10202a',
     Z: '#9aa4d8', D: '#5ab0ff', C: '#ff4f8b', Y: '#ffd23f', L: '#39ff88', B: '#e8e2d0', b: '#7a6a4a', M: '#c9d4ff', m: '#5a5f80',
   },
@@ -95,6 +106,7 @@ const blob: Persona = {
     cheering: { frames: [0, 1, 2, 3, 4, 5].map(n => confetti(n % 2 ? smile : up(smile), n)), fps: 8 },
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
+    crying: { frames: crying, fps: 6 },
   },
   hatAnchor: { x: 7, y: 3 },
   voice: {
@@ -103,6 +115,7 @@ const blob: Persona = {
     oops: ['Splat! Something broke.', 'Eep! That was not supposed to happen.', 'Oof, I wobbled. Trying again?'],
     cheering: ['A streak! Bounce bounce!', 'So many days in a row! Wheee!', 'Streak party! Jiggle time!'],
     sleepy: ['Melting into a nap…', 'Bloop… so sleepy…', 'Puddle mode. Zzz.'],
+    crying: ['Waaah! Everything is melting!', 'Sniff… bloop…', 'I’m a puddle now.'],
     crewDone: ['The crew is done! Bloop!', 'Everyone checked! Wheee!', 'Review finished, all squishy-good!'],
   },
 }
