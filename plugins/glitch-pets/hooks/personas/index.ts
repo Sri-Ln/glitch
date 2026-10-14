@@ -1,6 +1,7 @@
 // Every pet, by id. A new pet is one persona file and one line here.
 import type { Persona, PetId } from '../behavior/types'
 import blob from './blob'
+import bud from './bud'
 import dot from './dot'
 import fork from './fork'
 import pixel from './pixel'
@@ -12,4 +13,5 @@ export const PERSONAS: Readonly<Partial<Record<PetId, Persona>>> = {
   pixel,
   dot,
   fork,
+  bud,
 }
