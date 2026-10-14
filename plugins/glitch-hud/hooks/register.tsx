@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderNode } from 'claude-code'
+import type { EngineInterface, Register, RenderNode, Timer } from 'claude-code'
 
 import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
 import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, withConfigCaps } from './budget'
-import { dueMark, shouldAutoWarm } from './cache'
+import { dueMark, endDemo, isDemoOver, shouldAutoWarm, startDemo, warnMarks } from './cache'
 import { BUDGET_USAGE, DEMO_USAGE, ROUTED, USAGE, WARM_PROMPT, budgetAlerts, budgetSummary, parseBudgetArg, splitArgs, warmMessage } from './commands'
 import { ALL_COST, ALL_PARTS, parseConfig, parseCostShows, parseParts } from './config'
 import type { HudConfig } from './config'
@@ -33,11 +33,28 @@ const ROW_GAP = 2
 // Cells on each side of the desktop's keep-warm glyph.
 const WARM_PAD = 1
 
+const COST_UNREADABLE = "Glitch: can't read the session cost right now; budget caps can't be checked until it's back."
+const LEDGER_FAILED = "Glitch: can't read or save the daily spend ledger right now; today's total may be incomplete."
+
+// A failed read marks cost and context stale (the band shows —, not a frozen
+// number) and says so once per conversation (session id); the next good read clears it.
 export async function refreshUsage($: EngineInterface): Promise<void> {
   const usage = await $.session.usage().catch(() => null)
-  if (!usage) return
+  if (!usage) {
+    const sessionId = await $.session.id().catch(() => 'session')
+    const warned = (await read($, stats)).staleWarnedFor === sessionId
+    await update($, stats, s => ({ ...s, isStale: true, staleWarnedFor: sessionId }))
+    if (!warned) {
+      try {
+        $.ui.toast(COST_UNREADABLE, { timeoutMs: 10_000 })
+      } catch {
+        // Nothing else to tell.
+      }
+    }
+    return
+  }
   const total = usage.cost?.usd ?? 0
-  await update($, stats, s => ({ ...s, total, turnCost: s.turn === 0 ? null : total - s.costAtStart, context: usage.context.percent ?? s.context }))
+  await update($, stats, s => ({ ...s, isStale: false, total, turnCost: s.turn === 0 ? null : total - s.costAtStart, context: usage.context.percent ?? s.context }))
 }
 
 // Engine calls handed to the pure helpers: `$` stays in this file.
@@ -73,9 +90,9 @@ async function refreshGit($: EngineInterface): Promise<void> {
   await update($, git, () => info)
 }
 
-export async function warnCache($: EngineInterface, config: HudConfig, minutes: number): Promise<void> {
+export async function warnCache($: EngineInterface, config: HudConfig, minutes: number, isDemo: boolean): Promise<void> {
   const title = `${projectName(await $.session.cwd().catch(() => ''))} — Glitch`
-  await notify(engineIO($), config.notify, title, `Prompt cache expires in ${minutes} min`)
+  await notify(engineIO($), config.notify, title, `Prompt cache expires in ${minutes} min${isDemo ? ' (demo)' : ''}`)
 }
 
 export async function keepWarm($: EngineInterface, ttlMs: number): Promise<string> {
@@ -87,7 +104,7 @@ export async function keepWarm($: EngineInterface, ttlMs: number): Promise<strin
     const reply = await $.model.fork({ prompt: WARM_PROMPT }).catch(() => ({ isAnswered: false as const, reason: 'request refused' }))
     if (reply.isAnswered) {
       const now = await $.clock.now()
-      await update($, cache, x => ({ ...x, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true }))
+      await update($, cache, x => ({ ...x, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true, real: null }))
     }
     return warmMessage(reply, ttlMs / 1000)
   } finally {
@@ -107,21 +124,38 @@ export async function recordSpend($: EngineInterface, config: HudConfig): Promis
   const based = rebase(await read($, budget), sessionId, total)
   const today = spendToday(based, total, now)
   const key = ledgerKey(today.day, sessionId)
+  // Any ledger call that fails leaves today's total short: said once per conversation
+  // (session id), and only when a daily cap is in force.
+  let isShort = false
+  const missed = () => {
+    isShort = true
+    return undefined
+  }
   // A key first written by this run may hold an earlier run's spend (a resume): add to it.
-  const prior = key === based.ledgerKey ? based.priorForKey : storedNumber(await $.store.get(key).catch(() => undefined))
+  const prior = key === based.ledgerKey ? based.priorForKey : storedNumber(await $.store.get(key).catch(missed))
   const mine = prior + today.spent
-  await $.store.set(key, mine).catch(() => undefined)
+  await $.store.set(key, mine).catch(missed)
 
   let daily = mine
-  for (const k of await $.store.keys().catch(() => [] as string[])) {
+  for (const k of await $.store.keys().catch(() => (missed(), [] as string[]))) {
     const entry = parseLedgerKey(k)
     if (!entry || k === key) continue
-    if (isExpired(entry.day, now)) await $.store.delete(k).catch(() => undefined)
-    else if (entry.day === today.day) daily += storedNumber(await $.store.get(k).catch(() => undefined))
+    if (isExpired(entry.day, now)) await $.store.delete(k).catch(missed)
+    else if (entry.day === today.day) daily += storedNumber(await $.store.get(k).catch(missed))
   }
+  const was = await read($, budget)
+  const tells = isShort && was.dailyCap > 0 && !was.isOff && was.ledgerWarnedFor !== sessionId
   await update($, budget, x => ({
     ...x, sessionId, day: today.day, dayBase: today.dayBase, lastTotal: total, ledgerKey: key, priorForKey: prior, dailySpent: daily,
+    ...(tells ? { ledgerWarnedFor: sessionId } : {}),
   }))
+  if (tells) {
+    try {
+      $.ui.toast(LEDGER_FAILED, { timeoutMs: 10_000 })
+    } catch {
+      // The caps below are still checked.
+    }
+  }
 
   const b = await read($, budget)
   if (b.isOff) return
@@ -167,9 +201,9 @@ async function demoCommand($: EngineInterface, what: string | undefined, value: 
   if (what === 'cache' && Number.isFinite(n) && n > 0) {
     const seconds = Math.round(n * 60)
     const now = await $.clock.now()
-    await update($, cache, c => ({ ...c, expiresAt: now + seconds * 1000, secondsLeft: seconds, warnedMark: 0 }))
+    await update($, cache, c => startDemo(c, now, seconds))
     await update($, view, v => ({ ...v, isHidden: false }))
-    return `Cache demo: ${value} min left until the next answer resets it.`
+    return `Cache demo: ${value} min left; the real countdown comes back when it ends or at the next answer.`
   }
   if (what === 'budget' && Number.isFinite(n) && n >= 0) {
     await update($, budget, b => ({ ...b, demoPercent: n }))
@@ -180,10 +214,11 @@ async function demoCommand($: EngineInterface, what: string | undefined, value: 
 
 // One answer for `/glitch-hud <args>` and the routed `/glitch <args>`.
 async function answerHud($: EngineInterface, config: HudConfig, args: string): Promise<string> {
-  const [sub = '', a, b] = splitArgs(args)
+  const [sub = '', a, b, ...more] = splitArgs(args)
   if (sub === 'hud') {
     if (a === 'parts') {
-      const parts = b ? parseParts(b) : null
+      // `cost, cache` arrives split at the space: the list is the rest of the line.
+      const parts = b ? parseParts([b, ...more].join(' ')) : null
       if (!parts) return `Unknown part. Parts: ${ALL_PARTS.join(', ')}.`
       await update($, view, v => ({ ...v, parts, isHidden: false }))
       return `HUD parts: ${parts.join(', ')}.`
@@ -205,15 +240,18 @@ async function answerHud($: EngineInterface, config: HudConfig, args: string): P
 }
 
 // The last warning mark may keep the cache warm by itself.
-async function autoWarm($: EngineInterface, config: HudConfig, mark: number): Promise<void> {
+async function autoWarm($: EngineInterface, config: HudConfig, mark: number, marks: number[]): Promise<void> {
   if (!config.autoWarm) return
   const c = await read($, cache)
-  const ok = shouldAutoWarm({ mark, marks: config.cacheWarnMinutes, now: await $.clock.now(), lastPromptAt: c.lastPromptAt, maxIdleMin: config.autoWarmMaxIdle, warmedSincePrompt: c.warmedSincePrompt })
+  const ok = shouldAutoWarm({ mark, marks, now: await $.clock.now(), lastPromptAt: c.lastPromptAt, maxIdleMin: config.autoWarmMaxIdle, warmedSincePrompt: c.warmedSincePrompt })
   if (ok) $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })
 }
 
 export const register: Register = (on, options) => {
   const { config, problems } = parseConfig(options as Record<string, unknown>)
+  // session.start fires again in the same load (compact, resume, fork): the
+  // timers of the earlier start are stopped before new ones begin.
+  let timers: Timer[] = []
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -240,25 +278,38 @@ export const register: Register = (on, options) => {
     // Sum the ledger now, so today counts the other sessions from the first draw.
     await recordSpend($, config).catch(() => undefined)
 
+    // The colors and the fitted marks read the lifetime from the state.
+    await update($, cache, c => ({ ...c, ttlMs: config.cacheTtlMs }))
+
+    for (const t of timers) t.cancel()
     // Each tick catches its own failure: one rejection must never end the interval.
-    $.clock.every(1000, async () => {
+    const countdown = $.clock.every(1000, async () => {
       try {
         const c = await read($, cache)
         if (c.expiresAt === null) return
-        const left = Math.max(0, Math.floor((c.expiresAt - (await $.clock.now())) / 1000))
+        const now = await $.clock.now()
+        // A demo that has run out (and shown "expired" a moment) gives the real deadline back.
+        if (isDemoOver(c, now)) {
+          await update($, cache, x => endDemo(x, now))
+          return
+        }
+        const left = Math.max(0, Math.floor((c.expiresAt - now) / 1000))
         if (left !== c.secondsLeft) await update($, cache, x => ({ ...x, secondsLeft: left }))
         if (c.isBusy) return
-        const mark = dueMark(left, config.cacheWarnMinutes, c.warnedMark)
+        const marks = warnMarks(config.cacheWarnMinutes, c.ttlMs ?? config.cacheTtlMs)
+        const mark = dueMark(left, marks, c.warnedMark)
         if (mark === null) return
         await update($, cache, x => ({ ...x, warnedMark: mark }))
-        await warnCache($, config, Math.ceil(left / 60))
-        await autoWarm($, config, mark)
+        const isDemo = !!c.real
+        await warnCache($, config, Math.ceil(left / 60), isDemo)
+        // A demo's warning is only a preview: it never sends a real (paid) ping.
+        if (!isDemo) await autoWarm($, config, mark, marks)
       } catch {
         // The next tick tries again.
       }
     })
 
-    $.clock.every(GIT_EVERY_MS, async () => {
+    const gitTick = $.clock.every(GIT_EVERY_MS, async () => {
       try {
         if ((await read($, cache)).isBusy) return
         await refreshGit($)
@@ -267,12 +318,17 @@ export const register: Register = (on, options) => {
         // The next refresh tries again.
       }
     })
+    timers = [countdown, gitTick]
     return started
   })
 
   on('turn.start', async ($, e, next) => {
-    const total = (await $.session.usage().catch(() => null))?.cost?.usd ?? (await read($, stats)).total
-    await update($, stats, s => ({ ...s, turn: s.turn + 1, costAtStart: total, total, turnCost: 0 }))
+    const usage = await $.session.usage().catch(() => null)
+    const total = usage?.cost?.usd ?? (await read($, stats)).total
+    await update($, stats, s => ({ ...s, turn: s.turn + 1, costAtStart: total, total, turnCost: 0, isStale: usage ? false : s.isStale }))
+    // A /clear or a /resume since the last turn: re-base before this turn spends.
+    const sessionId = await $.session.id().catch(() => 'session')
+    await update($, budget, b => rebase(b, sessionId, total))
     await update($, cache, c => ({ ...c, isBusy: true }))
     return next(e)
   })
@@ -310,14 +366,15 @@ export const register: Register = (on, options) => {
       // or failed before any request leaves the countdown as it was.
       if (e.reason === 'answer' || e.usage) {
         const now = await $.clock.now()
-        await update($, cache, c => ({ ...c, expiresAt: now + config.cacheTtlMs, secondsLeft: config.cacheTtlMs / 1000, warnedMark: 0 }))
+        await update($, cache, c => ({ ...c, expiresAt: now + config.cacheTtlMs, secondsLeft: config.cacheTtlMs / 1000, warnedMark: 0, real: null }))
       }
       await update($, budget, b => ({ ...b, demoPercent: null }))
       void refreshGit($)
       return result
     } finally {
-      // A turn that threw must not leave the band busy.
-      if (e.agentId === undefined) await update($, cache, c => ({ ...c, isBusy: false }))
+      // A turn that threw must not leave the band busy; a failure here must not
+      // hide the turn's own error.
+      if (e.agentId === undefined) await update($, cache, c => ({ ...c, isBusy: false })).catch(() => undefined)
     }
   })
 
@@ -331,7 +388,7 @@ export const register: Register = (on, options) => {
       } catch {
         // The next record re-bases under the new id either way.
       }
-      await update($, cache, c => ({ ...c, expiresAt: null, secondsLeft: null, warnedMark: 0 })).catch(() => undefined)
+      await update($, cache, c => ({ ...c, expiresAt: null, secondsLeft: null, warnedMark: 0, real: null })).catch(() => undefined)
     }
     return next(e)
   })
@@ -470,8 +527,9 @@ export const register: Register = (on, options) => {
   // `/glitch hud|budget|warm|demo` reaches this plugin through glitch-core; the host
   // refuses a nested command run, so the answer is given here. Anything else goes on.
   on('command.run', { command: 'glitch-hud' }, async ($, e) => ({ text: await answerHud($, config, e.args) }))
+  // A failed answer falls through to the hooks beneath, as an unknown subcommand does.
   on('command.run', { command: 'glitch' }, async ($, e, next) =>
-    ROUTED.includes(splitArgs(e.args)[0] ?? '') ? { text: await answerHud($, config, e.args) } : next(e))
+    ROUTED.includes(splitArgs(e.args)[0] ?? '') ? { text: await answerHud($, config, e.args) } : next(e)).catch(($, e, next) => next(e))
 
   // The only refusing hook: at a cap, new subagents are refused. A crash in the
   // check lets the call through.

@@ -49,9 +49,9 @@ Costs are Claude Code's own estimate at API prices, not a bill; on a subscriptio
 
 Claude Code's prompt cache lives for a fixed time after the last request: 1 hour on most plans, 5 minutes on others. Set `cacheTtlMinutes` to match (60 by default; set 5 if your account's cache lasts 5 minutes). The cache part counts down to that deadline from each answer and pauses (`…`) while a turn runs; a turn interrupted before any request leaves it as it was, and `/clear` drops it.
 
-With a 5-minute lifetime, warning marks at or above 5 can never fire: they are ignored and named once at session start, so set `cacheWarnMinutes` to e.g. `3,1`.
+Left empty, `cacheWarnMinutes` fits the lifetime: marks at 10 and 5 minutes left for 1 hour, at 2 and 1 for 5 minutes. Marks you type at or above the lifetime can never fire: they are ignored and named once at session start. The countdown turns the warning color at a third of the lifetime left (20 minutes of an hour, 1:40 of 5 minutes) and the alert color at a sixth (10 minutes, 0:50).
 
-- **Warnings.** At each `cacheWarnMinutes` mark (default 10 and 5 minutes left), once per answer, while idle, you get a notification titled `<project> — Glitch`: "Prompt cache expires in N min".
+- **Warnings.** At each warning mark, once per answer, while idle, you get a notification titled `<project> — Glitch`: "Prompt cache expires in N min".
 - **Notification chain.** With `notify` = `windows`, a native Windows toast is tried first; if that fails (or the OS is not Windows) Claude Code's own notification channel is used, then an in-app toast. `toast` goes straight to the in-app toast; `off` turns off the cache warnings and the budget-cap notification (the budget toasts above still show).
 - **Keep-warm.** `↻` on the cache part, or `/glitch warm`, sends a tool-less fork of the session's last request with a one-line question after it. The request is served from the prompt cache, which refreshes it, and nothing is added to the transcript. It is refused while a turn runs. The reply reports how many tokens were read from cache, and the countdown resets to the full lifetime (60:00, or 05:00).
 - **Cost.** One ping is a cache read of the whole context: about $0.04 at 200k tokens of context on Opus 5.5, versus about $1.60 to rebuild an expired cache.
@@ -109,11 +109,11 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 | `/glitch-pets [name\|off]` | pets | list pets, switch and persist, or turn the pet off |
 | `/glitch pet [name\|off]` | pets | the same, through the core command |
 | `/glitch hud` | hud | show or hide the band |
-| `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list without spaces, e.g. `cost,cache,context` |
+| `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list, e.g. `cost,cache,context` or `cost, cache` |
 | `/glitch hud cost <list>` | hud | cost figures and order for this session, e.g. `session,today` |
 | `/glitch budget [+N \| N \| off \| on]` | hud | show, raise, set, disable or re-enable this session's caps |
 | `/glitch warm` | hud | keep-warm ping now |
-| `/glitch demo cache <min>` | hud | preview the cache part and warnings at N minutes left |
+| `/glitch demo cache <min>` | hud | preview the cache part and warnings at N minutes left; demo warnings say "(demo)", never auto-warm, and the real countdown comes back when the demo runs out or at the next answer |
 | `/glitch demo budget <pct>` | hud | preview the budget levels at N percent |
 
 An unknown subcommand shows the help card. `/glitch budget +N` and `N` change this session's cap only; `off` disables both caps for this session.
@@ -139,7 +139,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`. In
 | `budgetDaily` | `0` | USD cap per local day, across sessions; 0 is off |
 | `budgetBlocksAgents` | `false` | refuse new subagents at a cap |
 | `cacheTtlMinutes` | `60` | prompt cache lifetime: `60` (most plans) or `5` |
-| `cacheWarnMinutes` | `10,5` | minutes-left marks that notify; marks at or above the lifetime are ignored |
+| `cacheWarnMinutes` | empty | minutes-left marks that notify; empty fits the lifetime (`10,5` for 1 hour, `2,1` for 5 minutes); marks at or above the lifetime are ignored |
 | `notify` | `windows` | `windows` (native toast), `toast` (inside Claude Code) or `off` (no cache or cap notifications; budget toasts still show) |
 | `autoWarm` | `false` | keep the cache warm by itself at the last warning mark |
 | `autoWarmMaxIdle` | `120` | minutes without a prompt from you after which autoWarm stops |

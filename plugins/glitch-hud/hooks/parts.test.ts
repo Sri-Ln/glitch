@@ -57,6 +57,13 @@ test('parts: colors follow budget, cache and context levels', async () => {
   expect(levelColor(T, 'ok')).toBe(T.good)
 })
 
+test('parts: a 5-minute cache is not red from the start', async () => {
+  const short = (secondsLeft: number) => segments('cache', { ...D, cache: { ...cache, secondsLeft, ttlMs: 5 * 60_000 } }, false)[1]?.color
+  expect(short(5 * 60)).toBeUndefined()
+  expect(short(100)).toBe(T.warn)
+  expect(short(50)).toBe(T.alert)
+})
+
 test('parts: ascii icons', async () => {
   const ascii = { ...D, theme: { ...T, icons: 'ascii' as const } }
   expect(text('speed', ascii)).toBe('> 84 tok/s')
@@ -67,6 +74,49 @@ test('parts: emoji count as two cells', async () => {
   expect(cellWidth('⏳ 47:12')).toBe(8)
   expect(cellWidth('⚡ 84 tok/s')).toBe(11)
   expect(cellWidth('🧠 63%')).toBe(6)
+})
+
+test('parts: warn-level cost and the red cache level', async () => {
+  // $3.10 of a $4 cap is 77.5%: warn.
+  const warn = { ...D, budget: { ...budget, sessionCap: 4 } }
+  expect(segments('cost', warn, false).every(s => s.dim || s.color === T.warn)).toBe(true)
+  const red = segments('cache', { ...D, cache: { ...cache, secondsLeft: 5 * 60 } }, false)
+  expect(red.map(s => s.color)).toEqual([T.alert, T.alert])
+  expect(red[1]?.text).toBe('05:00')
+})
+
+test('parts: git shows the behind count, or the branch alone when clean', async () => {
+  expect(text('git', { ...D, git: { branch: 'main', changed: 0, ahead: 0, behind: 3 } })).toBe('⎇ main ↓3')
+  expect(text('git', { ...D, git: { branch: 'main', changed: 2, ahead: 1, behind: 3 } })).toBe('⎇ main ±2 ↑1 ↓3')
+  expect(text('git', { ...D, git: { branch: 'feature/x', changed: 0, ahead: 0, behind: 0 } })).toBe('⎇ feature/x')
+})
+
+test('parts: the context bar clamps at 0 and 100', async () => {
+  const at = (context: number) => text('context', { ...D, stats: { ...stats, context } })
+  expect(at(0)).toBe('◔ ░░░░░░ 0%')
+  expect(at(-5)).toBe('◔ ░░░░░░ -5%')
+  expect(at(100)).toBe('◔ ▓▓▓▓▓▓ 100%')
+  expect(at(130)).toBe('◔ ▓▓▓▓▓▓ 130%')
+})
+
+test('parts: emoji icons', async () => {
+  const emoji = { ...D, theme: { ...T, icons: 'emoji' as const } }
+  expect(text('turn', emoji)).toBe('#12')
+  expect(text('speed', emoji)).toBe('⚡ 84 tok/s')
+  expect(text('cost', emoji)).toBe('💰 0.42 reply · 3.10 session · 21.40 today')
+  expect(text('cache', emoji)).toBe('⏳ 47:12')
+  expect(text('context', emoji)).toBe('🧠 ▓▓▓▓░░ 63%')
+  expect(text('git', emoji)).toBe('🌿 main ±4 ↑1')
+})
+
+test('parts: unreadable usage shows — for cost and context, not the last value', async () => {
+  const stale = { ...D, stats: { ...stats, isStale: true } }
+  expect(text('cost', stale)).toBe('$ —')
+  expect(text('context', stale)).toBe('◔ —')
+  expect(text('context', stale, true)).toBe('◔ —')
+  // The other parts do not come from the usage call.
+  expect(text('turn', stale)).toBe('#12')
+  expect(text('cache', stale)).toBe('⧗ 47:12')
 })
 
 test('parts: narrow widths drop git, then speed, then turn, then go compact', async () => {

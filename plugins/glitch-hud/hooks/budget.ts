@@ -43,11 +43,13 @@ export function isExpired(day: string, nowMs: number, keepDays = 7): boolean {
   return day < dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - (keepDays - 1)).getTime())
 }
 
-// A /clear or a resume keeps the process under a new session id. Today then counts
-// from the total now, or from 0 when the new session's total started over.
+// A /clear or a /resume keeps the process under a new session id. Called before
+// anything is spent under the new id (at the turn's start, or a /clear's record
+// with no turn since), today counts from the total now: a /clear that started
+// over is at 0, and a resumed session's earlier spend already sits on its days.
 export function rebase(b: Budget, sessionId: string, total: number): Budget {
   if (!b.sessionId || b.sessionId === sessionId) return { ...b, sessionId }
-  return { ...b, sessionId, dayBase: total < b.lastTotal ? 0 : total }
+  return { ...b, sessionId, dayBase: total, lastTotal: total }
 }
 
 // What this session spent on the current local day. A new day starts at the

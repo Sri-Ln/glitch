@@ -9,29 +9,53 @@ let usd = 0
 let toasts: string[] = []
 let store: Record<string, unknown> = {}
 let fork: unknown = { isAnswered: false, reason: 'nothing-to-fork' }
+let forks = 0
 let sessionId = 's1'
+// While set, the host refuses the plugin's store calls / its state writes.
+let storeFails = false
+let stateRefused = false
+let usageFails = false
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
 // `at` is what the session already cost and what the store already holds.
-const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<string, unknown> } = {}) => {
+const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<string, unknown>; refusable?: boolean } = {}) => {
   usd = at.usd ?? 0
   toasts = []
   store = { ...(at.store ?? {}) }
   sessionId = 's1'
   fork = { isAnswered: false, reason: 'nothing-to-fork' }
+  storeFails = false
+  stateRefused = false
+  usageFails = false
+  // Only where a test refuses writes: every write passing a test hook slows the long countdowns.
+  if (at.refusable) on('state.set', (_$, e, next) => (stateRefused ? ({ deny: 'state refused' } as never) : next(e)))
   const clock = mock.clock(on, { now: new Date(2026, 9, 12, 10).getTime() })
-  on('store.get', (_$, e) => ({ value: store[e.key] }) as never)
+  const refuse = () => {
+    if (storeFails) throw new Error('store refused')
+  }
+  on('store.get', (_$, e) => {
+    refuse()
+    return { value: store[e.key] } as never
+  })
   on('store.set', (_$, e) => {
+    refuse()
     store[e.key] = e.value
     return { value: undefined } as never
   })
   on('store.delete', (_$, e) => {
+    refuse()
     delete store[e.key]
     return { value: undefined } as never
   })
-  on('store.keys', () => ({ value: Object.keys(store) }) as never)
+  on('store.keys', () => {
+    refuse()
+    return { value: Object.keys(store) } as never
+  })
   mock.env(on, {})
-  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, percent: 10 }, rateLimits: [], cost: { usd } } }) as never)
+  on('session.usage', () => {
+    if (usageFails) throw new Error('usage refused')
+    return { value: { startedAt: 0, context: { window: 1_000_000, percent: 10 }, rateLimits: [], cost: { usd } } } as never
+  })
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: '' } }) as never)
   on('session.cwd', () => ({ value: 'C:\\repo' }) as never)
   on('session.id', () => ({ value: sessionId }) as never)
@@ -41,7 +65,9 @@ const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<strin
     return { value: undefined } as never
   })
   on('ui.notify', () => ({ value: { isSent: true, channel: 'terminal_bell' } }) as never)
+  forks = 0
   on('model.fork', () => {
+    forks++
     if (fork === 'reject') throw new Error('fork refused')
     return { value: fork } as never
   })
@@ -67,6 +93,9 @@ test('hud: toggles the band and sets parts', async ($, on) => {
   expect(await run($, 'hud')).toBe('Glitch HUD hidden.')
   expect(await run($, 'hud')).toBe('Glitch HUD shown.')
   expect(await run($, 'hud parts cost,cache')).toBe('HUD parts: cost, cache.')
+  expect(await run($, 'hud parts cost, cache')).toBe('HUD parts: cost, cache.')
+  expect(await run($, 'hud parts  turn ,  git ')).toBe('HUD parts: turn, git.')
+  expect(await run($, 'hud parts cost cache')).toBe('Unknown part. Parts: turn, speed, cost, cache, context, git.')
   expect(await run($, 'hud parts cost,bogus')).toBe('Unknown part. Parts: turn, speed, cost, cache, context, git.')
   expect(await run($, 'hud cost today,session')).toBe('HUD cost: today, session.')
   expect(await run($, 'hud cost month')).toBe('Unknown cost figure. Figures: reply, session, today.')
@@ -150,6 +179,7 @@ test('budget: a /clear under a new session id does not count twice', { options: 
   await turn($, 2)
   // The process goes on under a new id; its cost starts over.
   sessionId = 's2'
+  usd = 0
   await turn($, 0.5)
   await turn($, 0.75)
   expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:s2': 0.75 })
@@ -162,7 +192,44 @@ test('budget: a new session id whose total goes on is not counted twice', { opti
   sessionId = 's2'
   await turn($, 2.5)
   await turn($, 3)
-  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:s2': 0.5 })
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:s2': 1 })
+  expect(await run($, 'budget')).toBe('Session $3.00 / off · Today $3.00 / $10.00 (30%)')
+})
+
+test('budget: a /resume in the process does not count the resumed spend twice', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 2)
+  // Resume X: an earlier run spent $1 of it today, and its total starts at that $1.
+  sessionId = 'X'
+  usd = 1
+  store['ledger:2026-10-12:X'] = 1
+  await turn($, 1.25)
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:X': 1.25 })
+  expect(await run($, 'budget')).toBe('Session $1.25 / off · Today $3.25 / $10.00 (33%)')
+})
+
+test('budget: the idle re-sum around a /resume does not count the resumed spend twice', { options: { budgetDaily: 10 } }, async ($, on) => {
+  const clock = await start($, on)
+  await turn($, 2)
+  sessionId = 'X'
+  usd = 1
+  store['ledger:2026-10-12:X'] = 1
+  // The timer sums the ledger before the resumed session's first turn, and again after it.
+  await clock.advance(30_000)
+  await turn($, 1.25)
+  await clock.advance(30_000)
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:X': 1.25 })
+  expect(await run($, 'budget')).toBe('Session $1.25 / off · Today $3.25 / $10.00 (33%)')
+})
+
+test('budget: a /clear right after a /resume adds nothing to the resumed key', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 2)
+  sessionId = 'X'
+  usd = 1
+  store['ledger:2026-10-12:X'] = 1
+  await $.session.end({ reason: 'clear', sessionId: 'X', resume: { id: 'X' } } as never)
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:X': 1 })
 })
 
 test('budget: session.end on /clear records the spend so far', { options: { budgetDaily: 10 } }, async ($, on) => {
@@ -239,12 +306,153 @@ test('auto-warm: the last mark pings once when idle time allows', { options: { a
   expect(toasts).toEqual(['Glitch: Cache kept warm (200k tokens read from cache). Next expiry in 60:00.'])
 })
 
+test('auto-warm: no ping once the person was idle past autoWarmMaxIdle', { options: { autoWarm: true, autoWarmMaxIdle: 30, notify: 'off' } }, async ($, on) => {
+  on('prompt.submit', () => ({ text: 'hi' }) as never)
+  const clock = await start($, on)
+  await ($.prompt.submit as unknown as (e: unknown) => Promise<unknown>)({ text: 'hi', origin: { kind: 'composer' }, turnId: 't' })
+  await turn($, 0.1)
+  fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 200_000, cache_creation_input_tokens: 0 } }
+  // The last mark (5 min left) comes 55 minutes after the prompt.
+  await clock.advance(55 * 60_000)
+  expect(toasts).toEqual([])
+})
+
+test('auto-warm: no second ping without a prompt between', { timeoutMs: 20_000, options: { autoWarm: true, notify: 'off' } }, async ($, on) => {
+  on('prompt.submit', () => ({ text: 'hi' }) as never)
+  const clock = await start($, on)
+  const submit = () => ($.prompt.submit as unknown as (e: unknown) => Promise<unknown>)({ text: 'hi', origin: { kind: 'composer' }, turnId: 't' })
+  await submit()
+  await turn($, 0.1)
+  fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 200_000, cache_creation_input_tokens: 0 } }
+  await clock.advance(55 * 60_000)
+  expect(toasts).toHaveLength(1)
+  // The ping reset the countdown; its last mark comes again, with no prompt since.
+  await clock.advance(55 * 60_000)
+  expect(toasts).toHaveLength(1)
+  // A prompt of the person's own re-arms it.
+  await submit()
+  await clock.advance(5 * 60_000)
+  expect(toasts).toHaveLength(1)
+  await turn($, 0.2)
+  await clock.advance(55 * 60_000)
+  expect(toasts).toHaveLength(2)
+})
+
+test('budget: lowering the session cap below the spend so far', { options: { budgetSession: 10, budgetBlocksAgents: true } }, async ($, on) => {
+  await start($, on)
+  await turn($, 5)
+  expect(await agent($)).toMatchObject({ result: 'ran' })
+  expect(await run($, 'budget 3')).toBe('Session cap: $3.00.')
+  expect(await run($, 'budget')).toBe('Session $5.00 / $3.00 (167%) · Today $5.00 / off')
+  // Already over: the subagent is refused at once, and the next answer does not toast the crossing again.
+  expect(await agent($)).toMatchObject({ deny: 'Glitch budget cap $3.00 reached (session). Ask the user to raise it with /glitch budget +N.' })
+  await turn($, 5.5)
+  expect(toasts.filter(t => t.includes('cap'))).toEqual([])
+})
+
+test('/glitch: an answer that fails falls through to the hooks beneath', async ($, on) => {
+  await start($, on, { refusable: true })
+  stateRefused = true
+  expect(await run($, 'hud', 'glitch')).toBe('core')
+})
+
+test('budget: a store that fails toasts once that today may be incomplete', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  storeFails = true
+  await turn($, 1)
+  await turn($, 2)
+  expect(toasts).toEqual(["Glitch: can't read or save the daily spend ledger right now; today's total may be incomplete."])
+  storeFails = false
+  await turn($, 3)
+  expect(store['ledger:2026-10-12:s1']).toBe(3)
+  expect(toasts).toHaveLength(1)
+})
+
+const LEDGER_TOAST = "Glitch: can't read or save the daily spend ledger right now; today's total may be incomplete."
+const COST_TOAST = "Glitch: can't read the session cost right now; budget caps can't be checked until it's back."
+
+test('budget: a failing ledger stays silent without a daily cap', { options: { budgetSession: 10 } }, async ($, on) => {
+  await start($, on)
+  storeFails = true
+  await turn($, 1)
+  expect(toasts).toEqual([])
+})
+
+test('budget: a failing ledger stays silent while caps are off', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await run($, 'budget off')
+  storeFails = true
+  await turn($, 1)
+  expect(toasts).toEqual([])
+  // Caps back on: now it matters, and it is said.
+  await run($, 'budget on')
+  await turn($, 2)
+  expect(toasts).toEqual([LEDGER_TOAST])
+})
+
+test('once per session: a new session id says the failures again', { options: { budgetDaily: 10 } }, async ($, on) => {
+  await start($, on)
+  await turn($, 1)
+  storeFails = true
+  usageFails = true
+  await turn($, 1.5)
+  await turn($, 2)
+  expect(toasts).toEqual([COST_TOAST, LEDGER_TOAST])
+  // A /clear or a resume goes on under a new id: a new conversation.
+  sessionId = 's2'
+  await turn($, 2.5)
+  expect(toasts).toEqual([COST_TOAST, LEDGER_TOAST, COST_TOAST, LEDGER_TOAST])
+  await turn($, 3)
+  expect(toasts).toHaveLength(4)
+})
+
 test('demo: cache and budget previews', async ($, on) => {
   await start($, on)
   await turn($, 0.1)
-  expect(await run($, 'demo cache 4')).toBe('Cache demo: 4 min left until the next answer resets it.')
+  expect(await run($, 'demo cache 4')).toBe('Cache demo: 4 min left; the real countdown comes back when it ends or at the next answer.')
   expect(await run($, 'demo budget 95')).toBe('Budget demo: 95% until the next answer.')
   expect(await run($, 'demo')).toBe('Usage: /glitch demo cache <minutes> | demo budget <percent>')
+})
+
+const WARM = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 200_000, cache_creation_input_tokens: 0 } }
+
+test('demo: a cache demo warns as a demo, never auto-warms, and gives the real deadline back', { options: { autoWarm: true, notify: 'toast' } }, async ($, on) => {
+  on('prompt.submit', () => ({ text: 'hi' }) as never)
+  const clock = await start($, on)
+  await ($.prompt.submit as unknown as (e: unknown) => Promise<unknown>)({ text: 'hi', origin: { kind: 'composer' }, turnId: 't' })
+  await turn($, 0.1)
+  fork = WARM
+  await clock.advance(10 * 60_000)
+  await run($, 'demo cache 4')
+  // The demo's 4 minutes sit inside the last mark (5): it warns, marked a demo, and pings nothing.
+  await clock.advance(60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 4 min (demo)'])
+  expect(forks).toBe(0)
+  // Once the demo has run out, the real deadline (50 minutes from the answer) is back.
+  await clock.advance(4 * 60_000)
+  expect(toasts).toHaveLength(1)
+  await clock.advance(34 * 60_000)
+  expect(toasts).toHaveLength(1)
+  await clock.advance(60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 4 min (demo)', 'repo — Glitch: Prompt cache expires in 10 min'])
+  // The real last mark auto-warms as before.
+  await clock.advance(5 * 60_000)
+  expect(forks).toBe(1)
+  expect(toasts.at(-1)).toBe('Glitch: Cache kept warm (200k tokens read from cache). Next expiry in 60:00.')
+})
+
+test('demo: the next answer ends a cache demo', { options: { notify: 'toast' } }, async ($, on) => {
+  const clock = await start($, on)
+  await turn($, 0.1)
+  await clock.advance(30 * 60_000)
+  await run($, 'demo cache 1')
+  await turn($, 0.2)
+  // The fresh answer's hour counts, not the demo's minute nor the old deadline.
+  toasts.length = 0
+  await clock.advance(49 * 60_000)
+  expect(toasts).toEqual([])
+  await clock.advance(60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 10 min'])
 })
 
 test('unknown subcommand shows usage', async ($, on) => {

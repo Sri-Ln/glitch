@@ -29,6 +29,10 @@ export type Stats = {
   /** Context fill, 0–100. */
   context: number
   costAtStart: number
+  /** The last usage read failed: cost and context show — until one succeeds. */
+  isStale?: boolean
+  /** The session id the unreadable cost was announced for: once per conversation. */
+  staleWarnedFor?: string
 }
 
 export type CacheState = {
@@ -41,6 +45,10 @@ export type CacheState = {
   lastPromptAt: number
   /** A keep-warm ran since the person's last prompt. */
   warmedSincePrompt: boolean
+  /** The cache lifetime the countdown runs from, ms; absent reads as an hour. */
+  ttlMs?: number
+  /** The real deadline, set aside while `/glitch demo cache` runs; absent or null when no demo runs. */
+  real?: { expiresAt: number | null; warnedMark: number } | null
   /** A keep-warm request is running: the control reads … meanwhile. */
   isWarming: boolean
 }
@@ -68,6 +76,8 @@ export type Budget = {
   priorForKey: number
   /** `/glitch budget +N | N` set the session cap; the settings cap no longer applies. */
   sessionCapOverridden: boolean
+  /** The session id a failed ledger call was announced for: once per conversation. */
+  ledgerWarnedFor?: string
 }
 
 export type GitInfo = { branch: string; changed: number; ahead: number; behind: number }
