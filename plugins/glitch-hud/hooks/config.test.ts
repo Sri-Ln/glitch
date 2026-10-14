@@ -88,3 +88,12 @@ test('config: the cost figures keep the given order; a bad list falls back to al
   expect(config.costShows).toEqual(['reply', 'session', 'today'])
   expect(problems).toEqual(['costShows: use reply, session or today, using reply,session,today'])
 })
+
+test('showSpeed: auto by default; auto, on or off; anything else is named', () => {
+  expect(DEFAULT_CONFIG.speed).toBe('auto')
+  expect(parseConfig({ showSpeed: 'on' }).config.speed).toBe('on')
+  expect(parseConfig({ showSpeed: 'off' }).config.speed).toBe('off')
+  const bad = parseConfig({ showSpeed: 'fast' })
+  expect(bad.config.speed).toBe('auto')
+  expect(bad.problems).toEqual(['showSpeed: must be auto, on or off, using auto'])
+})

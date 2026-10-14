@@ -1,7 +1,7 @@
 // Initial values of the plugin's state atoms. The atoms themselves are declared in
 // register.tsx: the load-time scan only follows atoms declared in the file that
 // reads and writes them.
-import type { Budget, CacheState, GitInfo, Stats, View } from '../types'
+import type { Budget, CacheState, GitInfo, Poke, Stats, View } from '../types'
 import { DEFAULT_CONFIG } from './config'
 import type { HudConfig } from './config'
 
@@ -33,4 +33,6 @@ export const INITIAL_BUDGET: Budget = initialBudget(DEFAULT_CONFIG)
 
 export const INITIAL_GIT: GitInfo | null = null
 
-export const INITIAL_VIEW: View = { isHidden: false, parts: null, cost: null }
+export const INITIAL_VIEW: View = { isHidden: false, parts: null, cost: null, speed: null }
+
+export const INITIAL_POKE: Poke = { at: 0 }

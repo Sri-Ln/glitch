@@ -457,7 +457,7 @@ test('demo: the next answer ends a cache demo', { options: { notify: 'toast' } }
 
 test('unknown subcommand shows usage', async ($, on) => {
   await start($, on)
-  expect(await run($, 'dance')).toBe('Glitch HUD: /glitch hud [parts <list> | cost <list>] · budget [+N|N|off|on] · warm · demo cache <min> | demo budget <pct>')
+  expect(await run($, 'dance')).toBe('Glitch HUD: /glitch hud [parts <list> | cost <list> | speed on|off|auto] · budget [+N|N|off|on] · warm · demo cache <min> | demo budget <pct>')
 })
 
 test('/glitch: routed subcommands are answered here, others go on', { options: { budgetSession: 5 } }, async ($, on) => {

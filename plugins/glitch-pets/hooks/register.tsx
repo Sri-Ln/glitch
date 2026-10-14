@@ -14,9 +14,9 @@ import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petArgsOf, petList } f
 import { parsePetsConfig } from './config'
 import type { PetsConfig } from './config'
 import { PERSONAS } from './personas/index'
-import { onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
+import { onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
 
-const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, failStreak: 0 }
+const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, failStreak: 0, pokedUntil: 0, pokeSeen: 0 }
 
 export const sprite = atom({ plugin: 'glitch-pets', key: 'sprite' } as const, null as Sprite | null)
 export const mood = atom({ plugin: 'glitch-pets', key: 'mood' } as const, INITIAL_MOOD)
@@ -65,6 +65,14 @@ async function hudCache($: EngineInterface): Promise<unknown> {
   }
 }
 
+async function hudPoke($: EngineInterface): Promise<unknown> {
+  try {
+    return (await $.state.get({ plugin: 'glitch-hud', key: 'poke' } as const)).value
+  } catch {
+    return null
+  }
+}
+
 async function say($: EngineInterface, moment: VoiceMoment) {
   const p = personaFor((await read($, view)).petId)
   if (!p) return
@@ -88,6 +96,11 @@ async function tick($: EngineInterface) {
   const stats = (await hudStats($)) as { total?: number } | null
   const b = (await hudBudget($)) as BudgetLike | null
   const c = (await hudCache($)) as { secondsLeft?: number | null } | null
+  // A click on the pet (glitch-hud draws it and records the press) starts a hop.
+  const pressed = (await hudPoke($)) as { at?: unknown } | null
+  if (typeof pressed?.at === 'number' && pressed.at > (await read($, mood)).pokeSeen) {
+    await update($, mood, x => onPoke(x, pressed.at as number, now))
+  }
   const m = await read($, mood)
   const r = tickOnce({
     now, persona: p, player, state: m, lastSource, total: stats?.total ?? 0, budget: b, cacheSecondsLeft: c?.secondsLeft ?? null,

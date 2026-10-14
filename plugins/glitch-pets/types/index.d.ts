@@ -23,6 +23,10 @@ export type MoodState = {
   cryUntil: number
   /** Failures in a row in the main loop; three make the pet cry. */
   failStreak: number
+  /** Hopping until (clock ms): the person clicked the pet. */
+  pokedUntil: number
+  /** The last glitch-hud press (its `poke.at`) already answered. */
+  pokeSeen: number
 }
 
 export type PetsView = { petId: PetId | 'off' }

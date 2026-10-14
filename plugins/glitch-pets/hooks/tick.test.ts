@@ -2,8 +2,8 @@ import { expect, test } from 'claude-code/testing'
 
 import { createPlayer } from './behavior/player'
 import { PERSONAS } from './personas/index'
-import { CHEER_MS, CRY_MS, HAPPY_MS, OOPS_MS } from './behavior/moods'
-import { failTick, isMainLoopError, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
+import { CHEER_MS, CRY_MS, HAPPY_MS, OOPS_MS, POKE_MS } from './behavior/moods'
+import { POKE_FRESH_MS, failTick, isMainLoopError, onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
 import type { TickInputs } from './tick'
 
 const bud = PERSONAS.bud as NonNullable<typeof PERSONAS.bud>
@@ -11,7 +11,7 @@ const base = (over: Partial<TickInputs> = {}): TickInputs => ({
   now: 1000,
   persona: bud,
   player: createPlayer(),
-  state: { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, failStreak: 0 },
+  state: { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, failStreak: 0, pokedUntil: 0, pokeSeen: 0 },
   lastSource: null,
   total: 0,
   budget: null,
@@ -111,4 +111,27 @@ test('a broken streak sets cryUntil and a cheer sets cheerUntil', () => {
   expect(onTurnStartStreak(S0, { cheer: false, broken: true }, 1000).cryUntil).toBe(1000 + CRY_MS)
   expect(onTurnStartStreak(S0, { cheer: true, broken: false }, 1000).cheerUntil).toBe(1000 + CHEER_MS)
   expect(onTurnStartStreak(S0, { cheer: false, broken: false }, 1000)).toEqual(S0)
+})
+
+test('a new press starts a hop; the pet goes back to its mood after', () => {
+  const state = { ...base().state, mood: 'working' as const, turnSince: 0 }
+  const poked = onPoke(state, 1000, 1000)
+  expect(poked.pokedUntil).toBe(1000 + POKE_MS)
+  expect(poked.pokeSeen).toBe(1000)
+  expect(tickOnce(base({ now: 1100, state: poked })).mood).toBe('happy')
+  expect(tickOnce(base({ now: 1000 + POKE_MS, state: { ...poked, mood: 'happy' } })).mood).toBe('working')
+})
+
+test('clicks during a hop do not restart it; a press already seen does nothing', () => {
+  const poked = onPoke(base().state, 1000, 1000)
+  const again = onPoke(poked, 1500, 1500)
+  expect(again.pokedUntil).toBe(poked.pokedUntil)
+  expect(again.pokeSeen).toBe(1500)
+  expect(onPoke(again, 1500, 1600)).toBe(again)
+})
+
+test('a press from before a reload plays nothing', () => {
+  const r = onPoke(base().state, 1000, 1000 + POKE_FRESH_MS + 1)
+  expect(r.pokedUntil).toBe(0)
+  expect(r.pokeSeen).toBe(1000)
 })

@@ -1,5 +1,5 @@
 // One timer tick as a pure decision: which mood, which frame, and did anything change.
-import { CHEER_MS, CRY_FAILS, CRY_MS, HAPPY_MS, OOPS_MS, budgetFraction, isCapReached, moodOf } from './behavior/moods'
+import { CHEER_MS, CRY_FAILS, CRY_MS, HAPPY_MS, OOPS_MS, POKE_MS, budgetFraction, isCapReached, moodOf } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
 import type { MoodState } from '../types'
 import type { MoodId, Persona, Sprite } from './behavior/types'
@@ -31,7 +31,7 @@ export type TickResult = {
 export function tickOnce(i: TickInputs): TickResult {
   const m = i.state
   const mood = moodOf({
-    now: i.now, turnSince: m.turnSince, lastPromptAt: m.lastPromptAt, oopsUntil: m.oopsUntil, happyUntil: m.happyUntil, cheerUntil: m.cheerUntil, cryUntil: m.cryUntil,
+    now: i.now, turnSince: m.turnSince, lastPromptAt: m.lastPromptAt, oopsUntil: m.oopsUntil, happyUntil: m.happyUntil, cheerUntil: m.cheerUntil, cryUntil: m.cryUntil, pokedUntil: m.pokedUntil ?? 0,
     capReached: isCapReached(i.budget, i.total), budget: budgetFraction(i.budget, i.total), cacheSecondsLeft: i.cacheSecondsLeft,
     helpersRunning: i.helpersRunning, reviewerRunning: i.reviewerRunning, tiredMs: i.tiredMs, sleepyMs: i.sleepyMs,
   })
@@ -74,4 +74,15 @@ export function onTurnEnd(m: MoodState, reason: string, now: number): MoodState 
 /** At the first main-loop turn of a day: a milestone cheers, a broken streak cries. */
 export function onTurnStartStreak(m: MoodState, r: { cheer: boolean; broken: boolean }, now: number): MoodState {
   return { ...m, ...(r.cheer ? { cheerUntil: now + CHEER_MS } : {}), ...(r.broken ? { cryUntil: now + CRY_MS } : {}) }
+}
+
+/** A press older than this when first seen (one from before a reload) plays nothing. */
+export const POKE_FRESH_MS = 1000
+
+/** A new press on the pet: a hop, unless one is playing (repeat clicks change nothing) or the press is stale. */
+export function onPoke(m: MoodState, at: number, now: number): MoodState {
+  if (at <= (m.pokeSeen ?? 0)) return m
+  const seen = { ...m, pokeSeen: at }
+  if ((m.pokedUntil ?? 0) > now || now - at > POKE_FRESH_MS) return seen
+  return { ...seen, pokedUntil: now + POKE_MS }
 }
