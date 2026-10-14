@@ -41,6 +41,8 @@ export type CacheState = {
   lastPromptAt: number
   /** A keep-warm ran since the person's last prompt. */
   warmedSincePrompt: boolean
+  /** A keep-warm request is running: the control reads … meanwhile. */
+  isWarming: boolean
 }
 
 export type Budget = {

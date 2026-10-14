@@ -25,8 +25,11 @@ export const view = atom({ plugin: 'glitch-hud', key: 'view' } as const, INITIAL
 // Responses shorter than this are mostly tool-call stubs; their timing is noise.
 const MIN_TOKENS = 20
 const MIN_SECONDS = 0.5
+// Git and today's ledger are read again on this timer while idle.
 const GIT_EVERY_MS = 30_000
 const ROW_GAP = 2
+// Cells on each side of the desktop's keep-warm glyph.
+const WARM_PAD = 1
 
 export async function refreshUsage($: EngineInterface): Promise<void> {
   const usage = await $.session.usage().catch(() => null)
@@ -64,13 +67,21 @@ export async function warnCache($: EngineInterface, config: HudConfig, minutes: 
 }
 
 export async function keepWarm($: EngineInterface, ttlMs: number): Promise<string> {
-  if ((await read($, cache)).isBusy) return 'Claude is working, so the cache is warm already.'
-  const reply = await $.model.fork({ prompt: WARM_PROMPT }).catch(() => ({ isAnswered: false as const, reason: 'request refused' }))
-  if (reply.isAnswered) {
-    const now = await $.clock.now()
-    await update($, cache, c => ({ ...c, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true }))
+  const c = await read($, cache)
+  if (c.isBusy) return 'Claude is working, so the cache is warm already.'
+  if (c.isWarming) return 'A keep-warm request is already running.'
+  await update($, cache, x => ({ ...x, isWarming: true }))
+  try {
+    const reply = await $.model.fork({ prompt: WARM_PROMPT }).catch(() => ({ isAnswered: false as const, reason: 'request refused' }))
+    if (reply.isAnswered) {
+      const now = await $.clock.now()
+      await update($, cache, x => ({ ...x, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true }))
+    }
+    return warmMessage(reply, ttlMs / 1000)
+  } finally {
+    // The control goes back to ↻ however the request ended.
+    await update($, cache, x => ({ ...x, isWarming: false })).catch(() => undefined)
   }
-  return warmMessage(reply, ttlMs / 1000)
 }
 
 const storedNumber = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
@@ -109,6 +120,19 @@ export async function recordSpend($: EngineInterface, config: HudConfig): Promis
     const title = `${projectName(await $.session.cwd().catch(() => ''))} — Glitch`
     await notify(engineIO($), config.notify, title, alerts.notice)
   }
+}
+
+// Sums today's ledger again without writing it, so a session that sits idle
+// still sees what the others spent since its own last answer. Its own entry
+// counts as stored: `todaySpent` adds what it spent since.
+async function sumToday($: EngineInterface): Promise<void> {
+  const b = await read($, budget)
+  if (b.day !== dayKey(await $.clock.now())) return
+  let daily = 0
+  for (const k of await $.store.keys()) {
+    if (parseLedgerKey(k)?.day === b.day) daily += storedNumber(await $.store.get(k))
+  }
+  await update($, budget, x => ({ ...x, dailySpent: daily }))
 }
 
 async function budgetCommand($: EngineInterface, arg: string | undefined): Promise<string> {
@@ -224,7 +248,9 @@ export const register: Register = (on, options) => {
 
     $.clock.every(GIT_EVERY_MS, async () => {
       try {
-        if (!(await read($, cache)).isBusy) await refreshGit($)
+        if ((await read($, cache)).isBusy) return
+        await refreshGit($)
+        await sumToday($)
       } catch {
         // The next refresh tries again.
       }
@@ -325,11 +351,13 @@ export const register: Register = (on, options) => {
         costShows: v.cost ?? config.costShows,
       }
       // Surfaces with Svg (desktop, VS Code, mobile) get icons and a real bar.
-      // The desktop shows the branch in its own row, so git is left out there unless
-      // the person chose the parts.
+      // The desktop shows the branch in its own row and the conversation above, so
+      // git and the turn count are left out there unless the person chose the parts.
       const rich = e.surface !== 'terminal'
       const chosen = v.parts !== null || config.partsExplicit
-      const parts = (v.parts ?? config.parts).filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
+      const parts = (v.parts ?? config.parts)
+        .filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
+        .filter(id => id !== 'turn' || !rich || chosen)
       const width = (id: (typeof parts)[number], compact: boolean) =>
         rich
           ? richWidth(richPart(id, data, compact))
@@ -338,7 +366,7 @@ export const register: Register = (on, options) => {
       // a gap each, the spacer a gap. The cache part is never dropped, so ↻ shows
       // exactly when it is asked for here.
       const showsWarm = parts.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking
-      const reserve = (showsWarm ? 1 + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP)
+      const reserve = (showsWarm ? (rich ? 1 + 2 * WARM_PAD : 1) + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP)
       const { shown, compact } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
 
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
@@ -355,6 +383,14 @@ export const register: Register = (on, options) => {
           </Text>
         ))
       const Svg = 'Svg' in ui ? ui.Svg : null
+      // A failed keep-warm only loses its toast.
+      const warm = async () => {
+        try {
+          $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })
+        } catch {
+          // Nothing to show.
+        }
+      }
       const items = rich && Svg
         ? [
             <Box key="glitch-parts" flexDirection="row" flexGrow={1} justifyContent="space-between" columnGap={ROW_GAP} overflow="hidden">
@@ -378,11 +414,20 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column">
           <Box flexDirection="row" columnGap={ROW_GAP} flexWrap="nowrap" overflow="hidden" alignItems="center">
             {items}
+            {/* One glyph: the desktop draws a Button as a native button with its whole
+                label, so a long label over an icon showed as cut-off text. */}
             {showsWarm ? (
-              <Button key="glitch-warm" label="↻" plain onPress={async () => $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })} />
+              rich ? (
+                // The desktop draws the glyph flush against its neighbours: a cell each side.
+                <Box key="glitch-warm-box" paddingX={WARM_PAD} flexShrink={0}>
+                  <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain dimColor onPress={warm} />
+                </Box>
+              ) : (
+                <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain onPress={warm} />
+              )
             ) : null}
             {rich && Svg ? null : <Box flexGrow={1} />}
-            <Button key="glitch-hide" label="×" plain role="dismiss" dimColor onPress={() => update($, view, x => ({ ...x, isHidden: true }))} />
+            <Button key="glitch-hide" label={rich && Svg ? '✕' : '×'} plain role="dismiss" dimColor onPress={() => update($, view, x => ({ ...x, isHidden: true }))} />
           </Box>
           {below}
         </Box>

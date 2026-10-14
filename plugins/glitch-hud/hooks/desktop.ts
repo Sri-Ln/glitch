@@ -6,7 +6,7 @@
 // with its color or fill, never with the clock, so a redraw each second reuses it.
 // No hover tooltips: an interactive Svg is a frame of its own, which the desktop
 // drew far taller than the row and rebuilt on every tick.
-import type { CostScope, PartId } from '../types'
+import type { CostScope, Level, PartId } from '../types'
 import { costLevel, todaySpent, usd } from './budget'
 import { cacheLevel, clockText } from './cache'
 import { cellWidth, costFigures, levelColor } from './parts'
@@ -27,6 +27,14 @@ const ICON_SIZE = 14
 // Theme colors come from a custom theme too: only a hex value or a color name
 // reaches the markup.
 export const safeColor = (c: string | undefined): string => (c && /^(#[0-9a-f]{3,8}|[a-z]+)$/i.test(c) ? c : 'currentColor')
+
+// The cost in the host's own status colors, as its diff counts are drawn: the
+// themes' colors are made for a dark terminal and wash out on a light band. The
+// text names them, so they follow the person's light or dark mode; the icon is an
+// image and cannot, so it takes the light-mode shades sampled from the desktop.
+export const HOST_COLOR = { ok: 'success', warn: 'warning', alert: 'error' } as const
+export const HOST_HEX = { ok: '#24a041', warn: '#b7791f', alert: '#ce295b' } as const
+const hostLevel = (l: Level): keyof typeof HOST_COLOR => (l === 'over' ? 'alert' : l)
 
 type IconKind = 'speed' | 'cost' | 'cache'
 
@@ -106,9 +114,10 @@ export function richPart(id: PartId, d: PartData, compact: boolean): RichPart {
       }
     case 'cost': {
       // Compact keeps the figures alone; the tooltip still names them.
-      const color = levelColor(t, costLevel(d.budget, s.total))
+      const level = hostLevel(costLevel(d.budget, s.total))
+      const color = HOST_COLOR[level]
       return {
-        graphic: iconSvg('cost', color, costTip(d)),
+        graphic: iconSvg('cost', HOST_HEX[level], costTip(d)),
         segments: costFigures(d).flatMap((f, n): Segment[] => [
           ...(n > 0 ? [{ text: ' · ', dim: true }] : []),
           { text: usd(f.value), bold: true, color },
