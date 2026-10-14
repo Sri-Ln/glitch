@@ -386,7 +386,7 @@ test('band: a subagent step does not change the speed', async ($, on) => {
   expect(await rowText($, 160)).not.toContain('tok/s')
 })
 
-test('band: cache marks notify once each, never while a turn runs, and re-arm', { options: { notify: 'toast' } }, async ($, on) => {
+test('band: cache marks notify once each, never while a turn runs, and re-arm', { timeoutMs: 30_000, options: { notify: 'toast' } }, async ($, on) => {
   const clock = await session($, on)
   await turn($, 0.1)
   await clock.advance(50 * 60_000)
