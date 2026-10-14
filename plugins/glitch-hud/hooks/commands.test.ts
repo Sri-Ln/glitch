@@ -179,6 +179,20 @@ test('budget: a /resume in the process does not count the resumed spend twice', 
   expect(await run($, 'budget')).toBe('Session $1.25 / off · Today $3.25 / $10.00 (33%)')
 })
 
+test('budget: the idle re-sum around a /resume does not count the resumed spend twice', { options: { budgetDaily: 10 } }, async ($, on) => {
+  const clock = await start($, on)
+  await turn($, 2)
+  sessionId = 'X'
+  usd = 1
+  store['ledger:2026-10-12:X'] = 1
+  // The timer sums the ledger before the resumed session's first turn, and again after it.
+  await clock.advance(30_000)
+  await turn($, 1.25)
+  await clock.advance(30_000)
+  expect(store).toEqual({ 'ledger:2026-10-12:s1': 2, 'ledger:2026-10-12:X': 1.25 })
+  expect(await run($, 'budget')).toBe('Session $1.25 / off · Today $3.25 / $10.00 (33%)')
+})
+
 test('budget: a /clear right after a /resume adds nothing to the resumed key', { options: { budgetDaily: 10 } }, async ($, on) => {
   await start($, on)
   await turn($, 2)
