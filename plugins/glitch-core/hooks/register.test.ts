@@ -110,3 +110,19 @@ test('glitch: a refused /glitch registration toasts and the theme still applies'
   expect(toasts).toEqual(['Glitch: could not register /glitch'])
   expect(await themeName($)).toBe('neon')
 })
+
+const routed = async ($: Engine, on: On, args: string, names: string[]) => {
+  installedAs(on, names)
+  await start($, on)
+  return run($, args)
+}
+
+test('/glitch pet without glitch-pets says it is not installed', async ($, on) => {
+  const r = await routed($, on, 'pet fork', ['glitch', 'glitch-hud'])
+  expect(r).toBe('/glitch pet needs the glitch-pets plugin, which is not installed.')
+})
+
+test('/glitch help lists pet and crew under glitch-pets', async ($, on) => {
+  const r = await routed($, on, '', ['glitch', 'glitch-hud', 'glitch-pets'])
+  expect(r).toContain('/glitch crew, pet — glitch-pets')
+})
