@@ -6,6 +6,7 @@ Glitch is a kit of Claude Code mods, published from this folder as a marketplace
 |---|---|
 | `glitch-core` | Shared themes and the `/glitch` command. |
 | `glitch-hud` | The band above the prompt: turn, speed, cost and budget, cache countdown with keep-warm, context, git. Depends on `glitch-core`. |
+| `glitch-pets` | A pixel pet at the end of the HUD row, with moods, short remarks and a daily streak. Depends on `glitch-core` and `glitch-hud`. |
 
 ## The HUD
 
@@ -15,14 +16,16 @@ One line above the prompt. In the terminal it is text with theme colors and icon
 |---|---|---|
 | turn | `#12` | count of main-session turns |
 | speed | `⚡ 84 tok/s` | output tokens divided by streaming time of the last main response (ignores answers under 20 tokens or 0.5 s) |
-| cost | `$0.42 │ $3.10` | this turn │ this session (one figure while they are equal), colored by budget level |
+| cost | `$ 0.42 reply · 3.10 session · 21.40 today` | the last reply, this session, and today across every session on this machine; pick them with `costShows`. Colored by budget level |
 | cache | `⧗ 47:12 ↻` | countdown to prompt-cache expiry (`cacheTtlMinutes`, 60 by default); `…` while a turn runs |
 | context | `▓▓▓▓░░ 63%` | context window used; amber from 65%, red from 85% |
 | git | ` main ±4 ↑1` | branch, changed files, ahead/behind; hidden outside a repo |
 
-**Desktop, VS Code and mobile.** These apps draw the band with vector icons, a real context bar and worded values (`Turn 12`, `$0.42 turn · $3.10 session`, `47:12 left`, `63% context`). Hover an icon or the bar for details: the cost tooltip lists the caps, the cache tooltip how long is left. The desktop already shows the branch above the band, so git is left out there unless you change **Parts** in the settings or run `/glitch hud parts …`.
+**Desktop, VS Code and mobile.** These apps draw the band with vector icons, a real context bar and worded values (`Turn 12`, `$0.42 reply · $3.10 session · $21.40 today`, `47:12 left`, `63% context`). The desktop already shows the branch above the band, so git is left out there unless you change **Parts** in the settings or run `/glitch hud parts …`.
 
-**Width.** As the window narrows, parts drop in the order git, speed, turn (then the context bar becomes just the percent). The row never wraps.
+**The three costs.** A *reply* is everything Claude does to answer one message: every model call, tool use and subagent until it stops. It is left out while it equals the session figure (the first reply). *Session* is the figure `/cost` shows. *Today* adds up every session that ran glitch-hud on this computer since local midnight, in any project; it is not your account's spend on other machines or on claude.ai. With a cap set, the figure shows it: `$3.10 of $5.00 session`.
+
+**Width.** As the window narrows, parts drop in the order git, speed, turn; then the cost figures lose their words and the context bar becomes just the percent. The row never wraps.
 
 **Hiding.** The `×` at the end of the band hides it for the session; `/glitch hud` toggles it again. The band is not drawn before the first turn or while a survey shows. Other mods' bands render beneath it.
 
@@ -54,6 +57,35 @@ With a 5-minute lifetime, warning marks at or above 5 can never fire: they are i
 - **Cost.** One ping is a cache read of the whole context: about $0.04 at 200k tokens of context on Opus 5.5, versus about $1.60 to rebuild an expired cache.
 - **autoWarm** (off by default). At the last warning mark, ping once if you submitted a prompt within `autoWarmMaxIdle` minutes; never twice in a row without a prompt from you in between.
 
+## glitch-pets
+
+Pick a pet and it sits at the end of the HUD row on the desktop app. While Claude works, your pet types on a little laptop; between turns it does its signature move. It reacts to the session through moods, says a short word now and then as a toast, and keeps a daily streak. It is not drawn in the terminal; there, remarks arrive as toasts.
+
+| Pet | Kind | Temperament | Signature move (idle) |
+|---|---|---|---|
+| Screenhead | screen bot | Earnest, literal and a little robotic; reports facts, proud of tidy output. | Types; code scrolls on its screen face. |
+| Byte blob | blob | Bubbly and easily startled; squeaks with joy, wobbles when worried. | Bounces: squash, stretch and a glitch slice. |
+| Pixel | cat | Dry and unimpressed, secretly proud; says little, means it. | Swishes its tail and sheds pixels. |
+| Dot | ladybug | Tidy, gentle and encouraging; notices the small things. | Flutters her wings on a daisy. |
+| Fork | octopus | The organised multitasker; a born lead who loves a plan. | Taps four keys with four arms. |
+| Bud | dog | Eager and loyal; cheers for everything and wants to go again. | Wags, pants and flops an ear. |
+
+Moods: idle, working, happy, tired, sleepy, worried, oops, cheering, leading, reviewing, crying. It cries when the budget cap is reached, when a daily streak of two or more days is broken, and after three failures in a row.
+
+`/glitch-pets <name | off>` switches to a pet and remembers it, or empties the slot; `/glitch-pets` alone lists the pets. `/glitch pet [name | off]` works the same way.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `pet` | `bud` | your pet: screenhead, blob, pixel, dot, fork, bud or off; `/glitch pet <name>` overrides it |
+| `voice` | `true` | one-line remarks as toasts |
+| `voiceEveryMinutes` | `3` | at most one remark per this many minutes |
+| `tiredMinutes` | `10` | a turn this long makes the pet tired |
+| `sleepyMinutes` | `10` | this long without a prompt makes the pet sleepy |
+
+```
+/plugin install glitch-pets@glitch
+```
+
 ## Themes
 
 Six built-in themes: `glitch` (default, electric cyan and magenta), `neon`, `mono`, `sunset`, `matrix`, `paper`. `/glitch theme` lists them, `/glitch theme neon` switches and remembers the choice across sessions, `/glitch theme default` clears it.
@@ -68,14 +100,17 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 
 ## Commands
 
-`/glitch` is owned by glitch-core. The HUD subcommands are answered by glitch-hud directly, and the same subcommands also work as `/glitch-hud …`.
+`/glitch` is owned by glitch-core. The HUD subcommands are answered by glitch-hud directly, the pet subcommand by glitch-pets, and the same subcommands also work as `/glitch-hud …`.
 
 | Command | Owner | Does |
 |---|---|---|
 | `/glitch` | core | help card: theme and the subcommands each plugin answers |
 | `/glitch theme [name\|default]` | core | list themes, or switch and persist |
+| `/glitch-pets [name\|off]` | pets | list pets, switch and persist, or turn the pet off |
+| `/glitch pet [name\|off]` | pets | the same, through the core command |
 | `/glitch hud` | hud | show or hide the band |
 | `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list without spaces, e.g. `cost,cache,context` |
+| `/glitch hud cost <list>` | hud | cost figures and order for this session, e.g. `session,today` |
 | `/glitch budget [+N \| N \| off \| on]` | hud | show, raise, set, disable or re-enable this session's caps |
 | `/glitch warm` | hud | keep-warm ping now |
 | `/glitch demo cache <min>` | hud | preview the cache part and warnings at N minutes left |
@@ -99,6 +134,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`. In
 | Setting | Default | Meaning |
 |---|---|---|
 | `parts` | `turn,speed,cost,cache,context,git` | which parts show, in order |
+| `costShows` | `reply,session,today` | which cost figures show, in order |
 | `budgetSession` | `0` | USD cap per session; 0 is off |
 | `budgetDaily` | `0` | USD cap per local day, across sessions; 0 is off |
 | `budgetBlocksAgents` | `false` | refuse new subagents at a cap |
@@ -122,6 +158,8 @@ From a local folder:
 claude plugin marketplace add C:\path\to\this\folder
 /plugin install glitch-hud@glitch
 ```
+
+To add the pets: `/plugin install glitch-pets@glitch`.
 
 Or load the plugin folders directly with `CLAUDE_CODE_PLUGIN_DIRS`, separated by `;` on Windows. In cmd:
 

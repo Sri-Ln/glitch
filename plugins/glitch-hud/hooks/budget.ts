@@ -60,6 +60,11 @@ export function spendToday(b: Budget, total: number, nowMs: number): { day: stri
   return { day, dayBase, spent: Math.max(0, total - dayBase) }
 }
 
+// Today's spend on this machine as it stands now: the ledger sum taken when the
+// last turn ended, plus what this session spent since. A total that started over
+// (a /clear) adds nothing.
+export const todaySpent = (b: Budget, total: number): number => b.dailySpent + Math.max(0, total - b.lastTotal)
+
 // The caps from /config, applied again when the plugin reloads with new options; a
 // session cap set with /glitch budget stays. A cap that moved re-arms its warnings
 // from where the spend stands now, as /glitch budget does.

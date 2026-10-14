@@ -68,6 +68,8 @@ test('hud: toggles the band and sets parts', async ($, on) => {
   expect(await run($, 'hud')).toBe('Glitch HUD shown.')
   expect(await run($, 'hud parts cost,cache')).toBe('HUD parts: cost, cache.')
   expect(await run($, 'hud parts cost,bogus')).toBe('Unknown part. Parts: turn, speed, cost, cache, context, git.')
+  expect(await run($, 'hud cost today,session')).toBe('HUD cost: today, session.')
+  expect(await run($, 'hud cost month')).toBe('Unknown cost figure. Figures: reply, session, today.')
 })
 
 test('budget: show, raise, set, off and on', { options: { budgetSession: 5 } }, async ($, on) => {
@@ -271,7 +273,7 @@ test('demo: cache and budget previews', async ($, on) => {
 
 test('unknown subcommand shows usage', async ($, on) => {
   await start($, on)
-  expect(await run($, 'dance')).toBe('Glitch HUD: /glitch hud [parts <list>] · budget [+N|N|off|on] · warm · demo cache <min> | demo budget <pct>')
+  expect(await run($, 'dance')).toBe('Glitch HUD: /glitch hud [parts <list> | cost <list>] · budget [+N|N|off|on] · warm · demo cache <min> | demo budget <pct>')
 })
 
 test('/glitch: routed subcommands are answered here, others go on', { options: { budgetSession: 5 } }, async ($, on) => {
