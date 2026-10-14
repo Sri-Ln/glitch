@@ -1,10 +1,9 @@
 // Frames to images. Pure, and gallery-safe: only type imports, so Node can load it.
 import type { Frame, MoodArt, MoodId, Persona, Sprite } from './types'
 
-/** CSS px per sprite pixel in the band. */
-export const PIXEL = 2
+/** CSS px per sprite pixel in the band: a 16 × 13 pet draws 24 × 20, about the HUD row's height. */
+export const PIXEL = 1.5
 const W = 16
-const H = 13
 
 export const frameIndex = (art: MoodArt, elapsedMs: number): number =>
   Math.floor((Math.max(0, elapsedMs) * art.fps) / 1000) % art.frames.length
@@ -24,7 +23,7 @@ export function frameSvg(palette: Readonly<Record<string, string>>, frame: Frame
     }
   })
   const h = frame.length
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" width="${W * pixel}" height="${h * pixel}" shape-rendering="crispEdges">${rects}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" width="${Math.round(W * pixel)}" height="${Math.round(h * pixel)}" shape-rendering="crispEdges">${rects}</svg>`
 }
 
 /** Builds each (pet, mood, frame, size) image once; a tick only picks which. */
@@ -38,7 +37,7 @@ export function createPlayer(): { sprite(p: Persona, mood: MoodId, elapsedMs: nu
       let s = cache.get(key)
       if (!s) {
         const frame = art.frames[i] as Frame
-        s = { source: frameSvg(p.palette, frame, pixel), alt: `${p.name} the ${p.kind}, ${mood}`, width: W * pixel, height: frame.length * pixel }
+        s = { source: frameSvg(p.palette, frame, pixel), alt: `${p.name} the ${p.kind}, ${mood}`, width: Math.round(W * pixel), height: Math.round(frame.length * pixel) }
         cache.set(key, s)
       }
       return s

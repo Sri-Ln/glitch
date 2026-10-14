@@ -459,7 +459,7 @@ test('band: git refreshes on the 30 s timer while idle', async ($, on) => {
   expect(await rowText($, 160)).toContain('feature')
 })
 
-const petSprite = { source: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="26"></svg>', alt: 'Bud the dog, idle', width: 32, height: 26 }
+const petSprite = { source: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="20"></svg>', alt: 'Bud the dog, idle', width: 24, height: 20 }
 
 const withPet = (on: On, value: unknown) =>
   on('state.get', (_$, e, next) => ((e.plugin as string) === 'glitch-pets' && (e as { key?: string }).key === 'sprite' ? ({ value: { value, version: 1 } } as never) : next(e)))

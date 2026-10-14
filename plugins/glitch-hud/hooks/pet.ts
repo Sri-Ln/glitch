@@ -2,8 +2,8 @@
 // row's end when it is well formed, and nothing otherwise.
 export type PetSprite = { source: string; alt: string; width: number; height: number }
 
-/** The cells the 32 px pet takes in the desktop row. */
-export const PET_CELLS = 5
+/** The cells the 24 px pet takes in the desktop row (about 3.4 cells; one spare). */
+export const PET_CELLS = 4
 const MAX_PX = 64
 
 export function isSprite(v: unknown): v is PetSprite {

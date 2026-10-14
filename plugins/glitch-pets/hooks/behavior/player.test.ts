@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { PIXEL, createPlayer, frameIndex, frameSvg } from './player'
+import { createPlayer, frameIndex, frameSvg } from './player'
 import type { Frame, Persona } from './types'
 import { MOOD_IDS, VOICE_MOMENTS } from './types'
 
@@ -26,10 +26,17 @@ test('frameIndex steps at the mood fps and loops', () => {
 test('frameSvg merges runs of one color into one rect and sizes by pixel', () => {
   const svg = frameSvg(persona.palette, A, 2)
   expect(svg).toContain('width="32" height="26"')
+  expect(svg).toContain('viewBox="0 0 16 13"')
   expect(svg).toContain('<rect x="0" y="0" width="2" height="1" fill="#ff0000"/>')
   expect(svg).toContain('<rect x="2" y="0" width="1" height="1" fill="#00ff00"/>')
   expect(svg.match(/<rect/g)?.length).toBe(2)
   expect(svg).toContain('shape-rendering="crispEdges"')
+})
+
+test('frameSvg rounds fractional pixel sizes to whole CSS px', () => {
+  const svg = frameSvg(persona.palette, A, 1.5)
+  expect(svg).toContain('width="24" height="20"')
+  expect(svg).toContain('viewBox="0 0 16 13"')
 })
 
 test('the player returns the same string object for the same frame (cached)', () => {
@@ -37,8 +44,8 @@ test('the player returns the same string object for the same frame (cached)', ()
   const one = player.sprite(persona, 'working', 0)
   const two = player.sprite(persona, 'working', 100)
   expect(two.source).toBe(one.source)
-  expect(one.width).toBe(16 * PIXEL)
-  expect(one.height).toBe(13 * PIXEL)
+  expect(one.width).toBe(24)
+  expect(one.height).toBe(20)
   expect(one.alt).toBe('Bud the dog, working')
   expect(player.sprite(persona, 'working', 250).source).not.toBe(one.source)
 })
