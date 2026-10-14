@@ -225,6 +225,9 @@ test('band (desktop): the keep-warm control is one glyph and reads … while it 
     return String(button?.props.label)
   }
   expect(await label()).toBe('↻')
+  const padded = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  expect((await padded.find({ key: 'glitch-warm-box' }))?.props.paddingX).toBe(1)
+  await padded.unmount()
   const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
   const pressed = ui.press({ key: 'glitch-warm' })
   for (let i = 0; i < 50 && (await label()) !== '…'; i++) await Promise.resolve()

@@ -28,6 +28,8 @@ const MIN_SECONDS = 0.5
 // Git and today's ledger are read again on this timer while idle.
 const GIT_EVERY_MS = 30_000
 const ROW_GAP = 2
+// Cells on each side of the desktop's keep-warm glyph.
+const WARM_PAD = 1
 
 export async function refreshUsage($: EngineInterface): Promise<void> {
   const usage = await $.session.usage().catch(() => null)
@@ -364,7 +366,7 @@ export const register: Register = (on, options) => {
       // a gap each, the spacer a gap. The cache part is never dropped, so ↻ shows
       // exactly when it is asked for here.
       const showsWarm = parts.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking
-      const reserve = (showsWarm ? 1 + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP)
+      const reserve = (showsWarm ? (rich ? 1 + 2 * WARM_PAD : 1) + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP)
       const { shown, compact } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
 
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
@@ -415,7 +417,14 @@ export const register: Register = (on, options) => {
             {/* One glyph: the desktop draws a Button as a native button with its whole
                 label, so a long label over an icon showed as cut-off text. */}
             {showsWarm ? (
-              <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain dimColor={rich} onPress={warm} />
+              rich ? (
+                // The desktop draws the glyph flush against its neighbours: a cell each side.
+                <Box key="glitch-warm-box" paddingX={WARM_PAD} flexShrink={0}>
+                  <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain dimColor onPress={warm} />
+                </Box>
+              ) : (
+                <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain onPress={warm} />
+              )
             ) : null}
             {rich && Svg ? null : <Box flexGrow={1} />}
             <Button key="glitch-hide" label={rich && Svg ? '✕' : '×'} plain role="dismiss" dimColor onPress={() => update($, view, x => ({ ...x, isHidden: true }))} />
