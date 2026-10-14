@@ -26,8 +26,8 @@ const session = async ($: Engine, on: On, store: Record<string, unknown> = {}) =
   on('command.register', () => ({ value: { command: 'glitch-pets' } }) as never)
   on('turn.start', () => ({ turnId: 't' }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
-  on('session.start', async () => ({ cwd: 'C:\repo' }) as never)
-  await $.session.start({ source: 'startup', cwd: 'C:\repo', surface: 'desktop', isInteractive: true } as never)
+  on('session.start', async () => ({ cwd: 'C:\\repo' }) as never)
+  await $.session.start({ source: 'startup', cwd: 'C:\\repo', surface: 'desktop', isInteractive: true } as never)
   return clock
 }
 

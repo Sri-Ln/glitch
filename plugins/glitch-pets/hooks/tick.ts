@@ -40,3 +40,7 @@ export function tickOnce(i: TickInputs): TickResult {
   const s = i.player.sprite(i.persona, mood, i.now - since)
   return { mood, since, moodChanged, sprite: s.source !== i.lastSource ? s : null }
 }
+
+/** A failed tool call in the main loop (not a helper's) upsets the pet. */
+export const isMainLoopError = (e: { agentId?: unknown }, result: unknown): boolean =>
+  e.agentId === undefined && !!result && !!(result as { isError?: boolean }).isError

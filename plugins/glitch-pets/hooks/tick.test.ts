@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { createPlayer } from './behavior/player'
 import { PERSONAS } from './personas/index'
-import { tickOnce } from './tick'
+import { isMainLoopError, tickOnce } from './tick'
 import type { TickInputs } from './tick'
 
 const bud = PERSONAS.bud as NonNullable<typeof PERSONAS.bud>
@@ -47,4 +47,11 @@ test('the sprite is only returned when its image changed', () => {
 test('a cheer window shows cheering', () => {
   const state = { ...base().state, cheerUntil: 5000 }
   expect(tickOnce(base({ state })).sprite?.alt).toBe('Bud the dog, cheering')
+})
+
+test('only a main-loop tool error upsets the pet', () => {
+  expect(isMainLoopError({}, { isError: true })).toBe(true)
+  expect(isMainLoopError({ agentId: 'a1' }, { isError: true })).toBe(false)
+  expect(isMainLoopError({}, { isError: false })).toBe(false)
+  expect(isMainLoopError({}, undefined)).toBe(false)
 })

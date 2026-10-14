@@ -15,7 +15,7 @@ import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petList } from './comm
 import { parsePetsConfig } from './config'
 import type { PetsConfig } from './config'
 import { PERSONAS } from './personas/index'
-import { tickOnce } from './tick'
+import { isMainLoopError, tickOnce } from './tick'
 
 const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0 }
 
@@ -38,8 +38,9 @@ let config: PetsConfig = parsePetsConfig({}).config
 let player = createPlayer()
 let voice: VoiceState = INITIAL_VOICE
 let lastSource: string | null = null
-let lastTurnMs = 0
+let ticking = false
 
+// $.state.get needs a literal plugin and key, so these three cannot be merged.
 async function hudStats($: EngineInterface): Promise<unknown> {
   try {
     return (await $.state.get({ plugin: 'glitch-hud', key: 'stats' } as const)).value
@@ -123,7 +124,7 @@ export const register: Register = (on, options) => {
   player = createPlayer()
   voice = INITIAL_VOICE
   lastSource = null
-  lastTurnMs = 0
+  ticking = false
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -139,20 +140,27 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     await update($, view, v => ({ ...v, petId }))
     await update($, mood, m => ({ ...m, since: now, lastPromptAt: m.lastPromptAt || now }))
-    $.clock.every(TICK_MS, async () => {
-      try {
-        await tick($)
-      } catch {
-        // The next tick draws again.
-      }
-    })
+    if (!ticking) {
+      ticking = true
+      $.clock.every(TICK_MS, async () => {
+        try {
+          await tick($)
+        } catch {
+          // The next tick draws again.
+        }
+      })
+    }
     return started
   })
 
   on('prompt.submit', async ($, e, next) => {
     if (e.origin.kind !== 'plugin') {
-      const now = await $.clock.now()
-      await update($, mood, m => ({ ...m, lastPromptAt: now })).catch(() => undefined)
+      try {
+        const now = await $.clock.now()
+        await update($, mood, m => ({ ...m, lastPromptAt: now }))
+      } catch {
+        // The pet just misses this one.
+      }
     }
     return next(e)
   })
@@ -173,23 +181,25 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    const result = await next(e)
-    if (e.agentId !== undefined) return result
     try {
-      const now = await $.clock.now()
-      lastTurnMs = e.durationMs
-      const failed = e.reason === 'error'
-      await update($, mood, m => ({ ...m, turnSince: null, ...(failed ? { oopsUntil: now + OOPS_MS } : e.reason === 'answer' ? { happyUntil: now + HAPPY_MS } : {}) }))
-      if (!failed && e.reason === 'answer' && lastTurnMs >= LONG_TURN_MS) await say($, 'happy')
-    } catch {
-      // Leave the mood as it was.
+      return await next(e)
+    } finally {
+      if (e.agentId === undefined) {
+        try {
+          const now = await $.clock.now()
+          const failed = e.reason === 'error'
+          await update($, mood, m => ({ ...m, turnSince: null, ...(failed ? { oopsUntil: now + OOPS_MS } : e.reason === 'answer' ? { happyUntil: now + HAPPY_MS } : {}) }))
+          if (!failed && e.reason === 'answer' && e.durationMs >= LONG_TURN_MS) await say($, 'happy')
+        } catch {
+          // Leave the mood as it was.
+        }
+      }
     }
-    return result
   })
 
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    if (ran && (ran as { isError?: boolean }).isError) {
+    if (isMainLoopError(e, ran)) {
       const now = await $.clock.now().catch(() => 0)
       await update($, mood, m => ({ ...m, oopsUntil: now + OOPS_MS })).catch(() => undefined)
     }
