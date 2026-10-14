@@ -1,9 +1,11 @@
-import type { PartId } from '../types'
+import type { CostScope, PartId } from '../types'
 
 export type NotifyMode = 'windows' | 'toast' | 'off'
 
 export type HudConfig = {
   parts: PartId[]
+  /** The cost figures shown, in order. */
+  costShows: CostScope[]
   /** The person changed Parts from the default; the desktop then shows git too. */
   partsExplicit: boolean
   budgetSession: number
@@ -19,9 +21,12 @@ export type HudConfig = {
 
 export const ALL_PARTS: PartId[] = ['turn', 'speed', 'cost', 'cache', 'context', 'git']
 
+export const ALL_COST: CostScope[] = ['reply', 'session', 'today']
+
 export const DEFAULT_CONFIG: HudConfig = {
   parts: [...ALL_PARTS],
   partsExplicit: false,
+  costShows: [...ALL_COST],
   budgetSession: 0,
   budgetDaily: 0,
   budgetBlocksAgents: false,
@@ -32,11 +37,17 @@ export const DEFAULT_CONFIG: HudConfig = {
   autoWarmMaxIdle: 120,
 }
 
-export function parseParts(s: string): PartId[] | null {
+export const parseParts = (s: string): PartId[] | null => parseList(s, ALL_PARTS)
+
+// A comma list of `all`'s ids, in the given order without duplicates; null when
+// any entry is unknown or the list is empty.
+const parseList = <T extends string>(s: string, all: readonly T[]): T[] | null => {
   const ids = s.split(',').map(x => x.trim())
-  if (ids.length === 0 || ids.some(id => !ALL_PARTS.includes(id as PartId))) return null
-  return [...new Set(ids)] as PartId[]
+  if (ids.length === 0 || ids.some(id => !all.includes(id as T))) return null
+  return [...new Set(ids)] as T[]
 }
+
+export const parseCostShows = (s: string): CostScope[] | null => parseList(s, ALL_COST)
 
 export function parseMarks(s: string): number[] | null {
   const marks = s.split(',').map(x => x.trim()).filter(Boolean).map(Number)
@@ -54,7 +65,7 @@ const bool = (v: unknown): boolean | null => (v === true || v === 'true' ? true 
 // Settings as the person stored them, made safe: each bad value falls back to its
 // default and is named in `problems`.
 export function parseConfig(o: Record<string, unknown>): { config: HudConfig; problems: string[] } {
-  const config: HudConfig = { ...DEFAULT_CONFIG, parts: [...DEFAULT_CONFIG.parts], cacheWarnMinutes: [...DEFAULT_CONFIG.cacheWarnMinutes] }
+  const config: HudConfig = { ...DEFAULT_CONFIG, parts: [...DEFAULT_CONFIG.parts], costShows: [...DEFAULT_CONFIG.costShows], cacheWarnMinutes: [...DEFAULT_CONFIG.cacheWarnMinutes] }
   const problems: string[] = []
   const readNumbers = (keys: ('budgetSession' | 'budgetDaily' | 'autoWarmMaxIdle')[]) => {
     for (const key of keys) {
@@ -71,6 +82,11 @@ export function parseConfig(o: Record<string, unknown>): { config: HudConfig; pr
       config.parts = parts
       config.partsExplicit = parts.join(',') !== ALL_PARTS.join(',')
     } else problems.push('parts: unknown or empty entry, using default')
+  }
+  if (o.costShows !== undefined) {
+    const shows = typeof o.costShows === 'string' ? parseCostShows(o.costShows) : null
+    if (shows) config.costShows = shows
+    else problems.push('costShows: use reply, session or today, using reply,session,today')
   }
   readNumbers(['budgetSession', 'budgetDaily'])
   for (const key of ['budgetBlocksAgents', 'autoWarm'] as const) {

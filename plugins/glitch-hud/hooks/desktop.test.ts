@@ -7,22 +7,28 @@ import type { PartData } from './parts'
 
 const stats: Stats = { turn: 12, speed: 84, turnCost: 0.42, total: 3.1, context: 63, costAtStart: 2.68 }
 const cache: CacheState = { expiresAt: 0, secondsLeft: 47 * 60 + 12, warnedMark: 0, isBusy: false, lastPromptAt: 0, warmedSincePrompt: false }
-const budget: Budget = { sessionCap: 0, dailyCap: 0, isOff: false, day: '2026-10-12', dayBase: 0, dailySpent: 0, notified: { session: 'ok', daily: 'ok' }, demoPercent: null, sessionId: 's1', lastTotal: 0, ledgerKey: '', priorForKey: 0, sessionCapOverridden: false }
-const D: PartData = { stats, cache, budget, git: { branch: 'main', changed: 4, ahead: 1, behind: 0 }, theme: T, isWorking: false }
+const budget: Budget = { sessionCap: 0, dailyCap: 0, isOff: false, day: '2026-10-12', dayBase: 0, dailySpent: 21.4, notified: { session: 'ok', daily: 'ok' }, demoPercent: null, sessionId: 's1', lastTotal: 3.1, ledgerKey: '', priorForKey: 0, sessionCapOverridden: false }
+const D: PartData = { stats, cache, budget, git: { branch: 'main', changed: 4, ahead: 1, behind: 0 }, theme: T, isWorking: false, costShows: ['reply', 'session', 'today'] }
 const text = (id: Parameters<typeof richPart>[0], d: PartData = D, compact = false) => richPart(id, d, compact).segments.map(s => s.text).join('')
 
 test('desktop: values are worded, not bare symbols', async () => {
   expect(text('turn')).toBe('Turn 12')
   expect(text('speed')).toBe('84 tok/s')
-  expect(text('cost')).toBe('$0.42 turn · $3.10 session')
+  expect(text('cost')).toBe('$0.42 reply · $3.10 session · $21.40 today')
   expect(text('cache')).toBe('47:12 left')
   expect(text('context')).toBe('63% context')
   expect(text('git')).toBe('main ±4 ↑1')
 })
 
-test('desktop: one cost while the turn equals the session (the first turn), and before any turn', async () => {
-  expect(text('cost', { ...D, stats: { ...stats, turnCost: 3.1 } })).toBe('$3.10 session')
-  expect(text('cost', { ...D, stats: { ...stats, turnCost: null } })).toBe('$3.10 session')
+test('desktop: no reply figure while it equals the session (the first turn), and before any turn', async () => {
+  expect(text('cost', { ...D, stats: { ...stats, turnCost: 3.1 } })).toBe('$3.10 session · $21.40 today')
+  expect(text('cost', { ...D, stats: { ...stats, turnCost: null } })).toBe('$3.10 session · $21.40 today')
+})
+
+test('desktop: the cost shows only the chosen figures; compact drops the words', async () => {
+  expect(text('cost', { ...D, costShows: ['session'] })).toBe('$3.10 session')
+  expect(text('cost', { ...D, costShows: ['today', 'reply'] })).toBe('$21.40 today · $0.42 reply')
+  expect(text('cost', D, true)).toBe('$0.42 · $3.10 · $21.40')
 })
 
 test('desktop: cache placeholders', async () => {
@@ -34,7 +40,8 @@ test('desktop: cache placeholders', async () => {
 test('desktop: icons are fixed-size images in the level color, described by alt', async () => {
   const cost = richPart('cost', { ...D, budget: { ...budget, sessionCap: 3 } }, false).graphic
   expect(cost?.source).toContain(T.alert)
-  expect(cost?.alt).toBe('This turn $0.42 · Session $3.10 · Session cap $3.00')
+  expect(cost?.alt).toBe('Last reply $0.42 · Session $3.10 of $3.00 · Today on this machine $21.40')
+  expect(richPart('cost', { ...D, isWorking: true }, false).graphic?.alt).toBe('This reply $0.42 · Session $3.10 · Today on this machine $21.40')
   expect(cost).toMatchObject({ width: 14, height: 14 })
   expect(richPart('cache', D, false).graphic?.alt).toBe('Prompt cache countdown. Press ↻ to keep it warm.')
   expect(richPart('turn', D, false).graphic).toBeNull()
@@ -49,14 +56,15 @@ test('desktop: the markup does not change as the countdown ticks', async () => {
 })
 
 test('desktop: a session cap shows beside the cost', async () => {
-  expect(text('cost', { ...D, budget: { ...budget, sessionCap: 5 } })).toBe('$0.42 turn · $3.10 of $5.00 session')
-  expect(text('cost', { ...D, budget: { ...budget, sessionCap: 5, isOff: true } })).toBe('$0.42 turn · $3.10 session')
+  expect(text('cost', { ...D, budget: { ...budget, sessionCap: 5 } })).toBe('$0.42 reply · $3.10 of $5.00 session · $21.40 today')
+  expect(text('cost', { ...D, budget: { ...budget, sessionCap: 5, isOff: true } })).toBe('$0.42 reply · $3.10 session · $21.40 today')
 })
 
-test('desktop: the daily cap shows in the cost tooltip; an off budget shows no caps', async () => {
+test('desktop: the daily cap shows beside today and in the tooltip; an off budget shows no caps', async () => {
   const daily = { ...D, budget: { ...budget, dailyCap: 10, dailySpent: 4.5 } }
-  expect(richPart('cost', daily, false).graphic?.alt).toBe('This turn $0.42 · Session $3.10 · Today $4.50 of $10.00')
-  expect(richPart('cost', { ...daily, budget: { ...daily.budget, isOff: true } }, false).graphic?.alt).toBe('This turn $0.42 · Session $3.10')
+  expect(text('cost', daily)).toBe('$0.42 reply · $3.10 session · $4.50 of $10.00 today')
+  expect(richPart('cost', daily, false).graphic?.alt).toBe('Last reply $0.42 · Session $3.10 · Today on this machine $4.50 of $10.00')
+  expect(richPart('cost', { ...daily, budget: { ...daily.budget, isOff: true } }, false).graphic?.alt).toBe('Last reply $0.42 · Session $3.10 · Today on this machine $4.50')
 })
 
 test('desktop: the context bar fills to the percent; compact drops it', async () => {

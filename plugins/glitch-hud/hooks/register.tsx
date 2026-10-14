@@ -5,7 +5,7 @@ import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW
 import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, withConfigCaps } from './budget'
 import { dueMark, shouldAutoWarm } from './cache'
 import { BUDGET_USAGE, DEMO_USAGE, ROUTED, USAGE, WARM_PROMPT, budgetAlerts, budgetSummary, parseBudgetArg, splitArgs, warmMessage } from './commands'
-import { ALL_PARTS, parseConfig, parseParts } from './config'
+import { ALL_COST, ALL_PARTS, parseConfig, parseCostShows, parseParts } from './config'
 import type { HudConfig } from './config'
 import { readGit } from './git'
 import type { RunFn } from './git'
@@ -152,6 +152,12 @@ async function answerHud($: EngineInterface, config: HudConfig, args: string): P
       await update($, view, v => ({ ...v, parts, isHidden: false }))
       return `HUD parts: ${parts.join(', ')}.`
     }
+    if (a === 'cost') {
+      const cost = b ? parseCostShows(b) : null
+      if (!cost) return `Unknown cost figure. Figures: ${ALL_COST.join(', ')}.`
+      await update($, view, v => ({ ...v, cost, isHidden: false }))
+      return `HUD cost: ${cost.join(', ')}.`
+    }
     const hidden = !(await read($, view)).isHidden
     await update($, view, v => ({ ...v, isHidden: hidden }))
     return hidden ? 'Glitch HUD hidden.' : 'Glitch HUD shown.'
@@ -195,6 +201,8 @@ export const register: Register = (on, options) => {
       // A reload (new /config options): the state lived on, the caps follow the settings.
       await update($, budget, b => withConfigCaps(b, config, total))
     }
+    // Sum the ledger now, so today counts the other sessions from the first draw.
+    await recordSpend($, config).catch(() => undefined)
 
     // Each tick catches its own failure: one rejection must never end the interval.
     $.clock.every(1000, async () => {
@@ -314,6 +322,7 @@ export const register: Register = (on, options) => {
         git: await read($, git),
         theme: await loadTheme($),
         isWorking: e.props.isWorking || (await read($, cache)).isBusy,
+        costShows: v.cost ?? config.costShows,
       }
       // Surfaces with Svg (desktop, VS Code, mobile) get icons and a real bar.
       // The desktop shows the branch in its own row, so git is left out there unless
@@ -323,14 +332,14 @@ export const register: Register = (on, options) => {
       const parts = (v.parts ?? config.parts).filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
       const width = (id: (typeof parts)[number], compact: boolean) =>
         rich
-          ? richWidth(richPart(id, data, compact && id === 'context'))
-          : cellWidth(segments(id, data, compact && id === 'context').map(x => x.text).join(''))
+          ? richWidth(richPart(id, data, compact))
+          : cellWidth(segments(id, data, compact).map(x => x.text).join(''))
       // The controls are flex items of the gapped row too: ↻ and × take one cell and
       // a gap each, the spacer a gap. The cache part is never dropped, so ↻ shows
       // exactly when it is asked for here.
       const showsWarm = parts.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking
       const reserve = (showsWarm ? 1 + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP)
-      const { shown, compactContext } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
+      const { shown, compact } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
 
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
       drawn = await Promise.resolve(next(e)).catch(() => null)
@@ -350,7 +359,7 @@ export const register: Register = (on, options) => {
         ? [
             <Box key="glitch-parts" flexDirection="row" flexGrow={1} justifyContent="space-between" columnGap={ROW_GAP} overflow="hidden">
               {shown.map(id => {
-                const p = richPart(id, data, compactContext && id === 'context')
+                const p = richPart(id, data, compact)
                 return (
                   <Box key={id} flexDirection="row" flexShrink={0} alignItems="center" columnGap={1}>
                     {p.graphic ? <Svg source={p.graphic.source} alt={p.graphic.alt} width={p.graphic.width} height={p.graphic.height} /> : null}
@@ -362,7 +371,7 @@ export const register: Register = (on, options) => {
           ]
         : shown.map(id => (
             <Box key={id} flexDirection="row" flexShrink={0}>
-              {texts(id, segments(id, data, compactContext && id === 'context'))}
+              {texts(id, segments(id, data, compact))}
             </Box>
           ))
       return (
