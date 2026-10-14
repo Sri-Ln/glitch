@@ -83,6 +83,7 @@ const ofCap = (d: PartData, scope: CostScope): string => (capOf(d, scope) > 0 ? 
 // Every figure, whichever the band shows: the tooltip is where they are spelled out.
 export function costTip(d: PartData): string {
   const s = d.stats
+  if (s.isStale) return 'Session cost: cannot be read right now'
   const showsReply = s.turnCost !== null && usd(s.turnCost) !== usd(s.total)
   return [
     showsReply ? `${d.isWorking ? 'This' : 'Last'} reply ${usd(s.turnCost as number)}` : null,
@@ -118,7 +119,9 @@ export function richPart(id: PartId, d: PartData, compact: boolean): RichPart {
       const color = HOST_COLOR[level]
       return {
         graphic: iconSvg('cost', HOST_HEX[level], costTip(d)),
-        segments: costFigures(d).flatMap((f, n): Segment[] => [
+        segments: s.isStale
+          ? [{ text: '—', bold: true, color }, ...(compact ? [] : [{ text: ' session', dim: true }])]
+          : costFigures(d).flatMap((f, n): Segment[] => [
           ...(n > 0 ? [{ text: ' · ', dim: true }] : []),
           { text: usd(f.value), bold: true, color },
           ...(compact
@@ -141,8 +144,8 @@ export function richPart(id: PartId, d: PartData, compact: boolean): RichPart {
       const color = s.context >= 85 ? t.alert : s.context >= 65 ? t.warn : t.info
       const tip = `Context ${s.context}% full`
       return {
-        graphic: compact ? null : barSvg(s.context, color, t.muted, tip),
-        segments: [{ text: `${s.context}%`, bold: true }, { text: ' context', dim: true }],
+        graphic: compact || s.isStale ? null : barSvg(s.context, color, t.muted, tip),
+        segments: [{ text: s.isStale ? '—' : `${s.context}%`, bold: true }, { text: ' context', dim: true }],
       }
     }
     case 'git': {

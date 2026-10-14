@@ -29,6 +29,10 @@ export type Stats = {
   /** Context fill, 0–100. */
   context: number
   costAtStart: number
+  /** The last usage read failed: cost and context show — until one succeeds. */
+  isStale?: boolean
+  /** The session id the unreadable cost was announced for: once per conversation. */
+  staleWarnedFor?: string
 }
 
 export type CacheState = {
@@ -72,6 +76,8 @@ export type Budget = {
   priorForKey: number
   /** `/glitch budget +N | N` set the session cap; the settings cap no longer applies. */
   sessionCapOverridden: boolean
+  /** The session id a failed ledger call was announced for: once per conversation. */
+  ledgerWarnedFor?: string
 }
 
 export type GitInfo = { branch: string; changed: number; ahead: number; behind: number }

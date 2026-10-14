@@ -85,6 +85,14 @@ test('desktop: colors are checked before they reach the markup', async () => {
   expect(iconSvg('speed', 'x" onload="y', 't').source).not.toContain('onload')
 })
 
+test('desktop: unreadable usage shows — for cost and context, not the last value', async () => {
+  const stale = { ...D, stats: { ...stats, isStale: true } }
+  expect(text('cost', stale)).toBe('— session')
+  expect(richPart('cost', stale, false).graphic?.alt).toBe('Session cost: cannot be read right now')
+  expect(text('context', stale)).toBe('— context')
+  expect(richPart('context', stale, false).graphic).toBeNull()
+})
+
 test('desktop: widths count the graphic, a gap and the text', async () => {
   expect(richWidth(richPart('speed', D, false))).toBe(ICON_CELLS + 1 + '84 tok/s'.length)
   expect(richWidth(richPart('context', D, false))).toBe(BAR_CELLS + 1 + '63% context'.length)

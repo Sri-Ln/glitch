@@ -69,6 +69,15 @@ test('notify: falls back to Claude Code, then a toast', async () => {
   expect(calls.toasts).toEqual(['proj — Glitch: Cache 5 min'])
 })
 
+test('notify: a rejected run and a throwing Claude Code notification still reach the toast', async () => {
+  // No `run` in the stub: the PowerShell call rejects.
+  const { $, calls } = stubEngine({ env: { OS: 'Windows_NT' }, notify: () => { throw new Error('notify refused') } })
+  expect(await notify($, 'windows', 'proj — Glitch', 'Cache 5 min')).toBe('toast')
+  expect(calls.run).toBe(1)
+  expect(calls.notify).toBe(1)
+  expect(calls.toasts).toEqual(['proj — Glitch: Cache 5 min'])
+})
+
 test('notify: not Windows skips PowerShell', async () => {
   const { $, calls } = stubEngine({ env: {}, notify: () => ({ isSent: true, channel: 'kitty' }) })
   expect(await notify($, 'windows', 't', 'm')).toBe('claude')

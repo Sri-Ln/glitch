@@ -45,6 +45,14 @@ test('themes: bad token values are skipped one by one', async () => {
   ])
 })
 
+test('themes: custom JSON that is not an object is ignored with a problem', async () => {
+  for (const custom of ['[]', 'null', '"5"', '5']) {
+    const r = resolveTheme('neon', custom)
+    expect(r.theme).toEqual(THEMES.neon)
+    expect(r.problems).toEqual(['custom theme must be a JSON object, ignored'])
+  }
+})
+
 test('themes: resolving never mutates the built-in table', async () => {
   resolveTheme('glitch', '{"accent":"#123456"}')
   expect(THEMES.glitch?.accent).toBe('#00e5ff')

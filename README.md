@@ -109,7 +109,7 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 | `/glitch-pets [name\|off]` | pets | list pets, switch and persist, or turn the pet off |
 | `/glitch pet [name\|off]` | pets | the same, through the core command |
 | `/glitch hud` | hud | show or hide the band |
-| `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list without spaces, e.g. `cost,cache,context` |
+| `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list, e.g. `cost,cache,context` or `cost, cache` |
 | `/glitch hud cost <list>` | hud | cost figures and order for this session, e.g. `session,today` |
 | `/glitch budget [+N \| N \| off \| on]` | hud | show, raise, set, disable or re-enable this session's caps |
 | `/glitch warm` | hud | keep-warm ping now |

@@ -32,13 +32,14 @@ async function installed($: EngineInterface): Promise<Set<string>> {
 async function themeCommand($: EngineInterface, options: PluginOptions, name: string | undefined): Promise<string> {
   const current = (await read($, theme)).name
   if (!name) return `Themes: ${THEME_NAMES.map(n => (n === current ? `${n} (current)` : n)).join(', ')}`
+  // A store that refuses the write leaves the saved choice, so the theme stays as it is.
   if (name === 'default') {
-    await $.store.delete(STORE_THEME)
+    if (!(await $.store.delete(STORE_THEME).then(() => true, () => false))) return `Could not reset the theme; it stays ${current}.`
     await applyTheme($, options)
     return `Theme reset to ${(await read($, theme)).name}.`
   }
   if (!THEME_NAMES.includes(name)) return `Unknown theme "${name}". Themes: ${THEME_NAMES.join(', ')}`
-  await $.store.set(STORE_THEME, name)
+  if (!(await $.store.set(STORE_THEME, name).then(() => true, () => false))) return `Could not save the theme; it stays ${current}.`
   await applyTheme($, options)
   return `Theme: ${name}.`
 }

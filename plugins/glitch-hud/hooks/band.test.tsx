@@ -13,6 +13,11 @@ let gitOut: string | null = null
 let gitRuns = 0
 // How many of the next toasts the host refuses (throws).
 let toastThrows = 0
+// While set, the session's usage cannot be read / the host refuses the plugin's state writes.
+let usageFails = false
+let stateRefused = false
+// What a keep-warm fork answers.
+let fork: unknown = { isAnswered: false, reason: 'nothing-to-fork' }
 // `lead`: time before the first chunk; `ms`: time from the first chunk to the rest.
 let step: { chunks: unknown[]; ms: number; lead?: number } = { chunks: [], ms: 0 }
 const MAIN = '# branch.oid abc\n# branch.head main\n'
@@ -20,13 +25,23 @@ const STEP_RESULT = { turnId: 't', index: 0, answer: 'hi', toolUses: [] }
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
 // `opts.store` seeds the plugin's store (another session's ledger entry, say).
-const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { registerFails?: boolean; store?: Record<string, unknown> } = {}) => {
+const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { registerFails?: boolean; refusable?: boolean; store?: Record<string, unknown> } = {}) => {
   usd = 0
   toasts = []
   gitOut = git
   gitRuns = 0
   toastThrows = 0
+  usageFails = false
+  stateRefused = false
+  fork = { isAnswered: false, reason: 'nothing-to-fork' }
   step = { chunks: [], ms: 0 }
+  // Only where a test refuses writes: every write passing a test hook slows the long countdowns.
+  if (opts.refusable) on('state.set', (_$, e, next) => (stateRefused ? ({ deny: 'state refused' } as never) : next(e)))
+  on('model.fork', () => {
+    if (fork === 'reject') throw new Error('fork refused')
+    if (fork instanceof Promise) return fork as never
+    return { value: fork } as never
+  })
   on('ui.toast', (_$, e) => {
     if (toastThrows > 0) {
       toastThrows--
@@ -51,7 +66,10 @@ const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { reg
     on('store.keys', () => ({ value: Object.keys(seeded) }) as never)
   } else mock.store(on)
   mock.env(on, { OS: 'Windows_NT' })
-  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, tokens: 630_000, percent: 63 }, rateLimits: [], cost: { usd } } }) as never)
+  on('session.usage', () => {
+    if (usageFails) throw new Error('usage refused')
+    return { value: { startedAt: 0, context: { window: 1_000_000, tokens: 630_000, percent: 63 }, rateLimits: [], cost: { usd } } } as never
+  })
   on('process.run', () => {
     gitRuns++
     return { value: gitOut === null ? { exitCode: 128, stdout: '', stderr: '' } : { exitCode: 0, stdout: gitOut, stderr: '' } } as never
@@ -220,8 +238,8 @@ test('band: the hide control is ✕ on the desktop and × in the terminal', asyn
 // on every surface: the desktop drew a longer label as visible, cut-off text.
 test('band (desktop): the keep-warm control is one glyph and reads … while it runs', async ($, on) => {
   let release: (v: unknown) => void = () => undefined
-  on('model.fork', () => new Promise(r => { release = r }) as never)
   await session($, on)
+  fork = new Promise(r => { release = r })
   await turn($, 0.1)
   const label = async () => {
     const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
@@ -491,6 +509,68 @@ test('session.start: a second start (compact, resume, fork) does not stack the t
   expect(await rowText($, 160)).toContain('58:59')
   await clock.advance(49 * 60_000)
   expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 10 min'])
+})
+
+const COST_TOAST = "Glitch: can't read the session cost right now; budget caps can't be checked until it's back."
+
+test('band: unreadable usage shows — for cost and context until it reads again, and toasts once', async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  usageFails = true
+  await turn($, 0.5)
+  const row = await rowText($, 160)
+  expect(row).toContain('$ —')
+  expect(row).toContain('◔ —')
+  expect(row).not.toContain('0.42')
+  expect(row).not.toContain('63%')
+  expect(await rowText($, 160, 'desktop')).toContain('— session')
+  await turn($, 0.6)
+  expect(toasts).toEqual([COST_TOAST])
+  usageFails = false
+  await turn($, 0.7)
+  const back = await rowText($, 160)
+  expect(back).toContain('0.70 session')
+  expect(back).toContain('63%')
+  // A later failure in the same session does not toast again.
+  usageFails = true
+  await turn($, 0.8)
+  expect(await rowText($, 160)).toContain('$ —')
+  expect(toasts).toEqual([COST_TOAST])
+})
+
+test('band: a turn ends with its own result even when every state write fails', async ($, on) => {
+  await session($, on, MAIN, { refusable: true })
+  await turn($, 0.1)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'again', turnId: 't2' })
+  stateRefused = true
+  const done = await ($.turn.complete as (e: unknown) => Promise<unknown>)({ answer: 'ok', durationMs: 10, isAborted: false, turnId: 't2', reason: 'answer' })
+  expect(done).toEqual({ text: '' })
+})
+
+const WARM = (read: number) => ({ isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: read, cache_creation_input_tokens: 0 } })
+
+test('band: an answered keep-warm restarts the countdown', async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  await clock.advance(50 * 60_000)
+  expect(await rowText($, 160)).toContain('10:00')
+  fork = WARM(1000)
+  await $.command.run({ command: 'glitch-hud', args: 'warm' } as never)
+  const row = await rowText($, 160)
+  expect(row).toContain('60:00')
+  expect(row).not.toContain('10:00')
+})
+
+test('band: a failed or empty keep-warm leaves the countdown', async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  await clock.advance(50 * 60_000)
+  fork = 'reject'
+  await $.command.run({ command: 'glitch-hud', args: 'warm' } as never)
+  expect(await rowText($, 160)).toContain('10:00')
+  fork = { isAnswered: false, reason: 'nothing-to-fork' }
+  await $.command.run({ command: 'glitch-hud', args: 'warm' } as never)
+  expect(await rowText($, 160)).toContain('10:00')
 })
 
 const petSprite = { source: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="20"></svg>', alt: 'Bud the dog, idle', width: 24, height: 20 }
