@@ -6,7 +6,7 @@ import { cellWidth, fitParts, levelColor, segments } from './parts'
 import type { PartData } from './parts'
 
 const stats: Stats = { turn: 12, speed: 84, turnCost: 0.42, total: 3.1, context: 63, costAtStart: 2.68 }
-const cache: CacheState = { expiresAt: 0, secondsLeft: 47 * 60 + 12, warnedMark: 0, isBusy: false, lastPromptAt: 0, warmedSincePrompt: false }
+const cache: CacheState = { expiresAt: 0, secondsLeft: 47 * 60 + 12, warnedMark: 0, isBusy: false, lastPromptAt: 0, warmedSincePrompt: false, isWarming: false }
 const budget: Budget = { sessionCap: 0, dailyCap: 0, isOff: false, day: '2026-10-12', dayBase: 0, dailySpent: 21.4, notified: { session: 'ok', daily: 'ok' }, demoPercent: null, sessionId: 's1', lastTotal: 3.1, ledgerKey: '', priorForKey: 0, sessionCapOverridden: false }
 const D: PartData = { stats, cache, budget, git: { branch: 'main', changed: 4, ahead: 1, behind: 0 }, theme: T, isWorking: false, costShows: ['reply', 'session', 'today'] }
 const text = (id: Parameters<typeof segments>[0], d: PartData = D, compact = false) => segments(id, d, compact).map(s => s.text).join('')

@@ -2,11 +2,11 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Budget, CacheState, Stats } from '../types'
 import { FALLBACK_THEME as T } from './theme'
-import { BAR_CELLS, ICON_CELLS, barSvg, iconSvg, richPart, richWidth, safeColor } from './desktop'
+import { BAR_CELLS, HOST_HEX, ICON_CELLS, barSvg, iconSvg, richPart, richWidth, safeColor } from './desktop'
 import type { PartData } from './parts'
 
 const stats: Stats = { turn: 12, speed: 84, turnCost: 0.42, total: 3.1, context: 63, costAtStart: 2.68 }
-const cache: CacheState = { expiresAt: 0, secondsLeft: 47 * 60 + 12, warnedMark: 0, isBusy: false, lastPromptAt: 0, warmedSincePrompt: false }
+const cache: CacheState = { expiresAt: 0, secondsLeft: 47 * 60 + 12, warnedMark: 0, isBusy: false, lastPromptAt: 0, warmedSincePrompt: false, isWarming: false }
 const budget: Budget = { sessionCap: 0, dailyCap: 0, isOff: false, day: '2026-10-12', dayBase: 0, dailySpent: 21.4, notified: { session: 'ok', daily: 'ok' }, demoPercent: null, sessionId: 's1', lastTotal: 3.1, ledgerKey: '', priorForKey: 0, sessionCapOverridden: false }
 const D: PartData = { stats, cache, budget, git: { branch: 'main', changed: 4, ahead: 1, behind: 0 }, theme: T, isWorking: false, costShows: ['reply', 'session', 'today'] }
 const text = (id: Parameters<typeof richPart>[0], d: PartData = D, compact = false) => richPart(id, d, compact).segments.map(s => s.text).join('')
@@ -39,7 +39,7 @@ test('desktop: cache placeholders', async () => {
 
 test('desktop: icons are fixed-size images in the level color, described by alt', async () => {
   const cost = richPart('cost', { ...D, budget: { ...budget, sessionCap: 3 } }, false).graphic
-  expect(cost?.source).toContain(T.alert)
+  expect(cost?.source).toContain(HOST_HEX.alert)
   expect(cost?.alt).toBe('Last reply $0.42 · Session $3.10 of $3.00 · Today on this machine $21.40')
   expect(richPart('cost', { ...D, isWorking: true }, false).graphic?.alt).toBe('This reply $0.42 · Session $3.10 · Today on this machine $21.40')
   expect(cost).toMatchObject({ width: 14, height: 14 })
@@ -90,3 +90,18 @@ test('desktop: widths count the graphic, a gap and the text', async () => {
   expect(richWidth(richPart('context', D, false))).toBe(BAR_CELLS + 1 + '63% context'.length)
   expect(richWidth(richPart('turn', D, false))).toBe('Turn 12'.length)
 })
+
+// The theme's colors are made for a dark terminal; on the desktop's light band the
+// cost takes the host's own status colors, as its diff counts do.
+test('desktop: the cost reads in the host status colors, not the theme', async () => {
+  const at = (sessionCap: number) => richPart('cost', { ...D, budget: { ...budget, sessionCap } }, false)
+  const colors = (p: ReturnType<typeof at>) => [...new Set(p.segments.filter(x => x.color).map(x => x.color))]
+  expect(colors(at(0))).toEqual(['success'])
+  expect(at(0).graphic?.source).toContain(HOST_HEX.ok)
+  expect(colors(at(4))).toEqual(['warning'])
+  expect(at(4).graphic?.source).toContain(HOST_HEX.warn)
+  expect(colors(at(3))).toEqual(['error'])
+  expect(at(3).graphic?.source).toContain(HOST_HEX.alert)
+  expect(at(0).graphic?.source).not.toContain(T.good)
+})
+

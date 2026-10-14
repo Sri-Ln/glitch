@@ -115,7 +115,8 @@ test('band (desktop): worded values, fixed-size icons and a bar, no git', async 
   const row = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('')
   const svgs = await ui.findAll({ type: 'Svg' })
   await ui.unmount()
-  expect(row).toContain('Turn 1')
+  // The conversation is in view on the desktop: the turn count is left out there.
+  expect(row).not.toContain('Turn')
   expect(row).toContain('$0.42 session')
   expect(row).toContain('60:00 left')
   expect(row).toContain('63% context')
@@ -159,6 +160,18 @@ test('band: today counts another session on this machine from the first turn', a
   expect(await rowText($, 160)).toContain('0.42 session · 18.42 today')
 })
 
+// Each session sums the ledger when its own turn ends: an idle one reads it again
+// on the timer, so every session's today agrees within 30 s.
+test('band: an idle session picks up what another session spent', async ($, on) => {
+  const store: Record<string, unknown> = { 'ledger:2026-10-12:other': 18 }
+  const clock = await session($, on, MAIN, { store })
+  await turn($, 0.42)
+  expect(await rowText($, 160)).toContain('18.42 today')
+  store['ledger:2026-10-12:other'] = 20
+  await clock.advance(30_000)
+  expect(await rowText($, 160)).toContain('20.42 today')
+})
+
 test('band: /glitch hud cost picks the figures and their order', async ($, on) => {
   await session($, on)
   await turn($, 0.42)
@@ -176,6 +189,50 @@ test('band: Cost shows in the settings picks the figures', { options: { costShow
   const row = await rowText($, 160)
   expect(row).toContain('$ 0.50 session')
   expect(row).not.toContain('today')
+})
+
+test('band (desktop): Turn shows once the person picks the parts', async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  await $.command.run({ command: 'glitch-hud', args: 'hud parts turn,cost' } as never)
+  expect(await rowText($, 160, 'desktop')).toContain('Turn 1')
+})
+
+test('band: the hide control is ✕ on the desktop and × in the terminal', async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  const label = async (surface: 'terminal' | 'desktop') => {
+    const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(160) })
+    const hide = await ui.find({ key: 'glitch-hide' })
+    await ui.unmount()
+    return hide?.props.label
+  }
+  expect(await label('desktop')).toBe('✕')
+  expect(await label('terminal')).toBe('×')
+})
+
+// The control reads … for as long as the keep-warm request runs. It is one glyph
+// on every surface: the desktop drew a longer label as visible, cut-off text.
+test('band (desktop): the keep-warm control is one glyph and reads … while it runs', async ($, on) => {
+  let release: (v: unknown) => void = () => undefined
+  on('model.fork', () => new Promise(r => { release = r }) as never)
+  await session($, on)
+  await turn($, 0.1)
+  const label = async () => {
+    const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+    const button = await ui.find({ key: 'glitch-warm' })
+    await ui.unmount()
+    return String(button?.props.label)
+  }
+  expect(await label()).toBe('↻')
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  const pressed = ui.press({ key: 'glitch-warm' })
+  for (let i = 0; i < 50 && (await label()) !== '…'; i++) await Promise.resolve()
+  expect(await label()).toBe('…')
+  release({ value: { isAnswered: false, reason: 'test' } })
+  await pressed
+  await ui.unmount()
+  expect(await label()).toBe('↻')
 })
 
 test('band: a 5-minute cache lifetime counts down from 05:00 and warns at its marks', { options: { cacheTtlMinutes: '5', cacheWarnMinutes: '2', notify: 'toast' } }, async ($, on) => {
