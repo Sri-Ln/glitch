@@ -6,6 +6,7 @@ Glitch is a kit of Claude Code mods, published from this folder as a marketplace
 |---|---|
 | `glitch-core` | Shared themes and the `/glitch` command. |
 | `glitch-hud` | The band above the prompt: turn, speed, cost and budget, cache countdown with keep-warm, context, git. Depends on `glitch-core`. |
+| `glitch-pets` | A pixel pet at the end of the HUD row, with moods, short remarks and a daily streak. Depends on `glitch-core` and `glitch-hud`. |
 
 ## The HUD
 
@@ -56,6 +57,35 @@ With a 5-minute lifetime, warning marks at or above 5 can never fire: they are i
 - **Cost.** One ping is a cache read of the whole context: about $0.04 at 200k tokens of context on Opus 5.5, versus about $1.60 to rebuild an expired cache.
 - **autoWarm** (off by default). At the last warning mark, ping once if you submitted a prompt within `autoWarmMaxIdle` minutes; never twice in a row without a prompt from you in between.
 
+## glitch-pets
+
+Pick a pet and it sits at the end of the HUD row on the desktop app. While Claude works, your pet types on a little laptop; between turns it does its signature move. It reacts to the session through moods, says a short word now and then as a toast, and keeps a daily streak. It is not drawn in the terminal; there, remarks arrive as toasts.
+
+| Pet | Kind | Temperament | Signature move (idle) |
+|---|---|---|---|
+| Screenhead | screen bot | Earnest, literal and a little robotic; reports facts, proud of tidy output. | Types; code scrolls on its screen face. |
+| Byte blob | blob | Bubbly and easily startled; squeaks with joy, wobbles when worried. | Bounces: squash, stretch and a glitch slice. |
+| Pixel | cat | Dry and unimpressed, secretly proud; says little, means it. | Swishes its tail and sheds pixels. |
+| Dot | ladybug | Tidy, gentle and encouraging; notices the small things. | Flutters her wings on a daisy. |
+| Fork | octopus | The organised multitasker; a born lead who loves a plan. | Taps four keys with four arms. |
+| Bud | dog | Eager and loyal; cheers for everything and wants to go again. | Wags, pants and flops an ear. |
+
+Moods: idle, working, happy, tired, sleepy, worried, oops, cheering, leading, reviewing, crying. It cries when the budget cap is reached, when a daily streak of two or more days is broken, and after three failures in a row.
+
+`/glitch-pets <name | off>` switches to a pet and remembers it, or empties the slot; `/glitch-pets` alone lists the pets. `/glitch pet [name | off]` works the same way.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `pet` | `bud` | your pet: screenhead, blob, pixel, dot, fork, bud or off; `/glitch pet <name>` overrides it |
+| `voice` | `true` | one-line remarks as toasts |
+| `voiceEveryMinutes` | `3` | at most one remark per this many minutes |
+| `tiredMinutes` | `10` | a turn this long makes the pet tired |
+| `sleepyMinutes` | `10` | this long without a prompt makes the pet sleepy |
+
+```
+/plugin install glitch-pets@glitch
+```
+
 ## Themes
 
 Six built-in themes: `glitch` (default, electric cyan and magenta), `neon`, `mono`, `sunset`, `matrix`, `paper`. `/glitch theme` lists them, `/glitch theme neon` switches and remembers the choice across sessions, `/glitch theme default` clears it.
@@ -70,12 +100,14 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 
 ## Commands
 
-`/glitch` is owned by glitch-core. The HUD subcommands are answered by glitch-hud directly, and the same subcommands also work as `/glitch-hud …`.
+`/glitch` is owned by glitch-core. The HUD subcommands are answered by glitch-hud directly, the pet subcommand by glitch-pets, and the same subcommands also work as `/glitch-hud …`.
 
 | Command | Owner | Does |
 |---|---|---|
 | `/glitch` | core | help card: theme and the subcommands each plugin answers |
 | `/glitch theme [name\|default]` | core | list themes, or switch and persist |
+| `/glitch-pets [name\|off]` | pets | list pets, switch and persist, or turn the pet off |
+| `/glitch pet [name\|off]` | pets | the same, through the core command |
 | `/glitch hud` | hud | show or hide the band |
 | `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list without spaces, e.g. `cost,cache,context` |
 | `/glitch hud cost <list>` | hud | cost figures and order for this session, e.g. `session,today` |
@@ -126,6 +158,8 @@ From a local folder:
 claude plugin marketplace add C:\path\to\this\folder
 /plugin install glitch-hud@glitch
 ```
+
+To add the pets: `/plugin install glitch-pets@glitch`.
 
 Or load the plugin folders directly with `CLAUDE_CODE_PLUGIN_DIRS`, separated by `;` on Windows. In cmd:
 

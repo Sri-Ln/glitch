@@ -1,0 +1,16 @@
+{
+  "name": "glitch-pets",
+  "version": "0.1.2",
+  "description": "Glitch pets: pick one of six pixel critters; it sits at the end of the HUD row, shows moods and says a word now and then.",
+  "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "dependencies": ["glitch-core", "glitch-hud"],
+  "userConfig": {
+    "pet": { "type": "string", "title": "Pet", "description": "Your pet; /glitch pet <name> overrides it", "default": "bud", "options": ["screenhead", "blob", "pixel", "dot", "fork", "bud", "off"] },
+    "voice": { "type": "boolean", "title": "Pet remarks", "description": "One-line remarks as toasts", "default": true },
+    "voiceEveryMinutes": { "type": "number", "title": "Minutes between remarks", "description": "At most one remark per this many minutes", "default": 3 },
+    "tiredMinutes": { "type": "number", "title": "Tired after (minutes)", "description": "A turn this long makes the pet tired", "default": 10 },
+    "sleepyMinutes": { "type": "number", "title": "Sleepy after (minutes)", "description": "This long without a prompt makes the pet sleepy", "default": 10 }
+  }
+}

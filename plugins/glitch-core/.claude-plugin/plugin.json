@@ -1,6 +1,6 @@
 {
   "name": "glitch-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Glitch kit core: shared themes and the /glitch command.",
   "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
   "license": "MIT",

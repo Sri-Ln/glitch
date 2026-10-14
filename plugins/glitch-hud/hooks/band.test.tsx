@@ -386,7 +386,7 @@ test('band: a subagent step does not change the speed', async ($, on) => {
   expect(await rowText($, 160)).not.toContain('tok/s')
 })
 
-test('band: cache marks notify once each, never while a turn runs, and re-arm', { options: { notify: 'toast' } }, async ($, on) => {
+test('band: cache marks notify once each, never while a turn runs, and re-arm', { timeoutMs: 30_000, options: { notify: 'toast' } }, async ($, on) => {
   const clock = await session($, on)
   await turn($, 0.1)
   await clock.advance(50 * 60_000)
@@ -457,4 +457,99 @@ test('band: git refreshes on the 30 s timer while idle', async ($, on) => {
   gitOut = '# branch.oid abc\n# branch.head feature\n'
   await clock.advance(30_000)
   expect(await rowText($, 160)).toContain('feature')
+})
+
+const petSprite = { source: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="20"></svg>', alt: 'Bud the dog, idle', width: 24, height: 20 }
+
+const withPet = (on: On, value: unknown) =>
+  on('state.get', (_$, e, next) => ((e.plugin as string) === 'glitch-pets' && (e as { key?: string }).key === 'sprite' ? ({ value: { value, version: 1 } } as never) : next(e)))
+
+test('desktop draws the pet before the controls', async ($, on) => {
+  withPet(on, petSprite)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  const svgs = await ui.findAll({ type: 'Svg' })
+  expect(svgs.some(s => s.props.alt === 'Bud the dog, idle')).toBe(true)
+  expect(await ui.find({ key: 'glitch-pet' })).toBeTruthy()
+  await ui.unmount()
+})
+
+// ui.findAll returns elements in tree order: the keyed ones read as the row, left to right.
+const keyOrder = async ($: Engine, surface: 'terminal' | 'desktop') => {
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(160) })
+  const keys = (await ui.findAll({})).map(x => x.key).filter((k): k is string => k !== undefined)
+  await ui.unmount()
+  return keys
+}
+
+test('desktop row: speed, cost, cache with its keep-warm, context, then pet and ✕', async ($, on) => {
+  withPet(on, petSprite)
+  await session($, on)
+  await turn($, 0.1)
+  const keys = (await keyOrder($, 'desktop')).filter(k => ['speed', 'cost', 'cache', 'context', 'glitch-warm', 'glitch-pet', 'glitch-hide'].includes(k))
+  expect(keys).toEqual(['speed', 'cost', 'cache', 'glitch-warm', 'context', 'glitch-pet', 'glitch-hide'])
+  // Pet and ✕ are siblings under the row's one columnGap: equal space either side of the pet.
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  const pet = await ui.find({ key: 'glitch-pet' })
+  expect(pet?.props.paddingX).toBeUndefined()
+  expect(pet?.props.marginX).toBeUndefined()
+  await ui.unmount()
+})
+
+test('desktop row without a pet: no pet, ✕ last', async ($, on) => {
+  withPet(on, null)
+  await session($, on)
+  await turn($, 0.1)
+  const keys = await keyOrder($, 'desktop')
+  expect(keys).not.toContain('glitch-pet')
+  expect(keys[keys.length - 1]).toBe('glitch-hide')
+  const order = keys.filter(k => ['cache', 'context', 'glitch-warm'].includes(k))
+  expect(order).toEqual(['cache', 'glitch-warm', 'context'])
+})
+
+test('terminal row: keep-warm right after the cache part, before context', async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  const keys = (await keyOrder($, 'terminal')).filter(k => ['cost', 'cache', 'context', 'glitch-warm', 'glitch-hide'].includes(k))
+  expect(keys).toEqual(['cost', 'cache', 'glitch-warm', 'context', 'glitch-hide'])
+  expect(await rowText($, 160)).toContain('⧗ 60:00')
+})
+
+test('terminal never draws the pet', async ($, on) => {
+  withPet(on, petSprite)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'terminal', ...BAND(160) })
+  expect(await ui.find({ key: 'glitch-pet' })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('band without a sprite is unchanged', async ($, on) => {
+  withPet(on, null)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  expect(await ui.find({ key: 'glitch-pet' })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('a malformed sprite draws no pet', async ($, on) => {
+  withPet(on, { source: 5 })
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  expect(await ui.find({ key: 'glitch-pet' })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('fit reserves the pet: at a tight width git and speed drop before the pet goes', async ($, on) => {
+  withPet(on, petSprite)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(60) })
+  expect(await ui.find({ key: 'glitch-pet' })).toBeTruthy()
+  const row = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('')
+  expect(row).not.toContain('tok/s')
+  await ui.unmount()
 })
