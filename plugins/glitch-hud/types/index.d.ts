@@ -1,5 +1,8 @@
 export type PartId = 'turn' | 'speed' | 'cost' | 'cache' | 'context' | 'git'
 
+/** The figures the cost part shows: the last reply, this session, today on this machine. */
+export type CostScope = 'reply' | 'session' | 'today'
+
 export type Level = 'ok' | 'warn' | 'alert' | 'over'
 
 /** glitch-core's Theme, restated so this plugin types without it. */
@@ -19,7 +22,7 @@ export type Stats = {
   turn: number
   /** Output tokens per second of the last main response; null before one was timed. */
   speed: number | null
-  /** Cost of the running or last turn; null before the first turn. */
+  /** Cost of the running or last reply (one turn); null before the first turn. */
   turnCost: number | null
   /** Session cost so far, USD. */
   total: number
@@ -42,6 +45,8 @@ export type CacheState = {
   lastPromptAt: number
   /** A keep-warm ran since the person's last prompt. */
   warmedSincePrompt: boolean
+  /** A keep-warm request is running: the control reads … meanwhile. */
+  isWarming: boolean
 }
 
 export type Budget = {
@@ -73,7 +78,7 @@ export type Budget = {
 
 export type GitInfo = { branch: string; changed: number; ahead: number; behind: number }
 
-export type View = { isHidden: boolean; parts: PartId[] | null }
+export type View = { isHidden: boolean; parts: PartId[] | null; cost: CostScope[] | null }
 
 declare module 'claude-code' {
   interface PluginState {

@@ -10,7 +10,7 @@ export const INITIAL_STATS: Stats = {
 }
 
 export const INITIAL_CACHE: CacheState = {
-  expiresAt: null, secondsLeft: null, warnedMark: 0, isBusy: false, lastPromptAt: 0, warmedSincePrompt: false,
+  expiresAt: null, secondsLeft: null, warnedMark: 0, isBusy: false, lastPromptAt: 0, warmedSincePrompt: false, isWarming: false,
 }
 
 export const initialBudget = (config: HudConfig): Budget => ({
@@ -33,4 +33,4 @@ export const INITIAL_BUDGET: Budget = initialBudget(DEFAULT_CONFIG)
 
 export const INITIAL_GIT: GitInfo | null = null
 
-export const INITIAL_VIEW: View = { isHidden: false, parts: null }
+export const INITIAL_VIEW: View = { isHidden: false, parts: null, cost: null }

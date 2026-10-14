@@ -1,13 +1,18 @@
 // The band as the surfaces with `Svg` draw it (desktop, VS Code, mobile): vector
-// icons and a real context bar, each with a hover tooltip, and worded values in
-// place of the terminal's bare symbols. Pure: register.tsx draws what this returns.
-import type { PartId } from '../types'
-import { costLevel, usd } from './budget'
+// icons and a real context bar, and worded values in place of the terminal's bare
+// symbols. Pure: register.tsx draws what this returns.
+//
+// Each graphic is drawn as a plain image at a fixed size. Its markup only changes
+// with its color or fill, never with the clock, so a redraw each second reuses it.
+// No hover tooltips: an interactive Svg is a frame of its own, which the desktop
+// drew far taller than the row and rebuilt on every tick.
+import type { CostScope, Level, PartId } from '../types'
+import { costLevel, todaySpent, usd } from './budget'
 import { cacheLevel, clockText } from './cache'
-import { cellWidth, levelColor } from './parts'
+import { cellWidth, costFigures, levelColor } from './parts'
 import type { PartData, Segment } from './parts'
 
-export type Graphic = { source: string; alt: string; cells: number }
+export type Graphic = { source: string; alt: string; width: number; height: number; cells: number }
 
 export type RichPart = { graphic: Graphic | null; segments: Segment[] }
 
@@ -17,12 +22,19 @@ export const BAR_CELLS = 7
 
 const BAR_WIDTH = 48
 const BAR_HEIGHT = 8
-
-const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+const ICON_SIZE = 14
 
 // Theme colors come from a custom theme too: only a hex value or a color name
 // reaches the markup.
 export const safeColor = (c: string | undefined): string => (c && /^(#[0-9a-f]{3,8}|[a-z]+)$/i.test(c) ? c : 'currentColor')
+
+// The cost in the host's own status colors, as its diff counts are drawn: the
+// themes' colors are made for a dark terminal and wash out on a light band. The
+// text names them, so they follow the person's light or dark mode; the icon is an
+// image and cannot, so it takes the light-mode shades sampled from the desktop.
+export const HOST_COLOR = { ok: 'success', warn: 'warning', alert: 'error' } as const
+export const HOST_HEX = { ok: '#24a041', warn: '#b7791f', alert: '#ce295b' } as const
+const hostLevel = (l: Level): keyof typeof HOST_COLOR => (l === 'over' ? 'alert' : l)
 
 type IconKind = 'speed' | 'cost' | 'cache'
 
@@ -37,36 +49,47 @@ const SHAPES: Record<IconKind, (c: string) => string> = {
       `<path d="M8 4.5V8l2.5 1.6" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/>`,
 }
 
-export const iconSvg = (kind: IconKind, color: string, tip: string): Graphic => ({
-  source: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16"><title>${esc(tip)}</title>${SHAPES[kind](safeColor(color))}</svg>`,
-  alt: tip,
+export const iconSvg = (kind: IconKind, color: string, alt: string): Graphic => ({
+  source: `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON_SIZE}" height="${ICON_SIZE}" viewBox="0 0 16 16">${SHAPES[kind](safeColor(color))}</svg>`,
+  alt,
+  width: ICON_SIZE,
+  height: ICON_SIZE,
   cells: ICON_CELLS,
 })
 
-export const barSvg = (percent: number, color: string, track: string, tip: string): Graphic => {
+export const barSvg = (percent: number, color: string, track: string, alt: string): Graphic => {
   // Any fill at all is drawn at least as a round dot.
   const fill = percent > 0 ? Math.max(BAR_HEIGHT, Math.round((Math.min(100, percent) / 100) * BAR_WIDTH)) : 0
   const r = BAR_HEIGHT / 2
   return {
     source:
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${BAR_WIDTH}" height="${BAR_HEIGHT}" viewBox="0 0 ${BAR_WIDTH} ${BAR_HEIGHT}"><title>${esc(tip)}</title>` +
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${BAR_WIDTH}" height="${BAR_HEIGHT}" viewBox="0 0 ${BAR_WIDTH} ${BAR_HEIGHT}">` +
       `<rect width="${BAR_WIDTH}" height="${BAR_HEIGHT}" rx="${r}" fill="${safeColor(track)}" fill-opacity="0.3"/>` +
       (fill > 0 ? `<rect width="${fill}" height="${BAR_HEIGHT}" rx="${r}" fill="${safeColor(color)}"/>` : '') +
       `</svg>`,
-    alt: tip,
+    alt,
+    width: BAR_WIDTH,
+    height: BAR_HEIGHT,
     cells: BAR_CELLS,
   }
 }
 
+// The cap a figure is held to, when the budget is on: none for a reply.
+const capOf = (d: PartData, scope: CostScope): number =>
+  d.budget.isOff ? 0 : scope === 'session' ? d.budget.sessionCap : scope === 'today' ? d.budget.dailyCap : 0
+
+const ofCap = (d: PartData, scope: CostScope): string => (capOf(d, scope) > 0 ? ` of ${usd(capOf(d, scope))}` : '')
+
+// Every figure, whichever the band shows: the tooltip is where they are spelled out.
 export function costTip(d: PartData): string {
   const s = d.stats
-  const b = d.budget
   if (s.isStale) return 'Session cost: cannot be read right now'
-  const showsTurn = s.turnCost !== null && usd(s.turnCost) !== usd(s.total)
-  const parts = [showsTurn ? `This turn ${usd(s.turnCost as number)}` : null, `Session ${usd(s.total)}`]
-  if (!b.isOff && b.sessionCap > 0) parts.push(`Session cap ${usd(b.sessionCap)}`)
-  if (!b.isOff && b.dailyCap > 0) parts.push(`Today ${usd(b.dailySpent)} of ${usd(b.dailyCap)}`)
-  return parts.filter(Boolean).join(' · ')
+  const showsReply = s.turnCost !== null && usd(s.turnCost) !== usd(s.total)
+  return [
+    showsReply ? `${d.isWorking ? 'This' : 'Last'} reply ${usd(s.turnCost as number)}` : null,
+    `Session ${usd(s.total)}${ofCap(d, 'session')}`,
+    `Today on this machine ${usd(todaySpent(d.budget, s.total))}${ofCap(d, 'today')}`,
+  ].filter(Boolean).join(' · ')
 }
 
 export function cacheTip(d: PartData): string {
@@ -74,7 +97,9 @@ export function cacheTip(d: PartData): string {
   if (d.isWorking) return 'Prompt cache: a request is running'
   if (left === null) return 'Prompt cache: no request yet'
   if (left === 0) return 'Prompt cache expired: the next message reads the whole context again'
-  return `Prompt cache expires in ${clockText(left)}. Press ↻ to keep it warm.`
+  // No clock here: the time is in the text beside it, and an icon whose props
+  // change each second is redrawn each second.
+  return 'Prompt cache countdown. Press ↻ to keep it warm.'
 }
 
 export function richPart(id: PartId, d: PartData, compact: boolean): RichPart {
@@ -89,15 +114,20 @@ export function richPart(id: PartId, d: PartData, compact: boolean): RichPart {
         segments: [{ text: s.speed === null ? '—' : String(s.speed), bold: true }, { text: ' tok/s', dim: true }],
       }
     case 'cost': {
-      const color = levelColor(t, costLevel(d.budget, s.total))
-      const showsTurn = s.turnCost !== null && usd(s.turnCost) !== usd(s.total)
+      // Compact keeps the figures alone; the tooltip still names them.
+      const level = hostLevel(costLevel(d.budget, s.total))
+      const color = HOST_COLOR[level]
       return {
-        graphic: iconSvg('cost', color, costTip(d)),
-        segments: [
-          ...(showsTurn && !s.isStale ? [{ text: usd(s.turnCost as number), bold: true, color }, { text: ' turn · ', dim: true }] : []),
-          { text: s.isStale ? '—' : usd(s.total), bold: true, color },
-          { text: ' session', dim: true },
-        ],
+        graphic: iconSvg('cost', HOST_HEX[level], costTip(d)),
+        segments: s.isStale
+          ? [{ text: '—', bold: true, color }, ...(compact ? [] : [{ text: ' session', dim: true }])]
+          : costFigures(d).flatMap((f, n): Segment[] => [
+          ...(n > 0 ? [{ text: ' · ', dim: true }] : []),
+          { text: usd(f.value), bold: true, color },
+          ...(compact
+            ? []
+            : [...(capOf(d, f.scope) > 0 ? [{ text: ' of ', dim: true }, { text: usd(capOf(d, f.scope)), color }] : []), { text: ` ${f.scope}`, dim: true }]),
+        ]),
       }
     }
     case 'cache': {

@@ -1,0 +1,34 @@
+// The state contract. Sprite, MoodId and PetId are inlined from hooks/behavior/types.ts
+// because `claude plugin validate` requires the contract to be self-contained.
+
+/** What glitch-hud draws: one frame as an image. */
+export type Sprite = { source: string; alt: string; width: number; height: number }
+
+export type MoodId = 'idle' | 'working' | 'happy' | 'tired' | 'sleepy' | 'worried' | 'oops' | 'cheering' | 'leading' | 'reviewing' | 'crying'
+
+export type PetId = 'screenhead' | 'blob' | 'pixel' | 'dot' | 'fork' | 'bud'
+
+export type MoodState = {
+  /** The mood shown now and when it began (clock ms): the player times frames from it. */
+  mood: MoodId
+  since: number
+  /** Main-loop turn running since (clock ms), or null. */
+  turnSince: number | null
+  /** Last prompt the person sent (clock ms); session start until then. */
+  lastPromptAt: number
+  oopsUntil: number
+  happyUntil: number
+  cheerUntil: number
+  /** Crying until (clock ms): a broken streak or repeated failures. */
+  cryUntil: number
+  /** Failures in a row in the main loop; three make the pet cry. */
+  failStreak: number
+}
+
+export type PetsView = { petId: PetId | 'off' }
+
+declare module 'claude-code' {
+  interface PluginState {
+    'glitch-pets': { sprite: Sprite | null; mood: MoodState; view: PetsView }
+  }
+}

@@ -23,7 +23,8 @@ const MAIN = '# branch.oid abc\n# branch.head main\n'
 const STEP_RESULT = { turnId: 't', index: 0, answer: 'hi', toolUses: [] }
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
-const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { registerFails?: boolean; refusable?: boolean } = {}) => {
+// `opts.store` seeds the plugin's store (another session's ledger entry, say).
+const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { registerFails?: boolean; refusable?: boolean; store?: Record<string, unknown> } = {}) => {
   usd = 0
   toasts = []
   gitOut = git
@@ -36,6 +37,7 @@ const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { reg
   if (opts.refusable) on('state.set', (_$, e, next) => (stateRefused ? ({ deny: 'state refused' } as never) : next(e)))
   on('model.fork', () => {
     if (fork === 'reject') throw new Error('fork refused')
+    if (fork instanceof Promise) return fork as never
     return { value: fork } as never
   })
   on('ui.toast', (_$, e) => {
@@ -48,7 +50,19 @@ const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { reg
   })
   on('session.cwd', () => ({ value: 'C:\\repo' }) as never)
   const clock = mock.clock(on, { now: Date.parse('2026-10-12T10:00:00Z') })
-  mock.store(on)
+  const seeded = opts.store
+  if (seeded) {
+    on('store.get', (_$, e) => ({ value: seeded[e.key] }) as never)
+    on('store.set', (_$, e) => {
+      seeded[e.key] = e.value
+      return { value: undefined } as never
+    })
+    on('store.delete', (_$, e) => {
+      delete seeded[e.key]
+      return { value: undefined } as never
+    })
+    on('store.keys', () => ({ value: Object.keys(seeded) }) as never)
+  } else mock.store(on)
   mock.env(on, { OS: 'Windows_NT' })
   on('session.usage', () => {
     if (usageFails) throw new Error('usage refused')
@@ -104,7 +118,7 @@ test('band (terminal): shows turn, cost, cache, context and git after a turn', a
   await turn($, 0.42)
   const row = await rowText($, 160)
   expect(row).toContain('#1')
-  expect(row).toContain('$0.42')
+  expect(row).toContain('$ 0.42 session · 0.42 today')
   expect(row).not.toContain('│')
   expect(row).toContain('60:00')
   expect(row).toContain('63%')
@@ -112,25 +126,28 @@ test('band (terminal): shows turn, cost, cache, context and git after a turn', a
 })
 
 // The desktop draws the branch in its own row above the band: git is left out there.
-test('band (desktop): worded values, icons and a bar with tooltips, no git', async ($, on) => {
+test('band (desktop): worded values, fixed-size icons and a bar, no git', async ($, on) => {
   await session($, on)
   await turn($, 0.42)
   const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
   const row = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('')
   const svgs = await ui.findAll({ type: 'Svg' })
   await ui.unmount()
-  expect(row).toContain('Turn 1')
+  // The conversation is in view on the desktop: the turn count is left out there.
+  expect(row).not.toContain('Turn')
   expect(row).toContain('$0.42 session')
   expect(row).toContain('60:00 left')
   expect(row).toContain('63% context')
   expect(row).not.toContain('main')
   expect(svgs.map(x => x.props.alt)).toEqual([
     'Output speed of the last answer',
-    'Session $0.42',
-    'Prompt cache expires in 60:00. Press ↻ to keep it warm.',
+    'Session $0.42 · Today on this machine $0.42',
+    'Prompt cache countdown. Press ↻ to keep it warm.',
     'Context 63% full',
   ])
-  expect(svgs.every(x => x.props.isInteractive === true && String(x.props.source).includes('<title>'))).toBe(true)
+  // Plain images at a set size: an interactive Svg drew as a tall frame on the desktop.
+  expect(svgs.every(x => x.props.isInteractive === undefined && typeof x.props.width === 'number' && typeof x.props.height === 'number')).toBe(true)
+  expect(svgs.map(x => x.props.height)).toEqual([14, 14, 14, 8])
 })
 
 test('band (desktop): git shows once the person picks the parts', async ($, on) => {
@@ -148,11 +165,95 @@ test('band (desktop): Parts changed in the settings shows git', { options: { par
   expect(await rowText($, 160, 'desktop')).toContain('main')
 })
 
-test('band (desktop): the second turn shows turn and session cost', async ($, on) => {
+test('band (desktop): the second turn shows the reply, session and today cost', async ($, on) => {
   await session($, on)
   await turn($, 0.42)
   await turn($, 0.5)
-  expect(await rowText($, 160, 'desktop')).toContain('$0.08 turn · $0.50 session')
+  expect(await rowText($, 160, 'desktop')).toContain('$0.08 reply · $0.50 session · $0.50 today')
+})
+
+test('band: today counts another session on this machine from the first turn', async ($, on) => {
+  await session($, on, MAIN, { store: { 'ledger:2026-10-12:other': 18 } })
+  await turn($, 0.42)
+  expect(await rowText($, 160)).toContain('0.42 session · 18.42 today')
+})
+
+// Each session sums the ledger when its own turn ends: an idle one reads it again
+// on the timer, so every session's today agrees within 30 s.
+test('band: an idle session picks up what another session spent', async ($, on) => {
+  const store: Record<string, unknown> = { 'ledger:2026-10-12:other': 18 }
+  const clock = await session($, on, MAIN, { store })
+  await turn($, 0.42)
+  expect(await rowText($, 160)).toContain('18.42 today')
+  store['ledger:2026-10-12:other'] = 20
+  await clock.advance(30_000)
+  expect(await rowText($, 160)).toContain('20.42 today')
+})
+
+test('band: /glitch hud cost picks the figures and their order', async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  await turn($, 0.5)
+  expect(await $.command.run({ command: 'glitch-hud', args: 'hud cost today,reply' } as never)).toEqual({ text: 'HUD cost: today, reply.' })
+  const row = await rowText($, 160)
+  expect(row).toContain('$ 0.50 today · 0.08 reply')
+  expect(row).not.toContain('session')
+})
+
+test('band: Cost shows in the settings picks the figures', { options: { costShows: 'session' } }, async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  await turn($, 0.5)
+  const row = await rowText($, 160)
+  expect(row).toContain('$ 0.50 session')
+  expect(row).not.toContain('today')
+})
+
+test('band (desktop): Turn shows once the person picks the parts', async ($, on) => {
+  await session($, on)
+  await turn($, 0.42)
+  await $.command.run({ command: 'glitch-hud', args: 'hud parts turn,cost' } as never)
+  expect(await rowText($, 160, 'desktop')).toContain('Turn 1')
+})
+
+test('band: the hide control is ✕ on the desktop and × in the terminal', async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  const label = async (surface: 'terminal' | 'desktop') => {
+    const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(160) })
+    const hide = await ui.find({ key: 'glitch-hide' })
+    await ui.unmount()
+    return hide?.props.label
+  }
+  expect(await label('desktop')).toBe('✕')
+  expect(await label('terminal')).toBe('×')
+})
+
+// The control reads … for as long as the keep-warm request runs. It is one glyph
+// on every surface: the desktop drew a longer label as visible, cut-off text.
+test('band (desktop): the keep-warm control is one glyph and reads … while it runs', async ($, on) => {
+  let release: (v: unknown) => void = () => undefined
+  await session($, on)
+  fork = new Promise(r => { release = r })
+  await turn($, 0.1)
+  const label = async () => {
+    const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+    const button = await ui.find({ key: 'glitch-warm' })
+    await ui.unmount()
+    return String(button?.props.label)
+  }
+  expect(await label()).toBe('↻')
+  const padded = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  expect((await padded.find({ key: 'glitch-warm-box' }))?.props.paddingX).toBe(1)
+  await padded.unmount()
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  const pressed = ui.press({ key: 'glitch-warm' })
+  for (let i = 0; i < 50 && (await label()) !== '…'; i++) await Promise.resolve()
+  expect(await label()).toBe('…')
+  release({ value: { isAnswered: false, reason: 'test' } })
+  await pressed
+  await ui.unmount()
+  expect(await label()).toBe('↻')
 })
 
 test('band: a 5-minute cache lifetime counts down from 05:00 and warns at its marks', { options: { cacheTtlMinutes: '5', cacheWarnMinutes: '2', notify: 'toast' } }, async ($, on) => {
@@ -303,7 +404,7 @@ test('band: a subagent step does not change the speed', async ($, on) => {
   expect(await rowText($, 160)).not.toContain('tok/s')
 })
 
-test('band: cache marks notify once each, never while a turn runs, and re-arm', { options: { notify: 'toast' } }, async ($, on) => {
+test('band: cache marks notify once each, never while a turn runs, and re-arm', { timeoutMs: 30_000, options: { notify: 'toast' } }, async ($, on) => {
   const clock = await session($, on)
   await turn($, 0.1)
   await clock.advance(50 * 60_000)
@@ -386,7 +487,7 @@ test('band: unreadable usage shows — for cost and context until it reads again
   const row = await rowText($, 160)
   expect(row).toContain('$ —')
   expect(row).toContain('◔ —')
-  expect(row).not.toContain('$0.42')
+  expect(row).not.toContain('0.42')
   expect(row).not.toContain('63%')
   expect(await rowText($, 160, 'desktop')).toContain('— session')
   await turn($, 0.6)
@@ -394,7 +495,7 @@ test('band: unreadable usage shows — for cost and context until it reads again
   usageFails = false
   await turn($, 0.7)
   const back = await rowText($, 160)
-  expect(back).toContain('$0.70')
+  expect(back).toContain('0.70 session')
   expect(back).toContain('63%')
   // A later failure in the same session does not toast again.
   usageFails = true
@@ -436,4 +537,99 @@ test('band: a failed or empty keep-warm leaves the countdown', async ($, on) => 
   fork = { isAnswered: false, reason: 'nothing-to-fork' }
   await $.command.run({ command: 'glitch-hud', args: 'warm' } as never)
   expect(await rowText($, 160)).toContain('10:00')
+})
+
+const petSprite = { source: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="20"></svg>', alt: 'Bud the dog, idle', width: 24, height: 20 }
+
+const withPet = (on: On, value: unknown) =>
+  on('state.get', (_$, e, next) => ((e.plugin as string) === 'glitch-pets' && (e as { key?: string }).key === 'sprite' ? ({ value: { value, version: 1 } } as never) : next(e)))
+
+test('desktop draws the pet before the controls', async ($, on) => {
+  withPet(on, petSprite)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  const svgs = await ui.findAll({ type: 'Svg' })
+  expect(svgs.some(s => s.props.alt === 'Bud the dog, idle')).toBe(true)
+  expect(await ui.find({ key: 'glitch-pet' })).toBeTruthy()
+  await ui.unmount()
+})
+
+// ui.findAll returns elements in tree order: the keyed ones read as the row, left to right.
+const keyOrder = async ($: Engine, surface: 'terminal' | 'desktop') => {
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(160) })
+  const keys = (await ui.findAll({})).map(x => x.key).filter((k): k is string => k !== undefined)
+  await ui.unmount()
+  return keys
+}
+
+test('desktop row: speed, cost, cache with its keep-warm, context, then pet and ✕', async ($, on) => {
+  withPet(on, petSprite)
+  await session($, on)
+  await turn($, 0.1)
+  const keys = (await keyOrder($, 'desktop')).filter(k => ['speed', 'cost', 'cache', 'context', 'glitch-warm', 'glitch-pet', 'glitch-hide'].includes(k))
+  expect(keys).toEqual(['speed', 'cost', 'cache', 'glitch-warm', 'context', 'glitch-pet', 'glitch-hide'])
+  // Pet and ✕ are siblings under the row's one columnGap: equal space either side of the pet.
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  const pet = await ui.find({ key: 'glitch-pet' })
+  expect(pet?.props.paddingX).toBeUndefined()
+  expect(pet?.props.marginX).toBeUndefined()
+  await ui.unmount()
+})
+
+test('desktop row without a pet: no pet, ✕ last', async ($, on) => {
+  withPet(on, null)
+  await session($, on)
+  await turn($, 0.1)
+  const keys = await keyOrder($, 'desktop')
+  expect(keys).not.toContain('glitch-pet')
+  expect(keys[keys.length - 1]).toBe('glitch-hide')
+  const order = keys.filter(k => ['cache', 'context', 'glitch-warm'].includes(k))
+  expect(order).toEqual(['cache', 'glitch-warm', 'context'])
+})
+
+test('terminal row: keep-warm right after the cache part, before context', async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  const keys = (await keyOrder($, 'terminal')).filter(k => ['cost', 'cache', 'context', 'glitch-warm', 'glitch-hide'].includes(k))
+  expect(keys).toEqual(['cost', 'cache', 'glitch-warm', 'context', 'glitch-hide'])
+  expect(await rowText($, 160)).toContain('⧗ 60:00')
+})
+
+test('terminal never draws the pet', async ($, on) => {
+  withPet(on, petSprite)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'terminal', ...BAND(160) })
+  expect(await ui.find({ key: 'glitch-pet' })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('band without a sprite is unchanged', async ($, on) => {
+  withPet(on, null)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  expect(await ui.find({ key: 'glitch-pet' })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('a malformed sprite draws no pet', async ($, on) => {
+  withPet(on, { source: 5 })
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  expect(await ui.find({ key: 'glitch-pet' })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('fit reserves the pet: at a tight width git and speed drop before the pet goes', async ($, on) => {
+  withPet(on, petSprite)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(60) })
+  expect(await ui.find({ key: 'glitch-pet' })).toBeTruthy()
+  const row = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('')
+  expect(row).not.toContain('tok/s')
+  await ui.unmount()
 })
