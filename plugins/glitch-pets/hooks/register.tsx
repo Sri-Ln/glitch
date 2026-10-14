@@ -10,7 +10,7 @@ import type { MoodId, Persona, PetId, Sprite, VoiceMoment } from './behavior/typ
 import { PET_IDS } from './behavior/types'
 import { INITIAL_VOICE, pickLine } from './behavior/voice'
 import type { VoiceState } from './behavior/voice'
-import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petList } from './commands'
+import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petArgsOf, petList } from './commands'
 import { parsePetsConfig } from './config'
 import type { PetsConfig } from './config'
 import { PERSONAS } from './personas/index'
@@ -103,10 +103,11 @@ async function tick($: EngineInterface) {
   }
 }
 
-async function answerPets($: EngineInterface, args: string): Promise<string> {
-  const [sub, arg] = args.trim().split(/\s+/)
-  if (sub !== 'pet') return PETS_USAGE
-  const parsed = parsePetArg(arg)
+// `arg` is the pet argument (see petArgsOf): empty lists the pets.
+async function answerPets($: EngineInterface, arg: string): Promise<string> {
+  const word = arg.trim().split(/\s+/)[0]
+  if (word?.toLowerCase() === 'crew') return PETS_USAGE
+  const parsed = parsePetArg(word)
   if (parsed.kind === 'show') return petList((await read($, view)).petId, available)
   if (parsed.kind === 'unknown') return `Unknown pet "${parsed.name}". ${petList((await read($, view)).petId, available)}`
   const petId: PetId | 'off' = parsed.kind === 'off' ? 'off' : parsed.id
@@ -128,7 +129,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     try {
-      await $.command.register({ name: 'glitch-pets', description: 'Glitch pets: pick your pet (also as /glitch pet)' })
+      await $.command.register({ name: 'glitch-pets', description: 'Glitch pets: /glitch-pets <name | off> (also /glitch pet)' })
     } catch {
       $.ui.toast('Glitch pets: could not register /glitch-pets', { timeoutMs: 8000 })
     }
@@ -204,7 +205,7 @@ export const register: Register = (on, options) => {
     return ran
   })
 
-  on('command.run', { command: 'glitch-pets' }, async ($, e) => ({ text: await answerPets($, e.args) }))
+  on('command.run', { command: 'glitch-pets' }, async ($, e) => ({ text: await answerPets($, petArgsOf('glitch-pets', e.args)) }))
   on('command.run', { command: 'glitch' }, async ($, e, next) =>
-    ROUTED_PETS.includes(e.args.trim().split(/\s+/)[0] ?? '') ? { text: await answerPets($, e.args) } : next(e))
+    ROUTED_PETS.includes(e.args.trim().split(/\s+/)[0] ?? '') ? { text: await answerPets($, petArgsOf('glitch', e.args)) } : next(e))
 }

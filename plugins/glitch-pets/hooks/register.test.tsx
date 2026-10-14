@@ -59,6 +59,57 @@ test('pet off is kept in the store', async ($, on) => {
   expect(store.pet).toBe('off')
 })
 
+test('/glitch-pets with no args lists the pets', async ($, on) => {
+  await session($, on, {})
+  const r = await $.command.run({ command: 'glitch-pets', args: '' } as never)
+  expect((r as { text: string }).text).toContain('Pets: ')
+  expect((r as { text: string }).text).toContain('bud (current)')
+})
+
+test('/glitch-pets <name> picks that pet and keeps it in the store', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  await session($, on, store)
+  const r = await $.command.run({ command: 'glitch-pets', args: 'fork' } as never)
+  expect((r as { text: string }).text).toBe('Pet: Fork the octopus.')
+  expect(store.pet).toBe('fork')
+})
+
+test('/glitch-pets off turns the pet off', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  await session($, on, store)
+  const r = await $.command.run({ command: 'glitch-pets', args: 'off' } as never)
+  expect((r as { text: string }).text).toBe('Pet off.')
+  expect(store.pet).toBe('off')
+})
+
+test('/glitch-pets pet <name> still picks the pet', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  await session($, on, store)
+  const r = await $.command.run({ command: 'glitch-pets', args: 'pet dot' } as never)
+  expect((r as { text: string }).text).toBe('Pet: Dot the ladybug.')
+  expect(store.pet).toBe('dot')
+})
+
+test('/glitch-pets <unknown word> says the pet is unknown and lists the pets', async ($, on) => {
+  await session($, on, {})
+  const r = await $.command.run({ command: 'glitch-pets', args: 'dragon' } as never)
+  expect((r as { text: string }).text).toMatch(/^Unknown pet "dragon"\. Pets: /)
+})
+
+test('/glitch-pets crew is reserved and returns the usage', async ($, on) => {
+  await session($, on, {})
+  const r = await $.command.run({ command: 'glitch-pets', args: 'crew' } as never)
+  expect((r as { text: string }).text).toBe('Glitch pets: /glitch-pets [name | off] · /glitch pet [name | off]')
+})
+
+test('/glitch pet <name> through the glitch command picks the pet', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  await session($, on, store)
+  const r = await $.command.run({ command: 'glitch', args: 'pet bud' } as never)
+  expect((r as { text: string }).text).toBe('Pet: Bud the dog.')
+  expect(store.pet).toBe('bud')
+})
+
 test('a third day in a row is kept and cheers once, with a remark', async ($, on) => {
   const store: Record<string, unknown> = { streak: { lastDay: '2026-10-13', count: 2, cheered: 0 } }
   const clock = await session($, on, store)

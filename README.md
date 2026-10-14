@@ -72,7 +72,7 @@ Pick a pet and it sits at the end of the HUD row on the desktop app. It reacts t
 
 Moods: idle, working, happy, tired, sleepy, worried, oops, cheering, leading, reviewing, crying. It cries when the budget cap is reached, when a daily streak of two or more days is broken, and after three failures in a row.
 
-`/glitch pet [name | off]` lists the pets, switches to one and remembers it, or empties the slot.
+`/glitch-pets <name | off>` switches to a pet and remembers it, or empties the slot; `/glitch-pets` alone lists the pets. `/glitch pet [name | off]` works the same way.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -106,7 +106,8 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 |---|---|---|
 | `/glitch` | core | help card: theme and the subcommands each plugin answers |
 | `/glitch theme [name\|default]` | core | list themes, or switch and persist |
-| `/glitch pet [name\|off]` | pets | list pets, switch and persist, or turn the pet off |
+| `/glitch-pets [name\|off]` | pets | list pets, switch and persist, or turn the pet off |
+| `/glitch pet [name\|off]` | pets | the same, through the core command |
 | `/glitch hud` | hud | show or hide the band |
 | `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list without spaces, e.g. `cost,cache,context` |
 | `/glitch hud cost <list>` | hud | cost figures and order for this session, e.g. `session,today` |
