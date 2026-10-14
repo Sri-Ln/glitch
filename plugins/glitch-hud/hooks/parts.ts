@@ -1,10 +1,32 @@
-import type { Budget, CacheState, GitInfo, HudTheme, Level, PartId, Stats } from '../types'
-import { costLevel, usd } from './budget'
+import type { Budget, CacheState, CostScope, GitInfo, HudTheme, Level, PartId, Stats } from '../types'
+import { costLevel, todaySpent, usd } from './budget'
 import { cacheLevel, clockText } from './cache'
 
 export type Segment = { text: string; color?: string; bold?: boolean; dim?: boolean }
 
-export type PartData = { stats: Stats; cache: CacheState; budget: Budget; git: GitInfo | null; theme: HudTheme; isWorking: boolean }
+export type PartData = {
+  stats: Stats
+  cache: CacheState
+  budget: Budget
+  git: GitInfo | null
+  theme: HudTheme
+  isWorking: boolean
+  /** The cost figures to show, in order. */
+  costShows: CostScope[]
+}
+
+export type CostFigure = { scope: CostScope; value: number }
+
+// The chosen cost figures with their values. The reply figure is left out before
+// any reply, and while it reads the same as the session figure beside it (the
+// first turn).
+export function costFigures(d: PartData): CostFigure[] {
+  const s = d.stats
+  const value = (scope: CostScope): number =>
+    scope === 'reply' ? (s.turnCost ?? 0) : scope === 'session' ? s.total : todaySpent(d.budget, s.total)
+  const hidesReply = s.turnCost === null || (d.costShows.includes('session') && usd(s.turnCost) === usd(s.total))
+  return d.costShows.filter(scope => scope !== 'reply' || !hidesReply).map(scope => ({ scope, value: value(scope) }))
+}
 
 export const DROP_ORDER: PartId[] = ['git', 'speed', 'turn']
 
@@ -38,13 +60,15 @@ export function segments(id: PartId, d: PartData, compact: boolean): Segment[] {
     case 'speed':
       return [{ text: `${i.speed} `, color: t.info }, { text: s.speed === null ? '—' : `${s.speed} tok/s`, bold: true }]
     case 'cost': {
+      // The icon says dollars, so the figures go without the sign; compact drops the words.
       const color = levelColor(t, costLevel(d.budget, s.total))
-      // On the first turn the two read the same: one figure, not a pair.
-      const turn = s.turnCost === null ? '—' : usd(s.turnCost)
       return [
         { text: `${i.cost} `, color },
-        ...(turn === usd(s.total) ? [] : [{ text: turn, bold: true, color }, { text: ' │ ', dim: true }]),
-        { text: usd(s.total), bold: true, color },
+        ...costFigures(d).flatMap((f, n): Segment[] => [
+          ...(n > 0 ? [{ text: ' · ', dim: true }] : []),
+          { text: f.value.toFixed(2), bold: true, color },
+          ...(compact ? [] : [{ text: ` ${f.scope}`, dim: true }]),
+        ]),
       ]
     }
     case 'cache': {
@@ -69,22 +93,23 @@ export function segments(id: PartId, d: PartData, compact: boolean): Segment[] {
   }
 }
 
-// Which parts fit in `columns` cells on one line: drop by DROP_ORDER, then
-// collapse the context bar to its percent. `reserve` holds the row's controls.
+// Which parts fit in `columns` cells on one line: drop by DROP_ORDER, then go
+// compact (the cost loses its words, the context bar becomes its percent).
+// `reserve` holds the row's controls.
 export function fitParts(
   parts: PartId[],
   width: (id: PartId, compact: boolean) => number,
   columns: number,
   gap = 2,
   reserve = 2,
-): { shown: PartId[]; compactContext: boolean } {
+): { shown: PartId[]; compact: boolean } {
   let shown = [...parts]
-  let compactContext = false
-  const total = () => shown.reduce((sum, id) => sum + width(id, compactContext), 0) + gap * Math.max(0, shown.length - 1) + reserve
+  let compact = false
+  const total = () => shown.reduce((sum, id) => sum + width(id, compact), 0) + gap * Math.max(0, shown.length - 1) + reserve
   for (const id of DROP_ORDER) {
     if (total() <= columns) break
     shown = shown.filter(p => p !== id)
   }
-  if (total() > columns) compactContext = true
-  return { shown, compactContext }
+  if (total() > columns) compact = true
+  return { shown, compact }
 }

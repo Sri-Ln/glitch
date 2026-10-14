@@ -5,13 +5,15 @@ import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW
 import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, withConfigCaps } from './budget'
 import { dueMark, endDemo, isDemoOver, shouldAutoWarm, startDemo, warnMarks } from './cache'
 import { BUDGET_USAGE, DEMO_USAGE, ROUTED, USAGE, WARM_PROMPT, budgetAlerts, budgetSummary, parseBudgetArg, splitArgs, warmMessage } from './commands'
-import { ALL_PARTS, parseConfig, parseParts } from './config'
+import { ALL_COST, ALL_PARTS, parseConfig, parseCostShows, parseParts } from './config'
 import type { HudConfig } from './config'
 import { readGit } from './git'
 import type { RunFn } from './git'
 import { notify, projectName } from './notify'
 import type { NotifyIO } from './notify'
 import { richPart, richWidth } from './desktop'
+import { PET_CELLS, isSprite } from './pet'
+import type { PetSprite } from './pet'
 import { cellWidth, fitParts, segments } from './parts'
 import type { PartData } from './parts'
 import { toTheme } from './theme'
@@ -25,8 +27,11 @@ export const view = atom({ plugin: 'glitch-hud', key: 'view' } as const, INITIAL
 // Responses shorter than this are mostly tool-call stubs; their timing is noise.
 const MIN_TOKENS = 20
 const MIN_SECONDS = 0.5
+// Git and today's ledger are read again on this timer while idle.
 const GIT_EVERY_MS = 30_000
 const ROW_GAP = 2
+// Cells on each side of the desktop's keep-warm glyph.
+const WARM_PAD = 1
 
 export async function refreshUsage($: EngineInterface): Promise<void> {
   const usage = await $.session.usage().catch(() => null)
@@ -44,6 +49,16 @@ const engineIO = ($: EngineInterface): NotifyIO => ({
   notifyClaude: (text, options) => $.ui.notify(text, options),
   toast: (text, options) => $.ui.toast(text, options),
 })
+
+// The pet glitch-pets publishes, if it is installed and on; anything malformed is no pet.
+const loadPet = async ($: EngineInterface): Promise<PetSprite | null> => {
+  try {
+    const v = (await $.state.get({ plugin: 'glitch-pets', key: 'sprite' } as never)) as { value?: unknown }
+    return isSprite(v?.value) ? v.value : null
+  } catch {
+    return null
+  }
+}
 
 const loadTheme = async ($: EngineInterface) => {
   try {
@@ -64,13 +79,21 @@ export async function warnCache($: EngineInterface, config: HudConfig, minutes: 
 }
 
 export async function keepWarm($: EngineInterface, ttlMs: number): Promise<string> {
-  if ((await read($, cache)).isBusy) return 'Claude is working, so the cache is warm already.'
-  const reply = await $.model.fork({ prompt: WARM_PROMPT }).catch(() => ({ isAnswered: false as const, reason: 'request refused' }))
-  if (reply.isAnswered) {
-    const now = await $.clock.now()
-    await update($, cache, c => ({ ...c, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true, real: null }))
+  const c = await read($, cache)
+  if (c.isBusy) return 'Claude is working, so the cache is warm already.'
+  if (c.isWarming) return 'A keep-warm request is already running.'
+  await update($, cache, x => ({ ...x, isWarming: true }))
+  try {
+    const reply = await $.model.fork({ prompt: WARM_PROMPT }).catch(() => ({ isAnswered: false as const, reason: 'request refused' }))
+    if (reply.isAnswered) {
+      const now = await $.clock.now()
+      await update($, cache, x => ({ ...x, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true, real: null }))
+    }
+    return warmMessage(reply, ttlMs / 1000)
+  } finally {
+    // The control goes back to ↻ however the request ended.
+    await update($, cache, x => ({ ...x, isWarming: false })).catch(() => undefined)
   }
-  return warmMessage(reply, ttlMs / 1000)
 }
 
 const storedNumber = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
@@ -109,6 +132,19 @@ export async function recordSpend($: EngineInterface, config: HudConfig): Promis
     const title = `${projectName(await $.session.cwd().catch(() => ''))} — Glitch`
     await notify(engineIO($), config.notify, title, alerts.notice)
   }
+}
+
+// Sums today's ledger again without writing it, so a session that sits idle
+// still sees what the others spent since its own last answer. Its own entry
+// counts as stored: `todaySpent` adds what it spent since.
+async function sumToday($: EngineInterface): Promise<void> {
+  const b = await read($, budget)
+  if (b.day !== dayKey(await $.clock.now())) return
+  let daily = 0
+  for (const k of await $.store.keys()) {
+    if (parseLedgerKey(k)?.day === b.day) daily += storedNumber(await $.store.get(k))
+  }
+  await update($, budget, x => ({ ...x, dailySpent: daily }))
 }
 
 async function budgetCommand($: EngineInterface, arg: string | undefined): Promise<string> {
@@ -151,6 +187,12 @@ async function answerHud($: EngineInterface, config: HudConfig, args: string): P
       if (!parts) return `Unknown part. Parts: ${ALL_PARTS.join(', ')}.`
       await update($, view, v => ({ ...v, parts, isHidden: false }))
       return `HUD parts: ${parts.join(', ')}.`
+    }
+    if (a === 'cost') {
+      const cost = b ? parseCostShows(b) : null
+      if (!cost) return `Unknown cost figure. Figures: ${ALL_COST.join(', ')}.`
+      await update($, view, v => ({ ...v, cost, isHidden: false }))
+      return `HUD cost: ${cost.join(', ')}.`
     }
     const hidden = !(await read($, view)).isHidden
     await update($, view, v => ({ ...v, isHidden: hidden }))
@@ -198,6 +240,8 @@ export const register: Register = (on, options) => {
       // A reload (new /config options): the state lived on, the caps follow the settings.
       await update($, budget, b => withConfigCaps(b, config, total))
     }
+    // Sum the ledger now, so today counts the other sessions from the first draw.
+    await recordSpend($, config).catch(() => undefined)
 
     // The colors and the fitted marks read the lifetime from the state.
     await update($, cache, c => ({ ...c, ttlMs: config.cacheTtlMs }))
@@ -232,7 +276,9 @@ export const register: Register = (on, options) => {
 
     const gitTick = $.clock.every(GIT_EVERY_MS, async () => {
       try {
-        if (!(await read($, cache)).isBusy) await refreshGit($)
+        if ((await read($, cache)).isBusy) return
+        await refreshGit($)
+        await sumToday($)
       } catch {
         // The next refresh tries again.
       }
@@ -331,23 +377,29 @@ export const register: Register = (on, options) => {
         git: await read($, git),
         theme: await loadTheme($),
         isWorking: e.props.isWorking || (await read($, cache)).isBusy,
+        costShows: v.cost ?? config.costShows,
       }
-      // Surfaces with Svg (desktop, VS Code, mobile) get icons, a real bar and tooltips.
-      // The desktop shows the branch in its own row, so git is left out there unless
-      // the person chose the parts.
+      // Surfaces with Svg (desktop, VS Code, mobile) get icons and a real bar.
+      // The desktop shows the branch in its own row and the conversation above, so
+      // git and the turn count are left out there unless the person chose the parts.
       const rich = e.surface !== 'terminal'
+      // The pet sits at the row's end on surfaces that draw images.
+      const pet = rich ? await loadPet($) : null
       const chosen = v.parts !== null || config.partsExplicit
-      const parts = (v.parts ?? config.parts).filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
-      const width = (id: (typeof parts)[number], compact: boolean) =>
-        rich
-          ? richWidth(richPart(id, data, compact && id === 'context'))
-          : cellWidth(segments(id, data, compact && id === 'context').map(x => x.text).join(''))
-      // The controls are flex items of the gapped row too: ↻ and × take one cell and
-      // a gap each, the spacer a gap. The cache part is never dropped, so ↻ shows
-      // exactly when it is asked for here.
+      const parts = (v.parts ?? config.parts)
+        .filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
+        .filter(id => id !== 'turn' || !rich || chosen)
+      // The cache part is never dropped, so ↻ shows exactly when it is asked for here.
       const showsWarm = parts.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking
-      const reserve = (showsWarm ? 1 + ROW_GAP : 0) + ROW_GAP + (1 + ROW_GAP)
-      const { shown, compactContext } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
+      // ↻ is part of the cache part: one cell of gap, then the glyph (padded on desktop).
+      const warmCells = 1 + (rich ? 1 + 2 * WARM_PAD : 1)
+      const width = (id: (typeof parts)[number], compact: boolean) =>
+        (rich
+          ? richWidth(richPart(id, data, compact))
+          : cellWidth(segments(id, data, compact).map(x => x.text).join(''))) + (id === 'cache' && showsWarm ? warmCells : 0)
+      // × takes one cell and a gap, the spacer a gap, the pet its cells and a gap.
+      const reserve = ROW_GAP + (1 + ROW_GAP) + (pet ? PET_CELLS + ROW_GAP : 0)
+      const { shown, compact } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
 
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
       drawn = await Promise.resolve(next(e)).catch(() => null)
@@ -363,15 +415,42 @@ export const register: Register = (on, options) => {
           </Text>
         ))
       const Svg = 'Svg' in ui ? ui.Svg : null
+      // A failed keep-warm only loses its toast.
+      const warm = async () => {
+        try {
+          $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })
+        } catch {
+          // Nothing to show.
+        }
+      }
+      // ↻ rides with the cache part, right after its text. One glyph: the desktop
+      // draws a Button as a native button with its whole label, so a long label over
+      // an icon showed as cut-off text.
+      const warmControl = (id: string) =>
+        id === 'cache' && showsWarm
+          ? rich
+            ? (
+                // The desktop draws the glyph flush against its neighbours: a cell each side.
+                <Box key="glitch-warm-box" paddingX={WARM_PAD} flexShrink={0}>
+                  <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain dimColor onPress={warm} />
+                </Box>
+              )
+            : (
+                <Box key="glitch-warm-box" marginLeft={1} flexShrink={0}>
+                  <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain onPress={warm} />
+                </Box>
+              )
+          : null
       const items = rich && Svg
         ? [
             <Box key="glitch-parts" flexDirection="row" flexGrow={1} justifyContent="space-between" columnGap={ROW_GAP} overflow="hidden">
               {shown.map(id => {
-                const p = richPart(id, data, compactContext && id === 'context')
+                const p = richPart(id, data, compact)
                 return (
                   <Box key={id} flexDirection="row" flexShrink={0} alignItems="center" columnGap={1}>
-                    {p.graphic ? <Svg source={p.graphic.source} alt={p.graphic.alt} isInteractive /> : null}
+                    {p.graphic ? <Svg source={p.graphic.source} alt={p.graphic.alt} width={p.graphic.width} height={p.graphic.height} /> : null}
                     <Box flexDirection="row">{texts(id, p.segments)}</Box>
+                    {warmControl(id)}
                   </Box>
                 )
               })}
@@ -379,18 +458,23 @@ export const register: Register = (on, options) => {
           ]
         : shown.map(id => (
             <Box key={id} flexDirection="row" flexShrink={0}>
-              {texts(id, segments(id, data, compactContext && id === 'context'))}
+              {texts(id, segments(id, data, compact))}
+              {warmControl(id)}
             </Box>
           ))
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" columnGap={ROW_GAP} flexWrap="nowrap" overflow="hidden" alignItems="center">
             {items}
-            {showsWarm ? (
-              <Button key="glitch-warm" label="↻" plain onPress={async () => $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })} />
+            {/* Pet and ✕ are siblings under the row's one columnGap: the same space on
+                both sides of the pet, and none left behind without one. */}
+            {pet && Svg ? (
+              <Box key="glitch-pet" flexShrink={0} alignItems="flex-end">
+                <Svg source={pet.source} alt={pet.alt} width={pet.width} height={pet.height} />
+              </Box>
             ) : null}
             {rich && Svg ? null : <Box flexGrow={1} />}
-            <Button key="glitch-hide" label="×" plain role="dismiss" dimColor onPress={() => update($, view, x => ({ ...x, isHidden: true }))} />
+            <Button key="glitch-hide" label={rich && Svg ? '✕' : '×'} plain role="dismiss" dimColor onPress={() => update($, view, x => ({ ...x, isHidden: true }))} />
           </Box>
           {below}
         </Box>

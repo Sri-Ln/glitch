@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Budget } from '../types'
-import { blockReason, costLevel, crossed, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, usd, withConfigCaps, worse } from './budget'
+import { blockReason, costLevel, crossed, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, todaySpent, usd, withConfigCaps, worse } from './budget'
 
 const B = (over: Partial<Budget> = {}): Budget => ({
   sessionCap: 0, dailyCap: 0, isOff: false, day: '2026-10-12', dayBase: 0, dailySpent: 0,
@@ -83,4 +83,12 @@ test('budget: crossed reports only a rise', async () => {
   expect(crossed('alert', 'alert')).toBeNull()
   expect(crossed('over', 'warn')).toBeNull()
   expect(usd(3)).toBe('$3.00')
+})
+
+// The ledger is summed when a turn ends; between, this session's new spend is added on.
+test('budget: today is the ledger sum plus what this session spent since it was taken', async () => {
+  expect(usd(todaySpent(B({ dailySpent: 20, lastTotal: 3 }), 3.4))).toBe('$20.40')
+  expect(todaySpent(B({ dailySpent: 20, lastTotal: 3 }), 3)).toBe(20)
+  // A /clear starts the total over: nothing is taken off.
+  expect(todaySpent(B({ dailySpent: 20, lastTotal: 3 }), 0.1)).toBe(20)
 })

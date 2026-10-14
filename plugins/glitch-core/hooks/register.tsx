@@ -12,7 +12,7 @@ export const STORE_THEME = 'theme'
 // (the host refuses it), so a routed `/glitch <sub> …` passes down the command.run chain
 // to the owner's own hook on `/glitch`; the owner must also register its `/<owner>` command,
 // which is how its presence is told.
-export const ROUTES: Record<string, string> = { hud: 'glitch-hud', budget: 'glitch-hud', warm: 'glitch-hud', demo: 'glitch-hud' }
+export const ROUTES: Record<string, string> = { hud: 'glitch-hud', budget: 'glitch-hud', warm: 'glitch-hud', demo: 'glitch-hud', pet: 'glitch-pets', crew: 'glitch-pets' }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
@@ -64,7 +64,7 @@ export const register: Register = (on, options) => {
       $.ui.toast('Glitch: could not apply theme', { timeoutMs: 8000 })
     }
     try {
-      await $.command.register({ name: 'glitch', description: 'Glitch kit: themes, HUD, budget, cache keep-warm (/glitch for help)' })
+      await $.command.register({ name: 'glitch', description: 'Glitch kit: themes, HUD, budget, cache keep-warm, pets (/glitch for help)' })
     } catch {
       $.ui.toast('Glitch: could not register /glitch', { timeoutMs: 8000 })
     }

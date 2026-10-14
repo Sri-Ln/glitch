@@ -1,12 +1,13 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DEFAULT_CONFIG, parseConfig, parseMarks, parseParts } from './config'
+import { DEFAULT_CONFIG, parseConfig, parseCostShows, parseMarks, parseParts } from './config'
 
 test('config: defaults when nothing is set', async () => {
   expect(parseConfig({})).toEqual({ config: DEFAULT_CONFIG, problems: [] })
   expect(DEFAULT_CONFIG.parts).toEqual(['turn', 'speed', 'cost', 'cache', 'context', 'git'])
   // No marks typed: they are fitted to the cache lifetime (warnMarks).
   expect(DEFAULT_CONFIG.cacheWarnMinutes).toBeNull()
+  expect(DEFAULT_CONFIG.costShows).toEqual(['reply', 'session', 'today'])
   expect(DEFAULT_CONFIG.cacheTtlMs).toBe(60 * 60_000)
 })
 
@@ -76,4 +77,14 @@ test('config: Parts counts as chosen only when it differs from the default', asy
   expect(parseConfig({ parts: 'turn,speed,cost,cache,context,git' }).config.partsExplicit).toBe(false)
   expect(parseConfig({ parts: 'cost,cache,git' }).config.partsExplicit).toBe(true)
   expect(parseConfig({ parts: 'bogus' }).config.partsExplicit).toBe(false)
+})
+
+test('config: the cost figures keep the given order; a bad list falls back to all three', async () => {
+  expect(parseCostShows('today, session,today')).toEqual(['today', 'session'])
+  expect(parseCostShows('reply,turn')).toBeNull()
+  expect(parseCostShows('')).toBeNull()
+  expect(parseConfig({ costShows: 'session,today' }).config.costShows).toEqual(['session', 'today'])
+  const { config, problems } = parseConfig({ costShows: 'month' })
+  expect(config.costShows).toEqual(['reply', 'session', 'today'])
+  expect(problems).toEqual(['costShows: use reply, session or today, using reply,session,today'])
 })
