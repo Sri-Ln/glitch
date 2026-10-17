@@ -74,3 +74,10 @@ test('a broken persona file is left out, never fatal; a good one still composes'
   expect(composeSafely(noMoods)).toBeUndefined()
   expect(composeSafely(bud)?.moods.working.frames).toHaveLength(6)
 })
+
+test('no pet says "helper": every remark and lead status speaks of the crew', () => {
+  for (const p of [blob, bud, dot, fork, pixel, screenhead]) {
+    const said = [...Object.values(p.voice).flat(), ...Object.values(p.leadStatus ?? {}).flat()]
+    for (const line of said) expect(`${p.id}: ${line}`).not.toMatch(/helper/i)
+  }
+})

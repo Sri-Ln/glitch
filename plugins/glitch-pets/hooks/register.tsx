@@ -9,7 +9,7 @@ import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
 import { leadStatus } from './behavior/lead-status'
 import { isCapReached } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
-import { createPlayer } from './behavior/player'
+import { createPlayer, frameIndex } from './behavior/player'
 import { REWARD_MS, crewName, hasGift, rewardAt } from './behavior/reactions'
 import { rewardBadge, rewardOverlay, rewardTimeline } from './behavior/reward'
 import { STORE_STREAK, advance, asStreak } from './behavior/streak'
@@ -45,8 +45,8 @@ export const crewSummary = atom({ plugin: 'glitch-pets', key: 'crewSummary' } as
 export const paneFrame = atom({ plugin: 'glitch-pets', key: 'paneFrame' } as const, 0)
 
 const PANE = 'glitch-crew'
-/** The lead draws at 2×: 32 × 26. */
-const LEAD_PIXEL = 2
+/** The lead draws at 3× (48 × 39), clearly larger than the crew's 2× minis. */
+const LEAD_PIXEL = 3
 /** A reward moment first drawn later than this after it started shows only its badge (its SMIL would play late, then be cut off). */
 const FIRST_SHOW_MS = 300
 /**
@@ -88,9 +88,12 @@ let paneShown = false
 /** Per surface: when the pane's drawing next changes (clock ms), from its last draw. */
 const frameDue = new Map<string, number>()
 /** Per surface and reward moment: whether its overlay is shown (decided at its first draw). */
-const rewardShown = new Map<string, boolean>()
+type Shown = { show: false } | { show: true; sig: string; receiverIndex: number; overlay: { svg: string; width: number; height: number; left: number; top: number } }
+const rewardShown = new Map<string, Shown>()
 /** The crew's cost as of a crew state: a frame-only redraw reads no usage. */
-let costCache: { sig: string; cost: number } | null = null
+let costCache: { sig: string; cost: number; at: number } | null = null
+/** How long a read of the crew's cost stands (the pill's 1 s cadence). */
+const COST_FRESH_MS = 1000
 /** The crew's 2+ helpers finished with no reviewer: the next prompt carries the reminder. */
 let reviewMissed = false
 /** A prompt is carrying the reminder now: claimed before awaiting, so two prompts at once cannot both. */
@@ -175,6 +178,8 @@ async function toggleCrew($: EngineInterface, size: PaneSize): Promise<string> {
 function paneClosed() {
   paneShown = false
   frameDue.clear()
+  // A moment shown before the close is not picked up again late: reopened, the gift is a badge.
+  rewardShown.clear()
 }
 
 /**
@@ -205,8 +210,20 @@ async function publishSummary($: EngineInterface) {
   const before = await read($, crewSummary)
   if (c.rows.length === 0 && before === null) return
   const now = await $.clock.now()
-  const next = crewSummaryOf(c, c.rows.length ? await crewCostOf($, c) : 0, now)
+  const next = crewSummaryOf(c, c.rows.length ? await sharedCost($, c, now) : 0, now)
   if (JSON.stringify(before) !== JSON.stringify(next)) await update($, crewSummary, () => next)
+}
+
+/**
+ * The receiver's mini while it is happy: its crew theme's frame drawn from the pet's happy loop
+ * (the theme's own size, hat or hands kept), so it neither jumps nor loses its look.
+ */
+function happyMini(p: Persona, theme: string, row: CrewState['rows'][number], elapsedMs: number, now: number): Sprite {
+  const happy = p.moods.happy
+  const frame = happy.frames[frameIndex(happy, elapsedMs)] ?? p.moods.idle.frames[0] ?? []
+  const asHappy: Persona = { ...p, moods: { ...p.moods, idle: { frames: [frame], fps: happy.fps } } }
+  const s = crewMini(theme, { persona: asHappy, role: row.role, model: row.model, effort: row.effort, status: row.status, elapsedMs: (row.endedAt ?? now) - row.startedAt }, MINI_PIXEL)
+  return { source: s.source, alt: `${p.name} the ${p.kind}, happy`, width: s.width, height: s.height }
 }
 
 /** Ms until a mood loop shows its next frame. */
@@ -215,12 +232,15 @@ const nextFrameIn = (art: MoodArt, elapsedMs: number): number => {
   return Math.max(1, Math.ceil(period - (Math.max(0, elapsedMs) % period)))
 }
 
-/** The crew's cost for the pane, read again only when the crew changed (not on a frame-only redraw). */
-async function paneCost($: EngineInterface, c: CrewState): Promise<number> {
-  const sig = JSON.stringify([c.startedAt, c.tickAt, c.costAtStart, c.rows.map(r => [r.id, r.status, r.tokens, r.weight])])
-  if (costCache?.sig === sig) return costCache.cost
+/**
+ * The crew's cost, one value for the pane and the HUD pill: read again when the crew changed or
+ * the last read is a second old, so a frame-only redraw reads no usage.
+ */
+async function sharedCost($: EngineInterface, c: CrewState, now: number): Promise<number> {
+  const sig = JSON.stringify([c.startedAt, c.costAtStart, c.rows.map(r => [r.id, r.status, r.tokens, r.weight])])
+  if (costCache && costCache.sig === sig && now - costCache.at < COST_FRESH_MS) return costCache.cost
   const cost = await crewCostOf($, c)
-  costCache = { sig, cost }
+  costCache = { sig, cost, at: now }
   return cost
 }
 
@@ -704,7 +724,9 @@ export const register: Register = (on, options) => {
       const pv = await read($, view)
       const p = personaFor(pv.petId)
       const m = await read($, mood)
-      const crewCost = await paneCost($, c)
+      // One cost with the HUD pill (sharedCost); read the summary so a new figure redraws the pane.
+      await read($, crewSummary)
+      const crewCost = await sharedCost($, c, now)
       const cost = shares(c.rows, crewCost)
       const isTerminal = e.surface === 'terminal'
       const o = await read($, crewOpen)
@@ -725,7 +747,7 @@ export const register: Register = (on, options) => {
         now,
         bodyColumns: e.props.bodyColumns,
         open: { running: isOpenIn(o, c, 'running', isTerminal), finished: isOpenIn(o, c, 'finished', isTerminal) },
-        miniColumns: Math.ceil((themeColumns * MINI_PIXEL) / DESKTOP_CELL.width),
+        miniColumns: p ? Math.ceil((themeColumns * MINI_PIXEL) / DESKTOP_CELL.width) : 0,
         reward: null,
       }
       // The reward moment (desktop): its overlay from the lead down to the receiver's row,
@@ -735,25 +757,32 @@ export const register: Register = (on, options) => {
       if (p && w) {
         // The next moment may start when this one's slot ends.
         due.push(w.startedAt + REWARD_MS)
+        // The overlay is made once, at the moment's first draw, and drawn unchanged after (a new
+        // source would restart its animation). If the receiver's row moves, it would miss: the gift
+        // becomes the badge instead.
         const key = `${e.surface}|${w.rowId}|${w.startedAt}`
-        let show = rewardShown.get(key)
-        if (show === undefined) {
-          show = now - w.startedAt < FIRST_SHOW_MS && rewardGeometry(v, w.rowId) !== null
+        const geo = rewardGeometry(v, w.rowId)
+        const sig = geo ? JSON.stringify([geo.receiverIndex, geo.rowTop(geo.receiverIndex), geo.leadBox, geo.mini]) : null
+        let shown = rewardShown.get(key)
+        if (shown === undefined) {
+          const overlay = geo && now - w.startedAt < FIRST_SHOW_MS ? rewardOverlay({ persona: p, ...geo, startedAt: w.startedAt, now, reducedMotion: false }) : null
+          shown = geo && sig && overlay ? { show: true, sig, receiverIndex: geo.receiverIndex, overlay } : { show: false }
           if (rewardShown.size > 64) rewardShown.clear()
-          rewardShown.set(key, show)
+          rewardShown.set(key, shown)
+        } else if (shown.show && shown.sig !== sig) {
+          shown = { show: false }
+          rewardShown.set(key, shown)
         }
-        const geo = show ? rewardGeometry(v, w.rowId) : null
-        const overlay = geo ? rewardOverlay({ persona: p, ...geo, startedAt: w.startedAt, now, reducedMotion: false }) : null
         const receiver = rows.find(x => x.row.id === w.rowId)
-        if (geo && overlay && receiver) {
+        if (shown.show && receiver && now < w.startedAt + REWARD_MS) {
           playing = w.rowId
-          v.reward = { svg: overlay.svg, width: overlay.width, height: overlay.height, left: overlay.left, top: overlay.top, alt: `${p.name} lowers a gift to ${crewName(receiver.row)}` }
-          // From the gift's release to the moment's end the receiver is happy (it hops).
-          const t = rewardTimeline(geo.receiverIndex)
+          v.reward = { ...shown.overlay, alt: `${p.name} lowers a gift to ${crewName(receiver.row)}` }
+          // From the gift's release to the moment's end the receiver is happy (it hops), in its own look.
+          const t = rewardTimeline(shown.receiverIndex)
           const since = now - w.startedAt
           if (since < t.release) due.push(w.startedAt + t.release)
           else if (since < t.end) {
-            receiver.mini = player.sprite(p, 'happy', since - t.release, MINI_PIXEL)
+            receiver.mini = happyMini(p, theme, receiver.row, since - t.release, now)
             due.push(now + nextFrameIn(p.moods.happy, since - t.release), w.startedAt + t.end)
           }
         }

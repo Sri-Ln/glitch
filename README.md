@@ -103,31 +103,31 @@ Bud · sniffing out builder-1
 - **Model and effort** are shown as words on each row. A member retried one step up says what it stepped up from (`↑ stepped up from Haiku · low`; on the terminal `↑ Haiku · low`).
 - **A member finishing:** your pet does a little flourish and lowers a gift to that member's row on a fishing line (on the desktop); the member keeps the gift as a small badge. A member failing makes it worried, then it looks into the failure while the crew works on.
 - **≈cost** is an estimate. The session's own cost is split across the crew by how many tokens each used.
-- Once every member is done, the finished list folds to one line (`✓ 3 finished · 3 completed · 0 failed`); the desktop's Finished group folds to its tally.
+- **Folding:** in the terminal the finished members always start folded into one line (`✓ 3 finished · 3 completed · 0 failed [ Show ]`); Show lists them, Hide folds them again. On the desktop, Running and Finished are accordion groups that start open; press a header to fold it to that line (Finished keeps its tally of tasks, completed and failed). The choice lasts for the current crew.
 - In the terminal there are no sprites: the lead's line carries its reactions.
-- `/glitch crew` (or `/glitch-pets crew`) opens or closes the pane. With `crewPane: auto` it opens by itself when the first helper starts.
-- `/glitch crew theme [id]` (or `/glitch-pets crew theme [id]`) lists the crew looks, or picks one and keeps it: `busy-hands` (default: each helper acts its role out beside itself, and the model sets how much each beat makes and the tempo) or `hats`.
+- `/glitch crew` (or `/glitch-pets crew`) opens or closes the pane. With `crewPane: auto` it opens by itself when the first crew member starts.
+- `/glitch crew theme [id]` (or `/glitch-pets crew theme [id]`) lists the crew looks, or picks one and keeps it: `busy-hands` (default: each crew member acts its role out beside itself, and the model sets how much each beat makes and the tempo) or `hats`.
 
 The `crew` skill is the workflow Claude follows when work splits into 2 or more parts:
 
 1. **Plan:** a short task list, with a role and tier for each task.
-2. **Helpers:** role-named helpers run the independent tasks in parallel.
+2. **Crew members:** role-named crew members run the independent tasks in parallel.
 3. **Review:** one reviewer checks the whole result against the plan.
-4. **Fix loop:** each finding goes back to the helper that did that part, then it is reviewed again, at most 2 rounds. Whatever is still open is reported plainly.
+4. **Fix loop:** each finding goes back to the crew member that did that part, then it is reviewed again, at most 2 rounds. Whatever is still open is reported plainly.
 
-A standing system-prompt rule asks for this. If 2 or more crew helpers (named `builder-1`, `researcher-2` and so on) finish with no reviewer, Claude gets a one-time reminder on its next turn to run the review.
+A standing system-prompt rule asks for this. If 2 or more crew members (named `builder-1`, `researcher-2` and so on) finish with no reviewer, Claude gets a one-time reminder on its next turn to run the review.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `crewPane` | `auto` | `auto` opens the pane when helpers start; `manual` waits for `/glitch crew` |
+| `crewPane` | `auto` | `auto` opens the pane when a crew starts; `manual` waits for `/glitch crew` |
 | `crewReview` | `true` | the crew rule in the system prompt, and the reminder when a review was skipped |
 | `crewTiers` | empty | JSON: each crew tier's model and effort (see below); empty uses the default table |
-| `crewTheme` | `busy-hands` | how helpers look in the pane: `busy-hands` or `hats`; `/glitch crew theme <id>` overrides it |
+| `crewTheme` | `busy-hands` | how crew members look in the pane: `busy-hands` or `hats`; `/glitch crew theme <id>` overrides it |
 
 #### Who picks the roles, models and effort
 
-- **Roles, the split and the tier:** Claude decides them. The `crew` skill guides it: Claude writes the plan, gives each task a role and a tier, and names each helper `<role>-<n>`.
-- **Model and effort:** the plugin sets them from the tier. At session start it registers one agent type per tier, and Claude starts each helper with `subagent_type: glitch-pets:crew-<tier>`:
+- **Roles, the split and the tier:** Claude decides them. The `crew` skill guides it: Claude writes the plan, gives each task a role and a tier, and names each crew member `<role>-<n>`.
+- **Model and effort:** the plugin sets them from the tier. At session start it registers one agent type per tier, and Claude starts each crew member with `subagent_type: glitch-pets:crew-<tier>`:
 
   | Tier | Agent type | Model | Effort |
   |---|---|---|---|
@@ -135,7 +135,7 @@ A standing system-prompt rule asks for this. If 2 or more crew helpers (named `b
   | medium | `glitch-pets:crew-medium` | Sonnet 5.5 (`claude-sonnet-5-5`) | medium |
   | heavy | `glitch-pets:crew-heavy` | Opus 5.5 (`claude-opus-5-5`) | high |
 
-  The type's model wins: if the Agent call passes a different `model`, the plugin sets it back to the type's when the helper starts, and it sets an `effort` the Agent call passes to the type's. The one thing that beats the type is a setup that forces one model on every subagent. A crew member can't start helpers of its own.
+  The type's model wins: if the Agent call passes a different `model`, the plugin sets it back to the type's when the crew member starts, and it sets an `effort` the Agent call passes to the type's. The one thing that beats the type is a setup that forces one model on every subagent. A crew member can't start agents of its own.
 - **Changing the table:** set `crewTiers` to a JSON object. Each tier you leave out keeps its default, for example:
 
   ```json
@@ -143,12 +143,12 @@ A standing system-prompt rule asks for this. If 2 or more crew helpers (named `b
   ```
 
   `model` is an alias (`haiku`, `sonnet`, `opus`) or a full model id. A tier's `effort` is `low`, `medium` or `high`. A bad value keeps that field's default, and a toast at session start says what was wrong.
-- **Step-up on failure:** when a crew helper fails (an error, not a stop you asked for), Claude gets a one-time note with its next prompt, often the failed helper's own notification. The note says to retry the task one step up, with the same prompt and name. A step raises the effort first, then the model:
+- **Step-up on failure:** when a crew member fails (an error, not a stop you asked for), Claude gets a one-time note with its next prompt, often the failed crew member's own notification. The note says to retry the task one step up, with the same prompt and name. A step raises the effort first, then the model:
 
   `Haiku low → Haiku high → Sonnet medium → Sonnet high → Opus high → Opus xhigh → Opus max`
 
   A task gets at most 2 step-ups. The step-up types (`crew-light-high`, `crew-medium-high`, `crew-heavy-xhigh`, `crew-heavy-max`) are registered next to the tiers. `xhigh` and `max` are only ever steps, never a tier's own effort. With your own `crewTiers`, the steps follow the same rule: the tier's model at high effort (if it isn't already high), then the next tier, and after the heavy tier each higher effort.
-- **Other agent types:** a helper Claude starts on any other type (`general-purpose`, your `.claude/agents/*.md`) picks its model as Claude Code always does: the Agent call's `model`, then the type's `model`, then your default subagent model, then the session's model. A fork always runs on its parent's model. The plugin leaves those alone and doesn't step them up.
+- **Other agent types:** an agent Claude starts on any other type (`general-purpose`, your `.claude/agents/*.md`) picks its model as Claude Code always does: the Agent call's `model`, then the type's `model`, then your default subagent model, then the session's model. A fork always runs on its parent's model. The plugin leaves those alone and doesn't step them up.
 - **What the pane shows:** the model and effort each crew member's requests actually use.
 
 ## Themes

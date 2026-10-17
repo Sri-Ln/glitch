@@ -141,7 +141,7 @@ const screenhead: Persona = {
     cheering: ['Streak milestone reached. Celebrating.', 'Days in a row: impressive. Saving to memory.', 'Achievement unlocked.'],
     sleepy: ['Entering low-power mode.', 'Screen dimming. Wake me with a prompt.', 'Idle. Defragmenting dreams.'],
     crying: ['Error count critical. Leaking coolant.', 'Sad.exe is running.', 'My screen is fogging up.'],
-    crewDone: ['Crew review complete. Report ready.', 'All helpers checked. Results compiled.', 'Review finished. Findings logged.'],
+    crewDone: ['Crew review complete. Report ready.', 'All crew members checked. Results compiled.', 'Review finished. Findings logged.'],
   },
 }
 

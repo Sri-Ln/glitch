@@ -85,7 +85,7 @@ export const DESKTOP_CELL = { width: 7, height: 18 } as const
 const CELL_PX = DESKTOP_CELL.width
 
 /** Fixed heights (cells) of the desktop's blocks, so a row's top is exact: the reward overlay lands on it. */
-export const DESKTOP_ROWS = { lead: 2, totals: 1, header: 2, tally: 1, member: 4, steppedUp: 1, gap: 1 } as const
+export const DESKTOP_ROWS = { lead: 3, totals: 1, header: 2, tally: 1, member: 4, steppedUp: 1, gap: 1 } as const
 /** A member block's left padding (cells): where its mini starts. */
 const MEMBER_PAD = 1
 
@@ -168,6 +168,19 @@ function placedBadge(badge: Sprite, columnPx: number, miniHeight: number): Sprit
   }
 }
 
+/** The overlay at whole cells: its px offset rounded down, the remainder drawn inside a wider image. */
+function onCellGrid(r: NonNullable<CrewView['reward']>): { svg: string; width: number; height: number; left: number; top: number; alt: string } {
+  const left = Math.floor(r.left / CELL_PX)
+  const top = Math.floor(r.top / DESKTOP_CELL.height)
+  const dx = r.left - left * CELL_PX
+  const dy = r.top - top * DESKTOP_CELL.height
+  if (dx === 0 && dy === 0) return { ...r, left, top }
+  const width = r.width + dx
+  const height = r.height + dy
+  const inner = r.svg.replace('<svg ', `<svg x="${dx}" y="${dy}" `)
+  return { svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${inner}</svg>`, width, height, left, top, alt: r.alt }
+}
+
 const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
 export const clock = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000))
@@ -229,6 +242,16 @@ function groupBarSvg(parts: { share: number; color: string }[], width: number, a
 const statusColor = (r: CrewRow) => (r.status === 'done' ? 'success' : r.status === 'failed' ? 'error' : 'suggestion')
 const glyph = (r: CrewRow) => (r.status === 'done' ? '✓' : r.status === 'failed' ? '✗' : '●')
 const modelEffort = (r: CrewRow, sep: string) => `${shortModel(r.model)}${r.effort ? `${sep}${r.effort}` : ''}`
+const FAMILY = /(haiku|sonnet|opus|fable)/i
+const SHORT_EFFORT: Record<string, string> = { medium: 'med' }
+/** The desktop chip's words, short enough for a 40-cell dock: "Sonnet med", "Opus xhigh". */
+export const chipModel = (r: CrewRow): string => {
+  const fam = r.model ? FAMILY.exec(r.model)?.[1] : undefined
+  const name = fam ? fam.charAt(0).toUpperCase() + fam.slice(1).toLowerCase() : shortModel(r.model)
+  return `${name}${r.effort ? ` ${SHORT_EFFORT[r.effort] ?? r.effort}` : ''}`
+}
+/** The lead row's time column (cells): "12:34" over "so far". */
+const LEAD_TIME_CELLS = 6
 
 export function crewTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   return v.isTerminal ? terminalTree(v, el, act) : desktopTree(v, el, act)
@@ -347,19 +370,21 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   const failed = finished.length - done
   const layout = layoutOf(v)
   const heightOf = (m: CrewMember) => layout.heights[v.rows.indexOf(m)] ?? R.member
+  // With the pet off there are no minis and no sprite column.
+  const miniCols = Math.max(0, v.miniColumns)
+  const spriteCells = miniCols > 0 ? miniCols + 1 : 0
   // Images sized to the body: the pill beside the sprite column, the bar beside a header.
-  const miniCols = Math.max(1, v.miniColumns)
-  const pillPx = clamp((v.bodyColumns - 13 - miniCols) * CELL_PX, 80, 260)
+  const pillPx = clamp((v.bodyColumns - 12 - spriteCells) * CELL_PX, 80, 260)
   const barPx = clamp((v.bodyColumns - 18) * CELL_PX, 40, 220)
   const img = (s: Sprite) => (S ? <S source={s.source} alt={s.alt} width={s.width} height={s.height} /> : null)
-  const chip = (text: string, dim = false) => (
-    <B backgroundColor={CHIP_BG} paddingX={1} flexShrink={0}>
+  const chip = (text: string, dim = false, key?: string) => (
+    <B key={key} backgroundColor={CHIP_BG} paddingX={1} flexShrink={0}>
       <T dimColor={dim} wrap="truncate-end">{text}</T>
     </B>
   )
 
   // The details column's cells: what is left beside the padding, the sprite column and its gap.
-  const detailCells = v.bodyColumns - 2 * MEMBER_PAD - miniCols - 1
+  const detailCells = v.bodyColumns - 2 * MEMBER_PAD - spriteCells
   const member = (m: CrewMember) => {
     const id = m.row.id
     const scope = scopeOf(id)
@@ -368,14 +393,16 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
     return (
       <B key={`crew-member:${id}`} flexDirection="row" columnGap={1} paddingX={MEMBER_PAD} height={heightOf(m)} overflow="hidden" hover={{ backgroundColor: HOVER_BG, scope }}>
         {/* The sprite column and the details column are two Boxes, so the details keep their width. */}
-        <B key={`crew-mini:${id}`} flexShrink={0} width={miniCols}>
-          {m.mini ? img(m.mini) : null}
-          {m.badge && m.mini ? (
-            <B key={`crew-badge:${id}`} position="absolute" top={0} left={0}>
-              {img(placedBadge(m.badge, miniCols * CELL_PX, m.mini.height))}
-            </B>
-          ) : null}
-        </B>
+        {miniCols > 0 ? (
+          <B key={`crew-mini:${id}`} flexShrink={0} width={miniCols}>
+            {m.mini ? img(m.mini) : null}
+            {m.badge && m.mini ? (
+              <B key={`crew-badge:${id}`} position="absolute" top={0} left={0}>
+                {img(placedBadge(m.badge, miniCols * CELL_PX, m.mini.height))}
+              </B>
+            ) : null}
+          </B>
+        ) : null}
         <B flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
           <B flexDirection="row" justifyContent="space-between" columnGap={1} height={1}>
             <B flexDirection="row" flexShrink={1} minWidth={0} alignItems="center">
@@ -402,10 +429,10 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
             </B>
           </B>
           <B key={`crew-chips:${id}`} flexDirection="row" flexWrap="nowrap" columnGap={1} overflow="hidden" height={1}>
-            {/* The cost before the tokens: in a narrow dock the tokens are what gets cut. */}
-            {chip(modelEffort(m.row, ' · '))}
+            {/* Short words, so the three fit a 40-cell dock: "Sonnet med", "≈$0.06", "18k". */}
+            {chip(chipModel(m.row))}
             {chip(usd(m.cost), true)}
-            {chip(`${k(m.row.tokens)} tok`, true)}
+            {chip(k(m.row.tokens), true, `crew-chip-tok:${id}`)}
           </B>
         </B>
       </B>
@@ -434,16 +461,18 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
               <T color="suggestion">●</T>
             </B>
           ) : null}
-          {/* One toggle per header: the label, the count and the chevron are one Button. */}
+          {/* One toggle per header (the label and the count); the chevron ends the line and shows its state. */}
           <Btn key={`crew-acc:${kind}`} plain onPress={() => act.toggle(kind)}>
             <T color={kind === 'running' ? 'suggestion' : undefined} dimColor={kind === 'finished'} bold>
               {kind === 'running' ? 'RUNNING' : 'FINISHED'}
             </T>
-            <T bold>{` ${items.length} `}</T>
-            <T dimColor>{open ? '▾' : '▸'}</T>
+            <T bold>{` ${items.length}`}</T>
           </Btn>
           <B flexGrow={1} flexShrink={1} minWidth={0}>
             {img(bar)}
+          </B>
+          <B key={`crew-acc-chev:${kind}`} flexShrink={0}>
+            <T dimColor>{open ? '▾' : '▸'}</T>
           </B>
         </B>
         {kind === 'finished' ? (
@@ -470,21 +499,24 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
 
   // While the reward plays its overlay draws the lead; the lead's slot keeps its room.
   const lead = v.lead.sprite
+  const leadSlot = lead ? leadSlotOf(miniCols) : 0
+  const leadWords = Math.max(1, v.bodyColumns - (lead ? leadSlot + 1 : 0) - 1 - LEAD_TIME_CELLS)
+  // The overlay is placed in whole cells; a left that is not one is made up inside its image.
+  const reward = v.reward ? onCellGrid(v.reward) : null
   return (
     <B flexDirection="column" rowGap={R.gap}>
-      <B key="crew-lead" flexDirection="row" justifyContent="space-between" alignItems="flex-start" columnGap={1} height={R.lead}>
-        <B flexDirection="row" columnGap={1} alignItems="flex-start" flexShrink={1} minWidth={0}>
-          {lead ? (
-            <B key="crew-lead-sprite" flexShrink={0} width={leadSlotOf(miniCols)} flexDirection="row" justifyContent="flex-end">
-              {v.reward ? null : img(lead)}
-            </B>
-          ) : null}
-          <B flexDirection="column" flexShrink={1} minWidth={0}>
-            <T bold wrap="truncate-end">{v.lead.name}</T>
-            <T dimColor wrap="truncate-end">{v.lead.status}</T>
+      <B key="crew-lead" flexDirection="row" alignItems="flex-start" columnGap={1} height={R.lead}>
+        {lead ? (
+          <B key="crew-lead-sprite" flexShrink={0} width={leadSlot} flexDirection="row" justifyContent="flex-end">
+            {v.reward ? null : img(lead)}
           </B>
+        ) : null}
+        {/* The words have their own width and truncate, so they never run into the time. */}
+        <B key="crew-lead-words" flexDirection="column" width={leadWords} flexShrink={0} overflow="hidden">
+          <T bold wrap="truncate-end">{v.lead.name}</T>
+          <T dimColor wrap="truncate-end">{v.lead.status}</T>
         </B>
-        <B flexDirection="column" alignItems="flex-end" flexShrink={0}>
+        <B key="crew-lead-time" flexDirection="column" alignItems="flex-end" width={LEAD_TIME_CELLS} flexShrink={0}>
           <T bold>{clock(v.header.elapsedMs)}</T>
           <T dimColor>{running.length ? 'so far' : 'total'}</T>
         </B>
@@ -495,10 +527,9 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
       </B>
       {running.length ? group('running', running) : null}
       {finished.length ? group('finished', finished) : null}
-      {v.reward && S ? (
-        // Its px offsets are whole cells (the lead row's top, the mini column's left).
-        <B key="crew-reward" position="absolute" top={Math.round(v.reward.top / DESKTOP_CELL.height)} left={Math.round(v.reward.left / CELL_PX)}>
-          <S source={v.reward.svg} alt={v.reward.alt} width={v.reward.width} height={v.reward.height} />
+      {reward && S ? (
+        <B key="crew-reward" position="absolute" top={reward.top} left={reward.left}>
+          <S source={reward.svg} alt={reward.alt} width={reward.width} height={reward.height} />
         </B>
       ) : null}
     </B>

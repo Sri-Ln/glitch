@@ -168,7 +168,7 @@ const fork: Persona = {
     cheering: ['Streak milestone! Eight arms up!', 'Days in a row, perfectly scheduled.', 'Streak achieved. On to the next one.'],
     sleepy: ['All arms at rest.', 'Inking a quiet nap.', 'Off the clock. Zzz.'],
     crying: ['All eight arms need a hug.', 'Too many things went wrong at once.', 'Plan failed. Regrouping… sniff.'],
-    crewDone: ['Crew reviewed. Every task accounted for.', 'All helpers checked against the plan.', 'Review done. The plan held up.'],
+    crewDone: ['Crew reviewed. Every task accounted for.', 'Every crew member checked against the plan.', 'Review done. The plan held up.'],
   },
 }
 

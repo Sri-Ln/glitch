@@ -148,7 +148,7 @@ test('the first helper opens the crew pane (auto) and the pane lists it', async 
     const text = (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button').map(t => String(t.text ?? '')).join(' ')
     expect(text).toContain('Build the landing page')
     expect(text).toContain('builder-1')
-    expect(text).toContain('Opus 5.5')
+    expect(text).toContain(surface === 'terminal' ? 'Opus 5.5' : 'Opus')
     // Desktop: the lead, the member's mini, its progress pill and the Running bar; none on the terminal.
     const alts = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt))
     if (surface === 'terminal') expect(alts).toEqual([])
@@ -672,13 +672,44 @@ test('pane: one header line on the terminal, a lead row with total time on the d
       expect(all).toContain('0:01')
       expect(all).toContain('so far')
       expect(await ui.find({ key: 'crew-totals' })).toBeTruthy()
-      // The lead is drawn at 2×: 32 px wide (its slot keeps that room while tester-1's reward draws it).
+      // At this moment tester-1's reward plays: the overlay draws the lead, its slot keeps its room.
       expect(drawnByKey(await ui.drawn(), 'crew-lead-sprite')?.props?.width).toBe(Math.ceil(48 / 7) + 2)
-      const lead = (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('Bud the dog'))
-      if (lead) expect(lead.props.width).toBe(32)
-      else expect(await rewardBox(ui)).toBeTruthy()
+      expect(await rewardBox(ui)).toBeTruthy()
     }
     expect(all).not.toMatch(/helper/i)
+    await ui.unmount()
+  }
+})
+
+test('pane (desktop): the lead is drawn at 3× (48 × 39), clearly larger than the minis, in a fixed slot', async ($, on) => {
+  const { clock } = await mixedCrew($, on)
+  // Past tester-1's reward: the pane draws the lead itself.
+  await clock.advance(4100)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const lead = (await svgs(ui)).find(s => s.alt.startsWith('Bud the dog'))
+    if (surface === 'desktop') {
+      expect([lead?.width, lead?.height]).toEqual([48, 39])
+      expect(drawnByKey(await ui.drawn(), 'crew-lead-sprite')?.props?.width).toBe(Math.ceil(48 / 7) + 2)
+      expect(drawnByKey(await ui.drawn(), 'crew-lead')?.props?.height).toBe(3)
+    } else expect(lead).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('pane (desktop): the lead\'s status has its own width and truncates; it never runs into the time', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const tree = await ui.drawn()
+    if (surface === 'desktop') {
+      const words = drawnByKey(tree, 'crew-lead-words')
+      const slot = Number(drawnByKey(tree, 'crew-lead-sprite')?.props?.width)
+      const time = drawnByKey(tree, 'crew-lead-time')
+      expect(typeof words?.props?.width).toBe('number')
+      expect(Number(words?.props?.width) + slot + Number(time?.props?.width) + 2).toBeLessThanOrEqual(40)
+      expect(JSON.stringify(words)).toContain('truncate-end')
+    } else expect(drawnByKey(tree, 'crew-lead-words')).toBeUndefined()
     await ui.unmount()
   }
 })
@@ -798,8 +829,8 @@ test('pane: model · effort, tokens and ≈cost sit on one line; the progress pi
       expect(chips?.props.flexDirection).toBe('row')
       expect(chips?.props.flexWrap).toBe('nowrap')
       const t = (await textsOf(ui)).join(' | ')
-      expect(t).toContain('Opus 5.5 · high')
-      expect(t).toContain('0 tok')
+      expect(t).toContain('Opus high')
+      expect(textIn(drawnByKey(await ui.drawn(), `crew-chip-tok:${B_ID}`))).toBeTruthy()
       const svgs = await ui.findAll({ type: 'Svg' })
       const pills = svgs.filter(s => ['1/4 steps', 'Done', 'Failed'].includes(String(s.props.alt)))
       expect(pills.map(s => String(s.props.alt)).sort()).toEqual(['1/4 steps', 'Done', 'Failed'])
@@ -1290,18 +1321,22 @@ test('pane (desktop): the progress pill is drawn for light and dark: a transluce
   }
 })
 
-test('pane (desktop): an accordion header has a border, a live dot on Running and its chevron in the toggle', async ($, on) => {
+test('pane (desktop): an accordion header has a border, a live dot on Running and its chevron at the far right', async ($, on) => {
   await mixedCrew($, on)
+  const chev = async (ui: { drawn: () => Promise<unknown> }, kind: string) => stringOf(textIn(drawnByKey(await ui.drawn(), `crew-acc-chev:${kind}`)))
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
     if (surface === 'desktop') {
       for (const kind of ['running', 'finished']) {
         const box = drawnByKey(await ui.drawn(), `crew-acc-box:${kind}`)
         expect(box?.props?.borderStyle).toBeTruthy()
+        // The chevron ends the line, after the bar.
+        const kids = ((box?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
+        expect(kids[kids.length - 1]?.props?.key).toBe(`crew-acc-chev:${kind}`)
       }
-      expect((await ui.find({ key: 'crew-acc:running' }))?.text).toMatch(/▾$/)
+      expect(await chev(ui, 'running')).toBe('▾')
       await ui.press({ key: 'crew-acc:running' })
-      expect((await ui.find({ key: 'crew-acc:running' }))?.text).toMatch(/▸$/)
+      expect(await chev(ui, 'running')).toBe('▸')
       expect(stringOf(textIn(drawnByKey(await ui.drawn(), 'crew-live')))).toBe('●')
     } else expect(await ui.find({ key: 'crew-acc:running' })).toBeFalsy()
     await ui.unmount()
@@ -1536,7 +1571,7 @@ test('pane: a finish casts the reward from the lead to the receiver\'s row; the 
       expect(slot?.props?.justifyContent).toBe('flex-end')
       const miniCols = Math.ceil(48 / 7)
       expect(slot?.props?.width).toBe(miniCols + 2)
-      const tipX = (miniCols + 2) * 7 - 32 + 14.5 * 2
+      const tipX = (miniCols + 2) * 7 - 48 + 14.5 * 3
       expect(tipX).toBeGreaterThanOrEqual((1 + miniCols) * 7)
       expect(tipX).toBeLessThanOrEqual((2 + miniCols) * 7)
       const overlay = (await svgs(ui)).find(s => s.source.includes('data-moment'))
@@ -1641,7 +1676,7 @@ test('pane: a stepped-up member says what it stepped up from (compact on the ter
   await narrow.unmount()
 })
 
-test('pane (desktop): one toggle Button per accordion header, its chevron inside', async ($, on) => {
+test('pane (desktop): one toggle Button per accordion header', async ($, on) => {
   await mixedCrew($, on)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
@@ -1651,9 +1686,7 @@ test('pane (desktop): one toggle Button per accordion header, its chevron inside
         const buttons = JSON.stringify(box).match(/"type":"Button"/g) ?? []
         expect(buttons.length).toBe(1)
       }
-      expect((await ui.find({ key: 'crew-acc:running' }))?.text).toContain('▾')
-      await ui.press({ key: 'crew-acc:running' })
-      expect((await ui.find({ key: 'crew-acc:running' }))?.text).toContain('▸')
+      expect((await ui.find({ key: 'crew-acc:running' }))?.text).toContain('RUNNING')
     } else expect(await ui.find({ key: 'crew-acc:running' })).toBeFalsy()
     await ui.unmount()
   }
@@ -1717,7 +1750,7 @@ test('pane (terminal): at 40 cells the fold keeps its glyph and Button whole, th
       expect(head).toMatch(/0:01$/)
     } else {
       const chips = JSON.stringify(drawnByKey(tree, `crew-chips:${B_ID}`))
-      expect(chips.indexOf('≈$')).toBeLessThan(chips.indexOf(' tok'))
+      expect(chips.indexOf('≈$')).toBeLessThan(chips.indexOf(`crew-chip-tok:${B_ID}`))
     }
     await ui.unmount()
   }
@@ -1730,4 +1763,124 @@ test('pane (terminal): the progress column is at most 40 cells', async ($, on) =
   const cols = ((line?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
   expect(Number(cols[cols.length - 1]?.props?.width)).toBeLessThanOrEqual(40)
   await ui.unmount()
+})
+
+// ── Integration review, fix round 1 ──
+
+const overlaySource = async (ui: Finder) => (await svgs(ui)).find(s => s.source.includes('data-moment'))?.source
+
+test('pane: a moment keeps its overlay while the layout holds; when the receiver moves, the gift becomes its badge (no restart)', async ($, on) => {
+  const { h, clock: clockOf } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'B', 'Build B', 'builder-2')
+  await spawnHelper($, 'A', 'Build A', 'builder-1')
+  await spawnHelper($, 'K', 'Build K', 'builder-3')
+  const ui = await mountPane($, 'desktop')
+  h.status['ag-Build A'] = 'completed'
+  await agentEnd($, 'ag-Build A')
+  const first = await overlaySource(ui)
+  expect(first).toBeTruthy()
+  // B, above A in the list, finishes 500 ms later: the same overlay, or A's badge; never a new source.
+  await clockOf.advance(500)
+  h.status['ag-Build B'] = 'completed'
+  await agentEnd($, 'ag-Build B')
+  const second = await overlaySource(ui)
+  if (second !== undefined) expect(second).toBe(first)
+  else expect(await ui.find({ key: 'crew-badge:ag-Build A' })).toBeTruthy()
+  // A new member starts: Running grows and A moves down; the overlay would miss it, so A shows its badge.
+  await spawnHelper($, 'C', 'Build C', 'builder-4')
+  expect(await overlaySource(ui)).toBeUndefined()
+  expect(await ui.find({ key: 'crew-badge:ag-Build A' })).toBeTruthy()
+  await ui.unmount()
+  // The terminal draws no overlay at all.
+  const term = await mountPane($, 'terminal')
+  expect(await svgs(term)).toEqual([])
+  await term.unmount()
+})
+
+test('pane: closing the pane forgets the moments it showed: reopened late, only the badge', async ($, on) => {
+  const { h, clock } = await mixedCrew($, on)
+  let ui = await mountPane($, 'desktop')
+  expect(await overlaySource(ui)).toBeTruthy()
+  await ui.unmount()
+  h.panes = [{ id: 'glitch-crew', title: 'Crew', isShown: true, isFocused: false, isPlaced: true }]
+  await $.command.run({ command: 'glitch', args: 'crew' } as never)
+  await clock.advance(500)
+  for (const surface of SURFACES) {
+    ui = await mountPane($, surface)
+    expect(await overlaySource(ui)).toBeUndefined()
+    if (surface === 'desktop') expect(await ui.find({ key: `crew-badge:${C_ID}` })).toBeTruthy()
+    await ui.unmount()
+  }
+})
+
+test('the pane and the HUD pill read one crew cost, also once nothing runs', async ($, on) => {
+  const summaries: { cost?: number }[] = []
+  on('state.set', (_$, e, next) => {
+    if ((e as { key?: string }).key === 'crewSummary') summaries.push((e as { value?: { cost?: number } }).value ?? {})
+    return next(e)
+  })
+  const { h, clock } = await mixedCrew($, on)
+  h.status[B_ID] = 'completed'
+  await agentEnd($, B_ID)
+  const ui = await mountPane($, 'desktop')
+  const term = await mountPane($, 'terminal', 100)
+  h.usd = 3
+  await clock.advance(1100)
+  expect(summaries[summaries.length - 1]?.cost).toBe(2)
+  for (const u of [ui, term]) expect((await textsOf(u)).join(' | ')).toContain('≈$2.00')
+  await ui.unmount()
+  await term.unmount()
+})
+
+test('pane (hats): the happy receiver keeps its hat and its size, so the gift lands at its feet', async ($, on) => {
+  const { h, clock } = await crewHarness($, on)
+  await $.command.run({ command: 'glitch', args: 'crew theme hats' } as never)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'X', 'Build X', 'builder-1')
+  await spawnHelper($, 'Y', 'Test Y', 'tester-1')
+  const ui = await mountPane($, 'desktop')
+  h.status['ag-Test Y'] = 'completed'
+  await agentEnd($, 'ag-Test Y')
+  await clock.advance(2500)
+  const happy = (await svgs(ui)).find(s => s.alt.includes('happy'))
+  expect([happy?.width, happy?.height]).toEqual([32, 32])
+  // The hat stays on: the happy frame is the theme's frame size, not the bare pet's 13 rows.
+  expect(happy?.source).toContain('viewBox="0 0 16 16"')
+  await ui.unmount()
+})
+
+test('pane with the pet off: no minis and no empty sprite column; the lead row has no sprite', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await $.command.run({ command: 'glitch', args: 'pet off' } as never)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'X', 'Build X', 'builder-1')
+  await spawnHelper($, 'Y', 'Test Y', 'tester-1')
+  h.status['ag-Test Y'] = 'completed'
+  await agentEnd($, 'ag-Test Y')
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    expect(await svgs(ui).then(s => s.filter(x => !/steps|Done|Failed|at work|completed/.test(x.alt)))).toEqual([])
+    expect((await keysOf(ui)).filter(k => k.startsWith('crew-mini:') || k.startsWith('crew-badge:') || k === 'crew-lead-sprite' || k === 'crew-reward')).toEqual([])
+    expect((await textsOf(ui)).join(' | ')).toContain('Lead')
+    await ui.unmount()
+  }
+})
+
+test('pane (desktop): each member\'s chips (model and effort, ≈cost, tokens) fit on one line in a 40-cell pane', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, 40)
+    const tree = await ui.drawn()
+    if (surface === 'desktop') {
+      const miniCols = Number(drawnByKey(tree, `crew-mini:${B_ID}`)?.props?.width)
+      for (const id of [B_ID, C_ID, 'ag-Build the date utils']) {
+        const chips = ((drawnByKey(tree, `crew-chips:${id}`)?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
+        const cells = chips.reduce((t, c) => t + stringOf(textIn(c)).length + 2 * Number(c.props?.paddingX ?? 0), 0) + Math.max(0, chips.length - 1)
+        expect(cells).toBeLessThanOrEqual(40 - 2 - miniCols - 1)
+        expect(chips.length).toBe(3)
+      }
+    } else expect(drawnByKey(tree, `crew-chips:${B_ID}`)).toBeUndefined()
+    await ui.unmount()
+  }
 })
