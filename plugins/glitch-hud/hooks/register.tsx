@@ -162,7 +162,8 @@ export async function recordSpend($: EngineInterface, config: HudConfig): Promis
   const alerts = budgetAlerts(b.notified, { session: total, daily, sessionCap: b.sessionCap, dailyCap: b.dailyCap })
   await update($, budget, x => ({ ...x, notified: alerts.notified }))
   for (const t of alerts.toasts) $.ui.toast(t.text, { timeoutMs: t.timeoutMs })
-  if (alerts.notice) {
+  // The session toast above already says it; only an opted-in OS notification adds to it.
+  if (alerts.notice && config.notify === 'windows') {
     const title = `${projectName(await $.session.cwd().catch(() => ''))} — Glitch`
     await notify(engineIO($), config.notify, title, alerts.notice)
   }

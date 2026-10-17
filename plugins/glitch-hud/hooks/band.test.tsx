@@ -485,6 +485,29 @@ test('band: notify off sends no cache warning at all', { options: { notify: 'off
   expect(toasts).toEqual([])
 })
 
+test('band: with default settings a budget cap shows one in-app toast, no Windows or Claude Code notification', { options: { budgetSession: 10 } }, async ($, on) => {
+  await session($, on)
+  await turn($, 10.5)
+  expect(toasts).toEqual(['Glitch: session spend $10.50 reached the $10.00 cap'])
+  expect(psRuns).toBe(0)
+  expect(uiNotifies).toBe(0)
+})
+
+test('band: notify windows at a budget cap still sends the Windows notification', { options: { budgetSession: 10, notify: 'windows' } }, async ($, on) => {
+  await session($, on)
+  await turn($, 10.5)
+  expect(toasts).toEqual(['Glitch: session spend $10.50 reached the $10.00 cap'])
+  expect(psRuns).toBe(1)
+})
+
+test('band: notify off at a budget cap keeps the session toast only', { options: { budgetSession: 10, notify: 'off' } }, async ($, on) => {
+  await session($, on)
+  await turn($, 10.5)
+  expect(toasts).toEqual(['Glitch: session spend $10.50 reached the $10.00 cap'])
+  expect(psRuns).toBe(0)
+  expect(uiNotifies).toBe(0)
+})
+
 test('session.start: a refused /glitch-hud registration toasts and start-up goes on', async ($, on) => {
   const clock = await session($, on, MAIN, { registerFails: true })
   expect(toasts).toEqual(['Glitch HUD: could not register /glitch-hud'])
