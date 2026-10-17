@@ -234,7 +234,7 @@ const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
 
 // The engine around a crew: agents' statuses, the session's cost, what each prompt carried.
 const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
-  const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[], contextOut: 'none' as 'none' | 'echo' | 'strip' }
+  const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[], contextOut: 'none' as 'none' | 'echo' | 'strip', spawned: [] as { type: string; model?: string; name?: string }[] }
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
   on('prompt.submit', async (_$, e) => {
     h.contexts.push(e.context)
@@ -244,6 +244,7 @@ const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
     return { text: e.text } as never
   })
   on('agent.spawn', (_$, e) => {
+    h.spawned.push({ type: e.subagentType, ...(e.model !== undefined ? { model: e.model } : {}), ...(e.name ? { name: e.name } : {}) })
     h.status[`ag-${e.description}`] = 'running'
     return { model: 'claude-opus-5-5', agentId: `ag-${e.description}` } as never
   })
@@ -651,7 +652,7 @@ test('a spawn on a crew type runs on its model: a different model is set back; o
   ])
 })
 
-test('an Agent call\'s own effort is left out for a crew type, kept for others', async ($, on) => {
+test('an Agent call\'s own effort is set to the crew type\'s, kept for others', async ($, on) => {
   const inputs: Record<string, unknown>[] = []
   on('tool.call', (_$, e) => {
     inputs.push(e as never)
@@ -660,7 +661,7 @@ test('an Agent call\'s own effort is left out for a crew type, kept for others',
   await session($, on)
   await $.tool.call({ tool: 'Agent', description: 'a', prompt: 'p', subagent_type: 'glitch-pets:crew-light', effort: 'max' } as never)
   await $.tool.call({ tool: 'Agent', description: 'b', prompt: 'p', subagent_type: 'Explore', effort: 'max' } as never)
-  expect('effort' in (inputs[0] as object)).toBe(false)
+  expect(inputs[0]?.effort).toBe('low')
   expect(inputs[0]?.subagent_type).toBe('glitch-pets:crew-light')
   expect(inputs[1]?.effort).toBe('max')
 })
@@ -764,4 +765,107 @@ test('the crewTheme setting is the default when nothing is saved', { options: { 
   await session($, on)
   const r = (await $.command.run({ command: 'glitch', args: 'crew theme' } as never)) as { text: string }
   expect(r.text).toContain('hats (Hats) (current)')
+})
+
+// ── Crew tiers, fix round 1: the step-up holds the review; retries are forced one rung up ──
+
+test('a failed member held for a step-up: only the step-up note; the review reminder after the retry finishes', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  await spawnCrew($, 'B', 'crew-medium', 'builder-2')
+  await mainEnd($, 'm1')
+  await mainStart($, 'm2')
+  h.status['ag-A'] = 'failed'
+  h.status['ag-B'] = 'completed'
+  await agentEnd($, 'ag-A')
+  await agentEnd($, 'ag-B')
+  await mainEnd($, 'm2')
+  await submit($, { kind: 'task-notification' })
+  expect(h.contexts[0]?.length).toBe(1)
+  expect(h.contexts[0]?.[0]).toContain('builder-1 failed on Haiku')
+  await mainStart($, 'm3')
+  await spawnCrew($, 'A2', 'crew-light-high', 'builder-1')
+  h.status['ag-A2'] = 'completed'
+  await agentEnd($, 'ag-A2')
+  await mainEnd($, 'm3')
+  await submit($)
+  expect(h.contexts[1]?.length).toBe(1)
+  expect(h.contexts[1]?.[0]).toContain('reviewer-1')
+  expect(h.contexts[1]?.[0]).not.toContain('failed on')
+})
+
+test('a retry on the old rung is spawned one rung up and counts toward the cap of 2', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  h.status['ag-A'] = 'failed'
+  await agentEnd($, 'ag-A')
+  await submit($)
+  // Claude retries on the rung it failed on.
+  await spawnCrew($, 'A2', 'crew-light', 'builder-1')
+  expect(h.spawned[1]).toEqual({ type: 'glitch-pets:crew-light-high', name: 'builder-1' })
+  h.status['ag-A2'] = 'failed'
+  await agentEnd($, 'ag-A2')
+  await submit($)
+  expect(stepNotes(h)[1]).toContain('glitch-pets:crew-medium:')
+  // Even with a model of its own: the type is forced and so is its model.
+  await $.agent.spawn({ tool_use_id: 'tu-A3', prompt: 'p', description: 'A3', subagentType: 'glitch-pets:crew-light', name: 'builder-1', model: 'haiku' } as never)
+  expect(h.spawned[2]).toEqual({ type: 'glitch-pets:crew-medium', model: 'claude-sonnet-5-5', name: 'builder-1' })
+  h.status['ag-A3'] = 'failed'
+  await agentEnd($, 'ag-A3')
+  await submit($)
+  expect(stepNotes(h).length).toBe(2)
+  // Past the cap a retry is not forced and still counts as capped.
+  await spawnCrew($, 'A4', 'crew-light', 'builder-1')
+  expect(h.spawned[3]).toEqual({ type: 'glitch-pets:crew-light', name: 'builder-1' })
+  h.status['ag-A4'] = 'failed'
+  await agentEnd($, 'ag-A4')
+  await submit($)
+  expect(stepNotes(h).length).toBe(2)
+})
+
+test('a retry above the failed rung is left as Claude picked it; another name is not taken for the retry', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  h.status['ag-A'] = 'failed'
+  await agentEnd($, 'ag-A')
+  await submit($)
+  await spawnCrew($, 'C', 'crew-light', 'builder-2')
+  expect(h.spawned[1]).toEqual({ type: 'glitch-pets:crew-light', name: 'builder-2' })
+  await spawnCrew($, 'A2', 'crew-heavy', 'builder-1')
+  expect(h.spawned[2]).toEqual({ type: 'glitch-pets:crew-heavy', name: 'builder-1' })
+})
+
+test('a resumed member that fails again is not stepped up twice', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  h.status['ag-A'] = 'failed'
+  await agentEnd($, 'ag-A')
+  await submit($)
+  h.status['ag-A'] = 'running'
+  await $.agent.spawn({ tool_use_id: 'tu-r', prompt: 'try again', description: 'A', subagentType: 'glitch-pets:crew-light', resume: { agentId: 'ag-A' } } as never)
+  h.status['ag-A'] = 'failed'
+  await agentEnd($, 'ag-A')
+  await submit($)
+  expect(stepNotes(h).length).toBe(1)
+})
+
+test('a step-up of a crew that closed is not carried into a fresh one', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  h.status['ag-A'] = 'failed'
+  await agentEnd($, 'ag-A')
+  await mainEnd($, 'm1')
+  // A quiet turn closes the crew.
+  await mainStart($, 'm2')
+  await mainEnd($, 'm2')
+  await mainStart($, 'm3')
+  await spawnCrew($, 'Z', 'crew-light', 'builder-1')
+  expect(h.spawned[1]).toEqual({ type: 'glitch-pets:crew-light', name: 'builder-1' })
+  await submit($)
+  expect(stepNotes(h)).toEqual([])
 })

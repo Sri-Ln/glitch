@@ -42,6 +42,13 @@ test('only crew-named helpers count; any reviewer row satisfies it', () => {
   expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done'), row('r', 'reviewer', 'done', false)]), o)).toBe(false)
 })
 
+test('a failed helper held for a step-up is not finished yet', () => {
+  const s = crewOf([row('a', 'builder', 'failed'), row('b', 'builder', 'done')])
+  expect(needsReview(s, { ...o, held: ['a'] })).toBe(false)
+  expect(needsReview(s, { ...o, held: ['x'] })).toBe(true)
+  expect(needsReview(s, o)).toBe(true)
+})
+
 test('the crew rule names the crew tier types', () => {
   expect(CREW_RULE).toContain('glitch-pets:crew-<tier>')
   expect(CREW_RULE).toContain('no model or effort')

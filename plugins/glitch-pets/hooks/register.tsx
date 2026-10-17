@@ -11,7 +11,7 @@ import { isCapReached } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
 import { createPlayer, frameSvg } from './behavior/player'
 import { STORE_STREAK, advance, asStreak } from './behavior/streak'
-import { agentSpecs, claimStepUp, ladderOf, rungOfType, stepUpNote, stepUpsFor } from './behavior/tiers'
+import { AGENT_PREFIX, agentSpecs, claimStepUp, ladderOf, rungOfType, stepUpNote, stepUpsFor } from './behavior/tiers'
 import type { Rung, StepUp } from './behavior/tiers'
 import type { Frame, MoodId, Persona, PetId, Role, Sprite, Tier, VoiceMoment } from './behavior/types'
 import { PET_IDS } from './behavior/types'
@@ -220,22 +220,78 @@ async function answerPets($: EngineInterface, arg: string): Promise<string> {
 let ladder: Rung[] = ladderOf(parsePetsConfig({}).config.crewTiers)
 /** Failed crew members whose note has not reached the model yet. */
 let stepUpsQueued: StepUp[] = []
-/** Notes sent: the retry spawn they ask for claims one, linking its row. */
+/** Notes sent this main turn: the retry spawn they ask for claims one, linking its row. */
 let stepUpsSent: StepUp[] = []
+/** Rows already stepped up from (queued, sent or claimed): a resumed row failing again is not stepped twice. */
+let steppedFrom = new Set<string>()
 
 function queueStepUps(before: CrewState['rows'], after: CrewState['rows']) {
-  for (const u of stepUpsFor(before, after, ladder)) if (!stepUpsQueued.some(q => q.fromId === u.fromId)) stepUpsQueued.push(u)
+  for (const u of stepUpsFor(before, after, ladder)) {
+    if (steppedFrom.has(u.fromId)) continue
+    steppedFrom.add(u.fromId)
+    stepUpsQueued.push(u)
+  }
 }
 
-/** A spawn's rung, and for a retry a note asked for, where it stepped up from. */
-function crewStepOf(type: string, name: string | undefined): { rung?: string; stepUps?: number; steppedUpFrom?: NonNullable<CrewState['rows'][number]['steppedUpFrom']> } {
-  const rung = rungOfType(ladder, type)
-  if (!rung) return {}
-  const { claimed, rest } = claimStepUp(stepUpsSent, type, name)
-  if (!claimed) return { rung: rung.type }
-  stepUpsSent = rest
-  const from = ladder.find(r => r.type === claimed.from)
-  return { rung: rung.type, stepUps: claimed.stepUps, steppedUpFrom: { id: claimed.fromId, rung: claimed.from, model: from?.model ?? '', effort: from?.effort ?? '' } }
+/** Failed rows whose retry is still to come: the review reminder waits for them. */
+const heldForStepUp = (): string[] => [...stepUpsQueued, ...stepUpsSent].map(u => u.fromId)
+
+/** A main turn ended: a note Claude read and did not act on is dropped (it no longer holds the review). */
+function dropUnclaimedStepUps() {
+  stepUpsSent = []
+}
+
+type CrewStep = { rung?: string; stepUps?: number; steppedUpFrom?: NonNullable<CrewState['rows'][number]['steppedUpFrom']> }
+
+/**
+ * Before a spawn: a retry of a member with a step-up pending (by name; else a sent
+ * note by type) runs at least one rung up — a crew type at or below the failed rung is
+ * rewritten to the step-up's target — and counts toward the cap. A crew type's model wins.
+ * `restore` puts the claim back when the spawn is refused.
+ */
+function crewSpawnOf<E extends { subagentType: string; model?: string; fork: boolean; workflow?: unknown; name?: string }>(e: E, c: CrewState | null, own: boolean): { e: E; step: CrewStep; restore: () => void } {
+  const none = { e: crewModelOf(e), step: {}, restore: () => undefined }
+  if (!own) return none
+  if (c?.closed) {
+    stepUpsQueued = []
+    stepUpsSent = []
+    steppedFrom = new Set()
+  }
+  const asked = (e as { resume?: unknown }).resume || e.fork || e.workflow ? null : rungOfType(ladder, e.subagentType)
+  if (!asked) return none
+  const byName = (l: StepUp[]) => (e.name ? l.findIndex(u => u.name === e.name) : -1)
+  let claimed: StepUp | null = null
+  let restore = () => undefined as void
+  const qi = byName(stepUpsQueued)
+  const si = byName(stepUpsSent)
+  if (qi >= 0) {
+    claimed = stepUpsQueued[qi] as StepUp
+    stepUpsQueued = stepUpsQueued.filter((_, k) => k !== qi)
+    const u = claimed
+    restore = () => void stepUpsQueued.push(u)
+  } else {
+    const r = si >= 0 ? { claimed: stepUpsSent[si] as StepUp, rest: stepUpsSent.filter((_, k) => k !== si) } : claimStepUp(stepUpsSent, e.subagentType, e.name)
+    if (r.claimed) {
+      claimed = r.claimed
+      stepUpsSent = r.rest
+      const u = claimed
+      restore = () => void stepUpsSent.push(u)
+    }
+  }
+  if (!claimed) {
+    // Past the cap (or retried without a note): the name's earlier tries still count.
+    const before = Math.max(0, ...(c?.rows ?? []).filter(r => r.rung && e.name && r.name === e.name).map(r => r.stepUps ?? 0))
+    return { e: crewModelOf(e), step: { rung: asked.type, ...(before ? { stepUps: before } : {}) }, restore }
+  }
+  const at = (t: string) => ladder.findIndex(r => r.type === t)
+  const target = at(asked.type) <= at(claimed.from) ? (ladder[at(claimed.to)] ?? asked) : asked
+  const from = ladder[at(claimed.from)]
+  const forced = target.type === asked.type ? e : { ...e, subagentType: `${AGENT_PREFIX}${target.type}` }
+  return {
+    e: crewModelOf(forced),
+    step: { rung: target.type, stepUps: claimed.stepUps, steppedUpFrom: { id: claimed.fromId, rung: claimed.from, model: from?.model ?? '', effort: from?.effort ?? '' } },
+    restore,
+  }
 }
 
 /** A spawn on a crew type runs on the type's model: a different `model` is set back to it. */
@@ -363,7 +419,7 @@ export const register: Register = (on, options) => {
     if (!reviewMissed || reminderInFlight || !config.crewReview || e.origin.kind === 'plugin' || (e as { command?: unknown }).command) return next(e)
     // Stale by now (a reviewer joined, the turn was aborted, a new crew): dropped.
     const now = await read($, crew).catch(() => null)
-    if (!now || !needsReview(now, { enabled: true, stopHookActive: false, capReached: false })) {
+    if (!now || !needsReview(now, { enabled: true, stopHookActive: false, capReached: false, held: heldForStepUp() })) {
       reviewMissed = false
       return next(e)
     }
@@ -426,7 +482,8 @@ export const register: Register = (on, options) => {
           else if (config.crewReview) {
             const stats = (await hudStats($)) as { total?: number } | null
             const capReached = isCapReached((await hudBudget($)) as BudgetLike | null, stats?.total ?? 0)
-            if (needsReview(await read($, crew), { enabled: true, stopHookActive: false, capReached })) reviewMissed = true
+            dropUnclaimedStepUps()
+            if (needsReview(await read($, crew), { enabled: true, stopHookActive: false, capReached, held: heldForStepUp() })) reviewMissed = true
           }
           await update($, crew, onMainTurnEnd)
         } catch {
@@ -466,7 +523,9 @@ export const register: Register = (on, options) => {
 
   // A helper joins the open crew, or starts a fresh one; a fresh crew opens the pane (auto).
   on('agent.spawn', async ($, e, next) => {
-    const r = await next(crewModelOf(e))
+    const pre = crewSpawnOf(e, await read($, crew).catch(() => null), e.parentAgentId === undefined && e.workflow === undefined && next.origin.plugin === 'engine')
+    const r = await next(pre.e)
+    if (r.deny !== undefined || !r.agentId) pre.restore()
     if (r.deny !== undefined || !r.agentId) return r
     // Only the main loop's own helpers: not a helper's sub-spawn, a workflow's agent or another plugin's.
     if (e.parentAgentId !== undefined || e.workflow !== undefined || next.origin.plugin !== 'engine') return r
@@ -476,10 +535,9 @@ export const register: Register = (on, options) => {
       const costNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? 0
       // Decided inside the update, so two spawns at once cannot both start a crew.
       let fresh = false
-      const step = crewStepOf(e.subagentType, e.name)
       await update($, crew, c => {
         fresh = c.closed
-        return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, model: r.model, now, costNow, ...step })
+        return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, model: r.model, now, costNow, ...pre.step })
       })
       if (fresh && config.crewPane === 'auto' && !(await $.ui.panes().catch(() => [])).some(x => x.id === PANE)) {
         await $.ui.open({ id: PANE, title: 'Crew' }).catch(() => undefined)
@@ -545,15 +603,15 @@ export const register: Register = (on, options) => {
   ladder = ladderOf(config.crewTiers)
   stepUpsQueued = []
   stepUpsSent = []
+  steppedFrom = new Set()
 
-  // A crew type's effort wins: an Agent call's own `effort` for a crew type is left
-  // out (session.start registers the types, agent.spawn pins their model, prompt.submit
+  // A crew type's effort wins: an Agent call's own `effort` for a crew type is set to
+  // the type's (session.start registers the types, agent.spawn pins their model, prompt.submit
   // carries the step-up notes: one hook per event, so those are lines in the hooks above).
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     const a = e as typeof e & { subagent_type?: string; effort?: string }
-    if (a.effort === undefined || !a.subagent_type || !rungOfType(ladder, a.subagent_type)) return next(e)
-    const { effort: _dropped, ...rest } = a
-    return next(rest as typeof e)
+    const rung = a.effort !== undefined && a.subagent_type ? rungOfType(ladder, a.subagent_type) : null
+    return next(!rung || a.effort === rung.effort ? e : ({ ...a, effort: rung.effort } as typeof e))
   })
   // ── end crew tiers (hooks) ──
 }
