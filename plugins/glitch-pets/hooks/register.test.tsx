@@ -585,3 +585,38 @@ test('once nothing runs the finished helpers fold to one line', async ($, on) =>
   expect(text).toContain('2 done, 0 failed')
   expect(text).not.toContain('A ✓')
 })
+
+// ── Crew themes: /glitch crew theme [id], kept in the store like the pet ──
+test('/glitch crew theme lists the themes, current busy-hands by default', async ($, on) => {
+  await session($, on)
+  for (const [command, args] of [['glitch', 'crew theme'], ['glitch-pets', 'crew theme'], ['glitch', 'crew themes'], ['glitch-pets', 'crew themes']] as const) {
+    const r = (await $.command.run({ command, args } as never)) as { text: string }
+    expect(r.text).toContain('busy-hands (Busy hands) (current)')
+    expect(r.text).toContain('hats')
+  }
+})
+
+test('/glitch crew theme hats switches and is kept; a saved theme is restored', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  togglePane(on)
+  await session($, on, store)
+  const r = (await $.command.run({ command: 'glitch', args: 'crew theme hats' } as never)) as { text: string }
+  expect(r.text).toBe('Crew theme: Hats.')
+  expect(store.crewTheme).toBe('hats')
+  const bad = (await $.command.run({ command: 'glitch-pets', args: 'crew theme sparkles' } as never)) as { text: string }
+  expect(bad.text).toContain('Unknown crew theme "sparkles"')
+  // `crew` alone still toggles the pane.
+  expect(((await $.command.run({ command: 'glitch', args: 'crew' } as never)) as { text: string }).text).toBe('Crew pane opened.')
+})
+
+test('a saved crew theme is restored at start', async ($, on) => {
+  await session($, on, { crewTheme: 'hats' })
+  const r = (await $.command.run({ command: 'glitch', args: 'crew theme' } as never)) as { text: string }
+  expect(r.text).toContain('hats (Hats) (current)')
+})
+
+test('the crewTheme setting is the default when nothing is saved', { options: { crewTheme: 'hats' } }, async ($, on) => {
+  await session($, on)
+  const r = (await $.command.run({ command: 'glitch', args: 'crew theme' } as never)) as { text: string }
+  expect(r.text).toContain('hats (Hats) (current)')
+})

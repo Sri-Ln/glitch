@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { LAPTOP_PALETTE, laptopFrames, withLaptop } from './laptop'
 import type { Frame, Persona } from './types'
-import { MOOD_IDS, VOICE_MOMENTS } from './types'
+import { LAPTOP_KEYS, MOOD_IDS, VOICE_MOMENTS } from './types'
 
 const BASE: Frame = Array.from({ length: 13 }, (_, y) => (y < 7 ? `${'abcdefg'[y]}`.repeat(16) : '.'.repeat(16)))
 const cell = (f: Frame, x: number, y: number) => f[y]![x]
@@ -69,4 +69,8 @@ test('withLaptop adds the laptop palette, leaves other moods alone and does not 
   expect(src.moods.working.frames).toEqual([A, B, A, B])
   expect(src.moods.idle.fps).toBe(1)
   expect(Object.keys(src.palette)).toEqual(['a', 'p'])
+})
+
+test('LAPTOP_KEYS (the keys pets and crew themes leave alone) are exactly the laptop palette', () => {
+  expect([...LAPTOP_KEYS].sort()).toEqual(Object.keys(LAPTOP_PALETTE).sort())
 })

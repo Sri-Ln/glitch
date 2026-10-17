@@ -10,6 +10,11 @@ export type MoodId = (typeof MOOD_IDS)[number]
 export const VOICE_MOMENTS = ['happy', 'worried', 'oops', 'cheering', 'sleepy', 'crying', 'crewDone'] as const
 export type VoiceMoment = (typeof VOICE_MOMENTS)[number]
 
+/** A persona's own palette keys are letters; every digit and punctuation char is left to overlay art. */
+export const PET_KEY = /^[A-Za-z]$/
+/** The laptop's keys (behavior/laptop.ts). Every other digit and punctuation char is free for crew themes. */
+export const LAPTOP_KEYS: readonly string[] = ['4', '6', '7']
+
 /** The sprite grid: 16 columns × 13 rows. */
 export const GRID = { width: 16, height: 13 } as const
 
@@ -35,7 +40,7 @@ export type Persona = {
   kind: string
   /** One line, for the gallery and the README. */
   temperament: string
-  /** Palette key → #rrggbb. Keys 1, 2, 3 are reserved for crew hats; 4, 6, 7 for the laptop. */
+  /** Palette key → #rrggbb. Keys are letters (PET_KEY): digits and punctuation are reserved for overlay art (LAPTOP_KEYS, crew themes). */
   palette: Readonly<Record<string, string>>
   moods: Readonly<Record<MoodId, MoodArt>>
   /** Top-center of the head, where a crew hat's brim sits (x 0–15, y 0–12). */

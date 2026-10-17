@@ -8,7 +8,7 @@ const W = 16
 export const frameIndex = (art: MoodArt, elapsedMs: number): number =>
   Math.floor((Math.max(0, elapsedMs) * art.fps) / 1000) % art.frames.length
 
-/** One frame as an SVG document: one rect per run of a color within a row. */
+/** One frame as an SVG document: one rect per run of a color within a row. As wide as its rows (16 for a pet; a crew mini may be wider). */
 export function frameSvg(palette: Readonly<Record<string, string>>, frame: Frame, pixel: number): string {
   let rects = ''
   frame.forEach((row, y) => {
@@ -23,7 +23,8 @@ export function frameSvg(palette: Readonly<Record<string, string>>, frame: Frame
     }
   })
   const h = frame.length
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" width="${Math.round(W * pixel)}" height="${Math.round(h * pixel)}" shape-rendering="crispEdges">${rects}</svg>`
+  const w = frame[0]?.length ?? W
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${Math.round(w * pixel)}" height="${Math.round(h * pixel)}" shape-rendering="crispEdges">${rects}</svg>`
 }
 
 /** Builds each (pet, mood, frame, size) image once; a tick only picks which. */
