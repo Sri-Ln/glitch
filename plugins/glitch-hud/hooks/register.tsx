@@ -12,6 +12,8 @@ import type { RunFn } from './git'
 import { notify, projectName } from './notify'
 import type { NotifyIO } from './notify'
 import { richPart, richWidth } from './desktop'
+import { CREW_PILL_PAD, crewPillText, isCrewSummary } from './crew'
+import type { CrewSummary } from './crew'
 import { PET_CELLS, isSprite } from './pet'
 import type { PetSprite } from './pet'
 import { cellWidth, fitParts, segments } from './parts'
@@ -77,6 +79,16 @@ const loadPet = async ($: EngineInterface): Promise<PetSprite | null> => {
   try {
     const v = (await $.state.get({ plugin: 'glitch-pets', key: 'sprite' } as never)) as { value?: unknown }
     return isSprite(v?.value) ? v.value : null
+  } catch {
+    return null
+  }
+}
+
+// The crew glitch-pets publishes while one is open or recent; anything malformed is no pill.
+const loadCrew = async ($: EngineInterface): Promise<CrewSummary | null> => {
+  try {
+    const v = (await $.state.get({ plugin: 'glitch-pets', key: 'crewSummary' } as never)) as { value?: unknown }
+    return isCrewSummary(v?.value) ? v.value : null
   } catch {
     return null
   }
@@ -455,6 +467,9 @@ export const register: Register = (on, options) => {
       const rich = e.surface !== 'terminal'
       // The pet sits at the row's end on surfaces that draw images.
       const pet = rich ? await loadPet($) : null
+      // So does the crew pill: the terminal keeps /glitch crew and the pane's own auto-open.
+      const crew = rich ? await loadCrew($) : null
+      const crewLabel = crew ? crewPillText(crew) : null
       const chosen = v.parts !== null || config.partsExplicit
       const parts = (v.parts ?? config.parts)
         .filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
@@ -468,8 +483,9 @@ export const register: Register = (on, options) => {
         (rich
           ? richWidth(richPart(id, data, compact))
           : cellWidth(segments(id, data, compact).map(x => x.text).join(''))) + (id === 'cache' && showsWarm ? warmCells : 0)
-      // × takes one cell and a gap, the spacer a gap, the pet its cells and a gap.
-      const reserve = ROW_GAP + (1 + ROW_GAP) + (pet ? PET_CELLS + ROW_GAP : 0)
+      // × takes one cell and a gap, the spacer a gap, the pet its cells and a gap, the
+      // crew pill its label, its button chrome and a gap.
+      const reserve = ROW_GAP + (1 + ROW_GAP) + (pet ? PET_CELLS + ROW_GAP : 0) + (crewLabel ? cellWidth(crewLabel) + CREW_PILL_PAD + ROW_GAP : 0)
       const { shown, compact } = fitParts(parts, width, e.props.bodyColumns, ROW_GAP, reserve)
 
       // Other mods' bands draw beneath this row; the engine's own placeholder is never nested.
@@ -538,6 +554,12 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column">
           <Box flexDirection="row" columnGap={ROW_GAP} flexWrap="nowrap" overflow="hidden" alignItems="center">
             {items}
+            {/* A press is glitch-pets' to answer: its ui.press hook opens or closes the crew pane. */}
+            {crewLabel ? (
+              <Box key="glitch-crew-box" flexShrink={0}>
+                <Button key="glitch-crew" label={crewLabel} onPress={() => undefined} />
+              </Box>
+            ) : null}
             {/* Pet and ✕ are siblings under the row's one columnGap: the same space on
                 both sides of the pet, and none left behind without one. */}
             {pet && Svg ? (
