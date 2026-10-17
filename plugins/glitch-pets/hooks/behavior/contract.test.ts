@@ -31,6 +31,9 @@ test('leadStatus wording is optional, but only for known situations and never em
   expect(personaProblems({ ...p, leadStatus: { many: 'juggling {n}', joy: '{who} is done' } })).toEqual([])
   expect(personaProblems({ ...p, leadStatus: { nonsense: 'x' } as never }).join()).toContain('not a lead situation')
   expect(personaProblems({ ...p, leadStatus: { worry: ' ' } }).join()).toContain('leadStatus worry')
+  // A pair is the wording for one, then for more than one.
+  expect(personaProblems({ ...p, leadStatus: { joy: ['{who} is done', '{who} are done'] } })).toEqual([])
+  expect(personaProblems({ ...p, leadStatus: { joy: ['{who} is done'] as never } }).join()).toContain('leadStatus joy')
 })
 
 test('the contract covers the lead moods investigating and pleased', () => {

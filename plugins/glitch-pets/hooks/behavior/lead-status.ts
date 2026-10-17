@@ -4,18 +4,18 @@
 import type { CrewRow, CrewState } from './crew'
 import type { Reactions } from './reactions'
 import { crewName, isInvestigating, reactionAt } from './reactions'
-import type { LeadSituation, Persona } from './types'
+import type { LeadSituation, LeadWording, Persona } from './types'
 
 /** The wording any pet uses unless its persona has its own. */
-export const NEUTRAL_STATUS: Readonly<Record<LeadSituation, string>> = {
+export const NEUTRAL_STATUS: Readonly<Record<LeadSituation, LeadWording>> = {
   worry: '{who} hit a snag',
-  joy: '{who} is done',
+  joy: ['{who} is done', '{who} are done'],
   reviewing: 'checking the work',
   investigating: 'looking into {who}',
   many: 'keeping an eye on the crew ({n} at work)',
   one: 'waiting on {who}',
   allDone: 'job done, the whole crew is back',
-  someFailed: '{d} done, {f} needs a look',
+  someFailed: ['{d} done, {f} needs a look', '{d} done, {f} need a look'],
 }
 
 export type LeadSituationNow = { situation: LeadSituation; who: string; n: number; d: number; f: number } | null
@@ -44,19 +44,18 @@ export function leadSituation(crew: CrewState, reactions: Reactions | undefined,
   return f === 0 ? at('allDone', '', crew.rows.length) : at('someFailed', '', crew.rows.length)
 }
 
-const fill = (t: string, s: NonNullable<LeadSituationNow>): string =>
-  t.replaceAll('{who}', s.who).replaceAll('{n}', String(s.n)).replaceAll('{d}', String(s.d)).replaceAll('{f}', String(s.f))
+/** The wording for one situation with its blanks filled, in number: a pair picks by the situation's count. */
+export function statusText(persona: Pick<Persona, 'leadStatus'> | null, situation: LeadSituation, s: { who: string; n: number; d: number; f: number }): string {
+  const w = persona?.leadStatus?.[situation] ?? NEUTRAL_STATUS[situation]
+  const count = situation === 'someFailed' ? s.f : s.n
+  const t = typeof w === 'string' ? w : w[count === 1 ? 0 : 1]
+  return t.replaceAll('{who}', s.who).replaceAll('{n}', String(s.n)).replaceAll('{d}', String(s.d)).replaceAll('{f}', String(s.f))
+}
 
 /** The lead row's status clause ("waiting on builder-1"), in the pet's own voice where it has one. */
 export function leadStatus(persona: Pick<Persona, 'leadStatus'> | null, crew: CrewState, reactions: Reactions | undefined, now: number): string {
   const s = leadSituation(crew, reactions, now)
-  if (!s) return 'ready for a crew'
-  const own = persona?.leadStatus?.[s.situation]
-  if (own) return fill(own, s)
-  // The neutral wording agrees in number.
-  if (s.situation === 'joy' && s.n > 1) return fill('{who} are done', s)
-  if (s.situation === 'someFailed' && s.f > 1) return fill('{d} done, {f} need a look', s)
-  return fill(NEUTRAL_STATUS[s.situation], s)
+  return s ? statusText(persona, s.situation, s) : 'ready for a crew'
 }
 
 /** The whole lead row: "Fork · waiting on builder-1". */

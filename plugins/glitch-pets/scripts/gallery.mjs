@@ -43,7 +43,7 @@ const focusHtml = focus.length
 // specifier that does not resolve as written is tried again with .ts, so the crew-themes
 // registry loads as the plugin loads it. module.registerHooks needs Node 22.15 or later.
 if (typeof nodeModule.registerHooks !== 'function') {
-  console.error(`gallery.mjs needs Node 22.15 or later (module.registerHooks, to load the crew-themes registry); this is Node ${process.versions.node}.\nUsage: node plugins/glitch-pets/scripts/gallery.mjs [out.html]`)
+  console.error(`gallery.mjs needs Node 22.15 or later (module.registerHooks, to load the crew-themes registry); this is Node ${process.versions.node}.\nUsage: node plugins/glitch-pets/scripts/gallery.mjs [out.html] [--focus mood,mood]`)
   process.exit(1)
 }
 nodeModule.registerHooks({

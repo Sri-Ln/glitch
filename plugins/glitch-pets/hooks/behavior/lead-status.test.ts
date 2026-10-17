@@ -3,7 +3,8 @@ import { expect, test } from 'claude-code/testing'
 import { PERSONAS } from '../personas/index'
 import { INITIAL_CREW } from './crew'
 import type { CrewRow, CrewState } from './crew'
-import { leadLine, leadStatus } from './lead-status'
+import { leadLine, leadStatus, statusText, whoOf } from './lead-status'
+import { LEAD_SITUATIONS } from './types'
 import { INITIAL_REACTIONS, JOY_MS, WORRY_MS, applyCrewEvents } from './reactions'
 
 const T = 1_000_000
@@ -58,6 +59,18 @@ test("a pet's own voice fills in the same blanks; a pet without one is neutral",
   expect(leadLine(PERSONAS.bud!, crewOf(row('builder-1')), none, T)).toBe('Bud · waiting for builder-1!')
 })
 
+test('every pet template (and the neutral wording) agrees in number, with 1 and with 3', () => {
+  const BAD = [/\b1 need\b/, /\b1 buddies\b/, /\ball 1\b/, /\b1 of the crew\b/, /of the crew (is|done)\b/, /\b3 needs\b/, /builder-1 are\b/]
+  for (const p of [neutral, ...Object.values(PERSONAS)]) {
+    for (const situation of LEAD_SITUATIONS) {
+      for (const n of [1, 3]) {
+        const text = statusText(p, situation, { who: n === 1 ? 'builder-1' : whoOf(['a', 'b', 'c']), n, d: n, f: n })
+        for (const bad of BAD) expect(`${situation} ${n}: ${text}`).not.toMatch(bad)
+      }
+    }
+  }
+})
+
 test('no pet uses the word "helpers" in its status wording', () => {
-  for (const p of Object.values(PERSONAS)) for (const t of Object.values(p!.leadStatus ?? {})) expect(t).not.toMatch(/helper/i)
+  for (const p of Object.values(PERSONAS)) for (const t of Object.values(p!.leadStatus ?? {})) expect([t].flat().join(' ')).not.toMatch(/helper/i)
 })

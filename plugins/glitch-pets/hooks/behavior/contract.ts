@@ -48,7 +48,8 @@ export function personaProblems(p: Persona, opts: { composed?: boolean } = {}): 
   }
   for (const [situation, text] of Object.entries(p.leadStatus ?? {})) {
     if (!(LEAD_SITUATIONS as readonly string[]).includes(situation)) out.push(`leadStatus "${situation}" is not a lead situation`)
-    if (typeof text !== 'string' || !text.trim()) out.push(`leadStatus ${situation} must be some text`)
+    const ok = (t: unknown) => typeof t === 'string' && !!t.trim()
+    if (!(ok(text) || (Array.isArray(text) && text.length === 2 && text.every(ok)))) out.push(`leadStatus ${situation} must be some text, or a pair for one and for more`)
   }
   for (const moment of VOICE_MOMENTS) {
     const lines = p.voice[moment]

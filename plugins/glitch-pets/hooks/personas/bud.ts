@@ -147,7 +147,7 @@ const bud: Persona = {
     investigating: 'sniffing out {who}',
     joy: '{who} did it!',
     allDone: "whole pack's done!",
-    someFailed: '{d} done, {f} need help',
+    someFailed: ['{d} done, {f} needs help', '{d} done, {f} need help'],
   },
   hatAnchor: { x: 7, y: 0 },
   laptopPaw: 'b',

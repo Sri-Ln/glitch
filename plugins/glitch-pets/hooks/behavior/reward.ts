@@ -4,7 +4,8 @@
 // It is ONE Svg laid over the pane for the moment (REWARD_MS), animated inside itself with SMIL,
 // so it never depends on the pane's redraws: the markup is the same on every redraw (it starts
 // when the surface first shows it). Its static rendering, on a surface that ignores SMIL, is the
-// end state: the lead with its rod put away and the gift by the receiver, no line. Reduced motion
+// end state: the lead with its rod put away and the gift by the receiver, no line. Within one moment the
+// markup never changes; the next moment's differs (data-moment). Reduced motion
 // draws exactly that. The overlay draws the lead itself, so while it is up the pane leaves out its
 // own lead sprite.
 import type { Persona, Frame, Sprite } from './types'
@@ -110,7 +111,8 @@ export function rewardOverlay(i: RewardInput): RewardOverlay | null {
   const lead = (frame: Frame) => rects(pal, frame, lx, ly, px)
   const endState = `<g>${i.reducedMotion ? '' : hiddenUntil(t.stow)}${lead(p.rod.stowed)}</g>`
   const giftEnd = (anim: string) => `<g>${anim}${rects(pal, GIFT, gx, gy, gpx)}</g>`
-  const open = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" shape-rendering="crispEdges">`
+  // data-moment is inert: it keys the markup to this moment, so back-to-back moments differ and the second plays from its start.
+  const open = `<svg xmlns="http://www.w3.org/2000/svg" data-moment="${i.startedAt}" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" shape-rendering="crispEdges">`
   if (i.reducedMotion) return { svg: `${open}${endState}${giftEnd('')}</svg>`, width, height, top, left }
 
   const line = i.lineColor ?? '#8a90a8'

@@ -4,6 +4,7 @@
 // each plays at least a second, the latest event wins the waiting slot, and events of the
 // same kind collapse into the one playing. The waiting slot is resolved lazily from the
 // clock, so nothing needs a timer: every reader asks "as of now".
+import type { Reaction, Reactions } from '../../types'
 import type { CrewRow, CrewState } from './crew'
 
 export const JOY_MS = 2500
@@ -18,23 +19,9 @@ export const REWARD_MS = 4000
 const GIFT_FORGET_MS = 6 * 3600_000
 
 export type CrewEvent = { kind: 'done' | 'failed'; id: string; name: string; at: number }
-export type ReactionKind = 'joy' | 'worry'
-export type Reaction = { kind: ReactionKind; who: string[]; startedAt: number; until: number }
-
-export type Reactions = {
-  current: Reaction | null
-  /** Arrived while `current` was in its first second; it takes over when that second is up. */
-  pending: { kind: ReactionKind; who: string[]; at: number } | null
-  /** The latest failure (clock ms, 0 for none), its row and name: investigating reads them. */
-  lastFailAt: number
-  failId: string | null
-  failWho: string | null
-  /** The fishing-rod reward playing now (one at a time), and the next one waiting (the latest finish wins). */
-  reward: { rowId: string; startedAt: number } | null
-  rewardNext: { rowId: string; at: number } | null
-  /** Rows that finished (id → clock ms): each keeps a gift badge once its reward has played. */
-  gifts: Record<string, number>
-}
+// The state's shape is the contract's (types/index.d.ts), the single source.
+export type { Reaction, Reactions }
+export type ReactionKind = Reaction['kind']
 
 export const INITIAL_REACTIONS: Reactions = { current: null, pending: null, lastFailAt: 0, failId: null, failWho: null, reward: null, rewardNext: null, gifts: {} }
 

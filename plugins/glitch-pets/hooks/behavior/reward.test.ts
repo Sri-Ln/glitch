@@ -47,6 +47,15 @@ test('one Svg for the whole moment: the same markup on every redraw, gone once i
   expect(rewardOverlay(input({ receiverIndex: -1 }))).toBe(null)
 })
 
+test('back-to-back moments differ in markup (keyed by their start), so a surface restarts the second one', () => {
+  const a = rewardOverlay(input())!.svg
+  const b = rewardOverlay(input({ startedAt: T + REWARD_MS, now: T + REWARD_MS + 10 }))!.svg
+  expect(a).toContain(`data-moment="${T}"`)
+  expect(b).toContain(`data-moment="${T + REWARD_MS}"`)
+  expect(a).not.toBe(b)
+  expect(rewardOverlay(input({ reducedMotion: true }))!.svg).toContain(`data-moment="${T}"`)
+})
+
 test('it sits over the lead and reaches down past the receiver, in the pane coordinates given', () => {
   const o = rewardOverlay(input())!
   expect(o.left).toBe(12)
