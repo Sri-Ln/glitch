@@ -149,12 +149,6 @@ export function shares(rows: readonly CrewRow[], crewCost: number): Record<strin
   return Object.fromEntries(rows.map(r => [r.id, round(total > 0 ? (crewCost * r.weight) / total : crewCost / Math.max(1, rows.length))]))
 }
 
-export function progressOf(row: CrewRow, rows: readonly CrewRow[]): number {
-  if (row.status !== 'running') return 1
-  const most = Math.max(0, ...rows.filter(r => r.status === 'done' && r.role !== 'reviewer').map(r => r.tools))
-  return most > 0 ? Math.min(0.95, row.tools / most) : 0.5
-}
-
 /** The crew's elapsed time: up to now while a row runs, else up to the last row's end. */
 export function elapsedOf(s: CrewState, now: number): number {
   if (s.startedAt === null) return 0

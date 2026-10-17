@@ -911,3 +911,16 @@ test('a press on the crew pill is taken quietly (glitch-pets opens its pane)', a
   expect(toasts).toEqual([])
   await ui.unmount()
 })
+
+test('the crew pill names failed crew members', async ($, on) => {
+  withCrew(on, { running: 1, done: 2, failed: 1, cost: 0.4, elapsedMs: 65_000 })
+  await session($, on)
+  await turn($, 0.1)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(200) })
+    const pill = await ui.find({ key: 'glitch-crew' })
+    if (surface === 'desktop') expect(pill?.text).toBe('Crew · 1 at work · 2 done · 1 failed · ≈$0.40 · 1:05')
+    else expect(pill).toBeFalsy()
+    await ui.unmount()
+  }
+})

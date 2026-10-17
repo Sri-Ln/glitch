@@ -44,11 +44,18 @@ export type CrewActions = {
 type Ctor = (p: never) => RenderNode
 type El = { Box: Ctor; Text: Ctor; Button: Ctor; Svg: Ctor | null }
 
-/** Fill colors of the progress pill and the group bars (images do not follow the theme). */
+/**
+ * Fill colors of the progress pill and the group bars: mid shades that read on light
+ * and dark (an image cannot follow the theme), over a translucent track. The pill's
+ * words are theme text beside it, never drawn into the image.
+ */
 export const PILL_COLOR = { running: '#2f7cf6', done: '#1f9d55', failed: '#d64040' } as const
-const PILL_TRACK = '#e6e8ef'
-const PILL_TEXT = '#1b1d24'
-const PILL_HEIGHT = 16
+const TRACK = '#808080'
+const PILL_HEIGHT = 8
+/** Under this many body cells the terminal rows drop the tokens, the effort and the bar glyphs; */
+export const NARROW_COLUMNS = 70
+/** under this many, the model too (the desktop-sized dock, about 40 cells). */
+export const TIGHT_COLUMNS = 56
 /** A translucent grey, so the hover and chip fills read on light and dark. */
 const HOVER_BG = '#80808024'
 const CHIP_BG = '#80808018'
@@ -80,7 +87,7 @@ export function pillLabel(m: CrewMember): string {
 const fractionOf = (m: CrewMember): number =>
   m.row.status !== 'running' ? 1 : m.steps ? clamp(m.steps.n / m.steps.of, 0, 1) : 0.5
 
-/** The progress pill: a rounded track, a fill in the status color, the words centered. */
+/** The progress pill's bar: a translucent rounded track and a fill in the status color. */
 export function pillSvg(m: CrewMember, width: number): Sprite {
   const label = pillLabel(m)
   const color = PILL_COLOR[m.row.status]
@@ -88,11 +95,10 @@ export function pillSvg(m: CrewMember, width: number): Sprite {
   const fill = Math.round(fractionOf(m) * width)
   const source =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${PILL_HEIGHT}" viewBox="0 0 ${width} ${PILL_HEIGHT}">` +
-    `<rect width="${width}" height="${PILL_HEIGHT}" rx="${r}" fill="${PILL_TRACK}"/>` +
-    (fill > 0 ? `<rect width="${Math.max(PILL_HEIGHT, fill)}" height="${PILL_HEIGHT}" rx="${r}" fill="${color}" fill-opacity="0.55"/>` : '') +
-    `<text x="${width / 2}" y="11.5" text-anchor="middle" font-family="ui-monospace, Consolas, monospace" font-size="10.5" font-weight="600" fill="${PILL_TEXT}">${esc(label)}</text>` +
+    `<rect width="${width}" height="${PILL_HEIGHT}" rx="${r}" fill="${TRACK}" fill-opacity="0.25"/>` +
+    (fill > 0 ? `<rect width="${Math.max(PILL_HEIGHT, fill)}" height="${PILL_HEIGHT}" rx="${r}" fill="${color}" fill-opacity="0.85"/>` : '') +
     `</svg>`
-  return { source, alt: label, width, height: PILL_HEIGHT }
+  return { source, alt: esc(label), width, height: PILL_HEIGHT }
 }
 
 /** A group header's thin bar: running members in blue, or completed green then failed red. */
@@ -105,7 +111,7 @@ function groupBarSvg(parts: { share: number; color: string }[], width: number, a
     return s
   })
   return {
-    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="4" viewBox="0 0 ${width} 4"><rect width="${width}" height="4" rx="2" fill="#80808040"/>${fills.join('')}</svg>`,
+    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="4" viewBox="0 0 ${width} 4"><rect width="${width}" height="4" rx="2" fill="${TRACK}" fill-opacity="0.25"/>${fills.join('')}</svg>`,
     alt,
     width,
     height: 4,
@@ -131,13 +137,19 @@ function terminalTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   const done = finished.filter(m => m.row.status === 'done').length
   const failed = finished.length - done
   const shown = [...running, ...(v.open.finished ? finished : [])]
-  const nameW = Math.max(4, ...shown.map(m => nameOf(m.row).length))
-  const modelW = Math.max(4, ...shown.map(m => modelEffort(m.row, ' ').length))
-  const tokW = Math.max(5, ...shown.map(m => `${k(m.row.tokens)} tok`.length))
-  const costW = Math.max(6, ...shown.map(m => usd(m.cost).length))
-  const progress = (m: CrewMember) => {
+  // A narrow body (a desktop-sized dock) keeps the status, name, task, model, cost,
+  // time and the step count; the token column and the bar glyphs go.
+  const narrow = v.bodyColumns < NARROW_COLUMNS
+  const tight = v.bodyColumns < TIGHT_COLUMNS
+  const nameW = Math.min(tight ? 10 : narrow ? 12 : 16, Math.max(4, ...shown.map(m => nameOf(m.row).length)))
+  const modelW = Math.min(narrow ? 10 : 18, Math.max(4, ...shown.map(m => (narrow ? shortModel(m.row.model) : modelEffort(m.row, ' ')).length)))
+  const tokW = Math.max(3, ...shown.map(m => k(m.row.tokens).length))
+  const costW = Math.max(5, ...shown.map(m => usd(m.cost).length))
+  const progW = Math.max(4, ...shown.map(m => progress(m).length))
+  function progress(m: CrewMember): string {
     if (m.row.status !== 'running') return m.row.status === 'done' ? 'done' : 'failed'
     if (!m.steps) return `${m.row.tools} steps`
+    if (narrow) return `${m.steps.n}/${m.steps.of}`
     const f = Math.round(fractionOf(m) * 8)
     return `${'█'.repeat(f)}${'░'.repeat(8 - f)} ${m.steps.n}/${m.steps.of}`
   }
@@ -146,35 +158,39 @@ function terminalTree(v: CrewView, el: El, act: CrewActions): RenderElement {
       <B width={1} flexShrink={0}>
         <T color={statusColor(m.row)}>{glyph(m.row)}</T>
       </B>
-      <B width={nameW} flexShrink={0}>
+      <B width={nameW} flexShrink={0} overflow="hidden">
         <Btn key={`crew-open:${m.row.id}`} plain label={nameOf(m.row)} onPress={() => act.view(m.row.id)} />
       </B>
       <B flexGrow={1} flexShrink={1} minWidth={0}>
         <T wrap="truncate-end">{m.row.description}</T>
       </B>
-      <B width={modelW} flexShrink={0} flexDirection="row" columnGap={1}>
-        <T>{shortModel(m.row.model)}</T>
-        {m.row.effort ? <T dimColor>{m.row.effort}</T> : null}
-      </B>
-      <B width={tokW} flexShrink={0} justifyContent="flex-end">
-        <T>{`${k(m.row.tokens)} tok`}</T>
-      </B>
+      {tight ? null : (
+        <B width={modelW} flexShrink={0} flexDirection="row" columnGap={1} overflow="hidden">
+          <T wrap="truncate-end">{shortModel(m.row.model)}</T>
+          {m.row.effort && !narrow ? <T dimColor>{m.row.effort}</T> : null}
+        </B>
+      )}
+      {narrow ? null : (
+        <B key={`crew-tok:${m.row.id}`} width={tokW} flexShrink={0} justifyContent="flex-end">
+          <T>{k(m.row.tokens)}</T>
+        </B>
+      )}
       <B width={costW} flexShrink={0} justifyContent="flex-end">
         <T>{usd(m.cost)}</T>
       </B>
       <B width={5} flexShrink={0} justifyContent="flex-end">
         <T dimColor>{tookOf(m.row, v.now)}</T>
       </B>
-      <B flexShrink={0}>
+      <B width={progW} flexShrink={0}>
         <T color={statusColor(m.row)}>{progress(m)}</T>
       </B>
     </B>
   )
-  const head = `Crew · ${running.length} running · ${done} done${failed ? ` · ${failed} failed` : ''} · ${usd(v.header.cost)} · ${k(v.header.tokens)} tok · ${clock(v.header.elapsedMs)}`
+  const head = `Crew · ${running.length} running · ${done} done${failed ? ` · ${failed} failed` : ''} · ${usd(v.header.cost)}${narrow ? '' : ` · ${k(v.header.tokens)} tok`} · ${clock(v.header.elapsedMs)}`
   return (
     <B flexDirection="column">
       <B key="crew-head">
-        <T bold>{head}</T>
+        <T bold wrap="truncate-end">{head}</T>
       </B>
       <B key="crew-lead">
         <T dimColor wrap="truncate-end">{`${v.lead.name} · ${v.lead.status}`}</T>
@@ -203,7 +219,7 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   const done = finished.filter(m => m.row.status === 'done').length
   const failed = finished.length - done
   // Images sized to the body: the pill beside a 24 px sprite, the bar beside a header.
-  const pillPx = clamp((v.bodyColumns - 8) * CELL_PX, 100, 320)
+  const pillPx = clamp((v.bodyColumns - 20) * CELL_PX, 80, 260)
   const barPx = clamp((v.bodyColumns - 18) * CELL_PX, 40, 220)
   const img = (s: Sprite) => (S ? <S source={s.source} alt={s.alt} width={s.width} height={s.height} /> : null)
   const chip = (text: string, dim = false) => (
@@ -233,7 +249,14 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
             <T dimColor>{tookOf(m.row, v.now)}</T>
           </B>
           <T wrap="truncate-end">{m.row.description}</T>
-          {img(pillSvg(m, pillPx))}
+          <B flexDirection="row" columnGap={1} alignItems="center">
+            {img(pillSvg(m, pillPx))}
+            <B key={`crew-pill-label:${id}`} flexShrink={0}>
+              <T color={statusColor(m.row)} bold>
+                {pillLabel(m)}
+              </T>
+            </B>
+          </B>
           <B key={`crew-chips:${id}`} flexDirection="row" flexWrap="nowrap" columnGap={1} overflow="hidden">
             {chip(modelEffort(m.row, ' · '))}
             {chip(`${k(m.row.tokens)} tok`, true)}
@@ -259,16 +282,23 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
           )
     return (
       <B key={`crew-acc-wrap:${kind}`} flexDirection="column" rowGap={1}>
-        <B key={`crew-acc-box:${kind}`} flexDirection="row" alignItems="center" columnGap={1} paddingX={1} hover={{ backgroundColor: HOVER_BG }}>
+        <B key={`crew-acc-box:${kind}`} flexDirection="row" alignItems="center" columnGap={1} paddingX={1} borderStyle="round" borderDimColor hover={{ backgroundColor: HOVER_BG }}>
+          {/* A static dot: a pulse would need an interactive Svg. */}
+          {kind === 'running' ? (
+            <B key="crew-live" flexShrink={0}>
+              <T color="suggestion">●</T>
+            </B>
+          ) : null}
           <Btn key={`crew-acc:${kind}`} plain onPress={() => act.toggle(kind)}>
             <T color={kind === 'running' ? 'suggestion' : undefined} dimColor={kind === 'finished'} bold>
-              {`${open ? '▾' : '▸'} ${kind === 'running' ? 'Running' : 'Finished'}`}
+              {kind === 'running' ? 'RUNNING' : 'FINISHED'}
             </T>
             <T bold>{` ${items.length}`}</T>
           </Btn>
           <B flexGrow={1} flexShrink={1} minWidth={0}>
             {img(bar)}
           </B>
+          <Btn key={`crew-acc-chev:${kind}`} plain dimColor label={open ? '▾' : '▸'} onPress={() => act.toggle(kind)} />
         </B>
         {kind === 'finished' ? (
           <B key="crew-tally" flexDirection="row" columnGap={1} paddingX={1}>

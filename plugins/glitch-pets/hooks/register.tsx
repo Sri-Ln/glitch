@@ -42,9 +42,13 @@ const PANE = 'glitch-crew'
 const PANE_PIXEL = 1.5
 /** The lead draws at 2×: 32 × 26. */
 const LEAD_PIXEL = 2
-/** The dock the pane asks for (about 300 px on the desktop), and its inline height. */
-const PANE_COLUMNS = 40
-const PANE_ROWS = 10
+/**
+ * The room the pane asks for, by where it will show: a narrow dock (about 300 px) and
+ * room inline for the lead and about three members on the rich surfaces; a dock wide
+ * enough for the aligned rows and a few lines inline on the terminal.
+ */
+const PANE_SIZE = { rich: { columns: 40, rows: 24 }, terminal: { columns: 90, rows: 10 } } as const
+type PaneSize = (typeof PANE_SIZE)[keyof typeof PANE_SIZE]
 /** glitch-hud's crew pill in its band: a press on it opens or closes the pane. */
 const HUD_PILL = 'glitch-crew'
 /** Helpers' statuses are asked every this many ticks (1 s). */
@@ -143,22 +147,41 @@ async function refreshCrew($: EngineInterface) {
   else await say($, 'crewDone')
 }
 
-async function toggleCrew($: EngineInterface): Promise<string> {
+// With no surface named (auto-open), a session the desktop or a phone draws gets the
+// narrow dock; a terminal-only one the wide dock.
+async function sessionSize($: EngineInterface): Promise<PaneSize> {
+  const surfaces = await $.session.surfaces().catch(() => [] as const)
+  return surfaces.some(s => s !== 'terminal') ? PANE_SIZE.rich : PANE_SIZE.terminal
+}
+
+async function toggleCrew($: EngineInterface, size: PaneSize): Promise<string> {
   const isOpen = (await $.ui.panes().catch(() => [])).some(x => x.id === PANE)
   if (isOpen) {
     await $.ui.close({ id: PANE })
     return 'Crew pane closed.'
   }
-  await $.ui.open({ id: PANE, title: 'Crew', columns: PANE_COLUMNS, rows: PANE_ROWS })
+  await $.ui.open({ id: PANE, title: 'Crew', columns: size.columns, rows: size.rows })
   return 'Crew pane opened.'
 }
 
-// The figures glitch-hud's crew pill shows, written only when they change.
-async function publishSummary($: EngineInterface, total: number) {
-  const now = await $.clock.now()
+// A command typed in a fullscreen terminal docks beside its transcript there; else as the session.
+async function commandSize($: EngineInterface, e: { origin: { kind: string }; presentation?: { isFullscreen?: boolean } }): Promise<PaneSize> {
+  return e.presentation?.isFullscreen === true && e.origin.kind === 'composer' ? PANE_SIZE.terminal : await sessionSize($)
+}
+
+// The crew's share of the session cost: one source for the pane and the HUD pill.
+async function crewCostOf($: EngineInterface, c: CrewState): Promise<number> {
+  const usdNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? c.costAtStart
+  return Math.max(0, usdNow - c.costAtStart)
+}
+
+// The figures glitch-hud's crew pill shows, written only when they change. No crew, no reads.
+async function publishSummary($: EngineInterface) {
   const c = await read($, crew)
-  const next = crewSummaryOf(c, total - c.costAtStart, now)
   const before = await read($, crewSummary)
+  if (c.rows.length === 0 && before === null) return
+  const now = await $.clock.now()
+  const next = crewSummaryOf(c, c.rows.length ? await crewCostOf($, c) : 0, now)
   if (JSON.stringify(before) !== JSON.stringify(next)) await update($, crewSummary, () => next)
 }
 
@@ -192,8 +215,7 @@ async function tick($: EngineInterface) {
   ticks += 1
   if (ticks % STATUS_TICKS === 0) {
     await refreshCrew($)
-    const total = ((await hudStats($)) as { total?: number } | null)?.total
-    await publishSummary($, typeof total === 'number' ? total : (await read($, crew)).costAtStart)
+    await publishSummary($)
   }
   const p = personaFor((await read($, view)).petId)
   if (!p) {
@@ -438,7 +460,8 @@ export const register: Register = (on, options) => {
         return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, model: r.model, now, costNow })
       })
       if (fresh && config.crewPane === 'auto' && !(await $.ui.panes().catch(() => [])).some(x => x.id === PANE)) {
-        await $.ui.open({ id: PANE, title: 'Crew', columns: PANE_COLUMNS, rows: PANE_ROWS }).catch(() => undefined)
+        const size = await sessionSize($)
+        await $.ui.open({ id: PANE, title: 'Crew', columns: size.columns, rows: size.rows }).catch(() => undefined)
       }
     } catch {
       // The pane misses this helper.
@@ -468,8 +491,7 @@ export const register: Register = (on, options) => {
       const now = await $.clock.now()
       const p = personaFor((await read($, view)).petId)
       const m = await read($, mood)
-      const usdNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? c.costAtStart
-      const crewCost = Math.max(0, usdNow - c.costAtStart)
+      const crewCost = await crewCostOf($, c)
       const cost = shares(c.rows, crewCost)
       const isTerminal = e.surface === 'terminal'
       const o = await read($, crewOpen)
@@ -491,8 +513,13 @@ export const register: Register = (on, options) => {
       }
       // Shows that member's transcript in the main view (only from the person's press).
       const show = async (agentId: string) => {
-        const r = await $.ui.view({ agentId }).catch(() => null)
-        if (r?.deny) $.ui.toast(`Glitch pets: ${r.deny}`, { timeoutMs: 6000 })
+        let why: string | null = null
+        try {
+          why = (await $.ui.view({ agentId })).deny ?? null
+        } catch (err) {
+          why = `could not show that crew member (${err instanceof Error ? err.message : String(err)})`
+        }
+        if (why) $.ui.toast(`Glitch pets: ${why}`, { timeoutMs: 6000 })
       }
       return crewTree(v, { Box, Text, Button, Svg: 'Svg' in ui ? ui.Svg : null } as never, { toggle, view: show })
     } catch {
@@ -502,22 +529,22 @@ export const register: Register = (on, options) => {
 
   // A press on glitch-hud's crew pill (it draws the pill from crewSummary): the pane
   // opens or closes here, behind the person's press.
-  on('ui.press', async ($, e, next) => {
+  on('ui.press', { plugin: 'glitch-hud', element: HUD_PILL }, async ($, e, next) => {
     const r = await next(e)
-    if (e.plugin === 'glitch-hud' && e.element === HUD_PILL) await toggleCrew($).catch(() => undefined)
+    await toggleCrew($, e.surface === 'terminal' ? PANE_SIZE.terminal : PANE_SIZE.rich).catch(() => undefined)
     return r
   })
 
   on('command.run', { command: 'glitch-pets' }, async ($, e) => {
     const themeArg = crewThemeArgOf(e.args) // crew themes (#41)
     if (themeArg !== null) return { text: await answerCrewTheme($, themeArg) }
-    return { text: firstWord(e.args) === 'crew' ? await toggleCrew($) : await answerPets($, petArgsOf('glitch-pets', e.args)) }
+    return { text: firstWord(e.args) === 'crew' ? await toggleCrew($, await commandSize($, e)) : await answerPets($, petArgsOf('glitch-pets', e.args)) }
   })
   on('command.run', { command: 'glitch' }, async ($, e, next) => {
     const word = firstWord(e.args)
     if (!ROUTED_PETS.includes(word)) return next(e)
     const themeArg = crewThemeArgOf(e.args) // crew themes (#41)
     if (themeArg !== null) return { text: await answerCrewTheme($, themeArg) }
-    return { text: word === 'crew' ? await toggleCrew($) : await answerPets($, petArgsOf('glitch', e.args)) }
+    return { text: word === 'crew' ? await toggleCrew($, await commandSize($, e)) : await answerPets($, petArgsOf('glitch', e.args)) }
   })
 }
