@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path'
 import { MOOD_IDS } from '../hooks/behavior/types.ts'
 import { frameSvg } from '../hooks/behavior/player.ts'
 import { withLaptop } from '../hooks/behavior/laptop.ts'
+import { withHat } from '../hooks/behavior/hats.ts'
 
 const IDS = ['screenhead', 'blob', 'pixel', 'dot', 'fork', 'bud']
 const personas = []
@@ -29,15 +30,28 @@ const cell = (p, mood) => {
 const rows = personas
   .map(p => `<tr><th>${p.name}<br><small>${p.temperament}</small></th>${MOOD_IDS.map(m => cell(p, m)).join('')}</tr>`)
   .join('\n')
+const ROLES = ['builder', 'researcher', 'designer', 'tester', 'reviewer', 'other']
+const TIERS = ['light', 'medium', 'heavy']
+const hatCell = (p, role) => {
+  const base = p.moods.idle.frames[0]
+  const hats = TIERS.map(tier => {
+    const { frame, palette } = withHat(base, p.hatAnchor, role, tier)
+    return `<div class="hat">${frameSvg({ ...p.palette, ...palette }, frame, 4)}<div class="cap">${role} · ${tier}</div></div>`
+  })
+  return `<td>${hats.join('')}</td>`
+}
+const hatRows = personas.map(p => `<tr><th>${p.name}</th>${ROLES.map(r => hatCell(p, r)).join('')}</tr>`).join('\n')
 const html = `<!doctype html><meta charset="utf-8"><title>Glitch pets gallery</title>
 <style>
 body{font:13px system-ui;margin:16px;background:#14161f;color:#e8ebff}
 body.light{background:#f0f0f0;color:#222}
 table{border-collapse:collapse}td,th{padding:8px;border:1px solid #333;text-align:center;vertical-align:bottom}
-th{text-align:left;max-width:160px}small{opacity:.7;font-weight:normal}.cap{font-size:11px;opacity:.7}
+th{text-align:left;max-width:160px}.hat{display:inline-block;margin:0 4px}small{opacity:.7;font-weight:normal}.cap{font-size:11px;opacity:.7}
 </style>
 <button onclick="document.body.classList.toggle('light')">dark / light</button>
 <table><tr><th></th>${MOOD_IDS.map(m => `<th>${m}</th>`).join('')}</tr>${rows}</table>
+<h2>Crew hats</h2>
+<table><tr><th></th>${ROLES.map(r => `<th>${r}</th>`).join('')}</tr>${hatRows}</table>
 <script>
 for (const a of document.querySelectorAll('.anim')) {
   const s = [...a.children]; let i = 0

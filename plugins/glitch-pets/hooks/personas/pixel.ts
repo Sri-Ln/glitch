@@ -106,7 +106,7 @@ const pixel: Persona = {
     reviewing: { frames: [0, 1, 0, 1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
   },
-  hatAnchor: { x: 6, y: 3 },
+  hatAnchor: { x: 6, y: 4 },
   laptopPaw: 'v',
   voice: {
     happy: ['Done. Obviously.', 'Finished. You may admire me.', 'There. Purrfect, as usual.'],
