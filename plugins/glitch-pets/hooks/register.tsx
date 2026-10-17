@@ -5,7 +5,9 @@ import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
 import { INITIAL_CREW, helpersRunning, onAgentTurnEnd, onMainTurn, onSpawn, onStatuses, onStep, onTool, progressOf, reviewerRunning, shares } from './behavior/crew'
 import type { CrewState } from './behavior/crew'
+import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
 import { withHat } from './behavior/hats'
+import { isCapReached } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
 import { createPlayer, frameSvg } from './behavior/player'
 import { STORE_STREAK, advance, asStreak } from './behavior/streak'
@@ -56,6 +58,8 @@ let ticks = 0
 /** The reviewer finished while the main turn ran: crewDone waits for the turn's end (no remark mid-turn). */
 let crewDonePending = false
 const minis = new Map<string, Sprite>()
+/** The main turn that just ended ran 2+ helpers and no reviewer: the next prompt.compose carries the reminder. */
+let reviewMissed = false
 
 // $.state.get needs a literal plugin and key, so these three cannot be merged.
 async function hudStats($: EngineInterface): Promise<unknown> {
@@ -201,6 +205,7 @@ export const register: Register = (on, options) => {
   mainTurn = 0
   ticks = 0
   crewDonePending = false
+  reviewMissed = false
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -273,6 +278,18 @@ export const register: Register = (on, options) => {
         } catch {
           // Leave the mood as it was.
         }
+        // Checked here, while the crew is still this main turn's; the next turn's
+        // turn.start moves mainTurn on, and the reminder goes out with its prompt.
+        try {
+          if (config.crewReview) {
+            await refreshCrew($)
+            const stats = (await hudStats($)) as { total?: number } | null
+            const capReached = isCapReached((await hudBudget($)) as BudgetLike | null, stats?.total ?? 0)
+            if (needsReview(await read($, crew), { enabled: true, stopHookActive: false, capReached })) reviewMissed = true
+          }
+        } catch {
+          // No reminder this time.
+        }
       } else {
         const agentId = e.agentId
         try {
@@ -296,6 +313,24 @@ export const register: Register = (on, options) => {
       await update($, crew, c => onTool(c, agentId)).catch(() => undefined)
     }
     return ran
+  })
+
+  // The standing rule, sent after the cache boundary so it never disturbs the shared prompt;
+  // and once, after a main turn that left 2+ helpers' work unreviewed, the reminder.
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    if (!config.crewReview) return composed
+    try {
+      const sections = [...composed.sections, { id: 'glitch-pets:crew', text: CREW_RULE, scope: 'session' as const }]
+      if (reviewMissed) {
+        reviewMissed = false
+        await update($, crew, c => ({ ...c, gateFired: true }))
+        sections.push({ id: 'glitch-pets:crew-missed', text: GATE_TEXT, scope: 'session' as const })
+      }
+      return { sections }
+    } catch {
+      return composed
+    }
   })
 
   // A helper joins the crew of the main turn running now; the first of a crew opens the pane (auto).
