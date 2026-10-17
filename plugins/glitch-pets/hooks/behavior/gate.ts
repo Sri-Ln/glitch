@@ -10,7 +10,8 @@ export const CREW_RULE =
 export function needsReview(s: CrewState, o: { enabled: boolean; stopHookActive: boolean; capReached: boolean }): boolean {
   if (!o.enabled || o.stopHookActive || o.capReached || s.gateFired || s.closed) return false
   if (s.rows.some(r => r.role === 'reviewer')) return false
-  const helpers = s.rows.filter(r => r.role !== 'reviewer')
+  // Only crew-named helpers (<role>-<n>, as the crew rule asks) count: an ad-hoc fan-out is not a crew.
+  const helpers = s.rows.filter(r => r.role !== 'reviewer' && r.named)
   const finished = helpers.filter(r => r.status !== 'running')
   return helpers.length >= 2 && finished.length === helpers.length
 }

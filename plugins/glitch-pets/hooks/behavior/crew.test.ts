@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onTool, progressOf, reviewerRunning, roleOf, shares, tierOf, tokenWeight } from './crew'
+import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, progressOf, reviewerRunning, roleOf, shares, tierOf, tokenWeight } from './crew'
 
 test('roleOf reads <role>-<n> names first, then the description', () => {
   expect(roleOf('builder-2', 'whatever')).toBe('builder')
@@ -148,4 +148,32 @@ test('a row missing from the list ends once past the grace, not before', () => {
   expect(onStatuses(spawn(), [], 1000 + LIST_GRACE_MS)).toMatchObject({ rows: [{ status: 'done', endedAt: 1000 + LIST_GRACE_MS }] })
   expect(onStatuses(spawn(), [], 1000 + LIST_GRACE_MS - 1).rows[0]?.status).toBe('running')
   expect(onStatuses(spawn(), [{ id: 'other', status: 'running' }], 1500).rows[0]?.status).toBe('running')
+})
+
+const U = (input: number, output: number) => ({ input_tokens: input, output_tokens: output, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 })
+
+test('a row is crew-named only by a <role>-<n> spawn name', () => {
+  expect(spawn(INITIAL_CREW, 'a1', { name: 'builder-1' }).rows[0]?.named).toBe(true)
+  expect(spawn(INITIAL_CREW, 'a1', { name: 'scout' }).rows[0]?.named).toBe(false)
+  expect(spawn().rows[0]?.named).toBe(false)
+})
+
+test('a resumed agent keeps its row: running again, its counts and start kept', () => {
+  let s = onStepUsage(onTool(spawn(INITIAL_CREW, 'a1', { name: 'builder-1' }), 'a1'), 'a1', U(10, 2))
+  s = onAgentTurnEnd(s, 'a1', U(10, 2), 2000)
+  s = onStatuses(s, [{ id: 'a1', status: 'completed' }], 2000)
+  s = spawn(s, 'a1', { now: 9000, description: 'Fix the review findings' })
+  expect(s.rows.length).toBe(1)
+  expect(s.rows[0]).toMatchObject({ status: 'running', endedAt: null, tools: 1, tokens: 12, startedAt: 1000, role: 'builder', name: 'builder-1', named: true })
+})
+
+test('step usage counts as it comes; the turn end adds only what the steps missed', () => {
+  let s = onStepUsage(onStepUsage(spawn(), 'a1', U(100, 10)), 'a1', U(50, 0))
+  expect(s.rows[0]?.tokens).toBe(160)
+  s = onAgentTurnEnd(s, 'a1', U(150, 10), 3000)
+  expect(s.rows[0]?.tokens).toBe(160)
+  expect(s.rows[0]?.weight).toBe(150 + 50)
+  // A turn whose steps were not seen still counts once, at its end.
+  s = onAgentTurnEnd(s, 'a1', U(20, 0), 4000)
+  expect(s.rows[0]?.tokens).toBe(180)
 })

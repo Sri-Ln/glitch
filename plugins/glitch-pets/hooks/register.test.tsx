@@ -234,7 +234,7 @@ const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
 
 // The engine around a crew: agents' statuses, the session's cost, what each prompt carried.
 const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
-  const h = { status: {} as Record<string, string>, listFails: false, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[] }
+  const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[] }
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
   on('prompt.submit', async (_$, e) => {
     h.contexts.push(e.context)
@@ -246,6 +246,7 @@ const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
     return { model: 'claude-opus-5-5', agentId: `ag-${e.description}` } as never
   })
   on('agent.list', () => {
+    h.listCalls += 1
     if (h.listFails) throw new Error('list refused')
     return { value: Object.entries(h.status).map(([id, status]) => ({ id, description: id, type: 'general-purpose', status })) } as never
   })
@@ -257,7 +258,7 @@ const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd: h.usd } } }) as never)
   on('tool.call', () => ({ result: 'ok' }) as never)
   on('turn.step', async function* () {
-    return { turnId: 's', index: 0, answer: '', toolUses: [] } as never
+    return { turnId: 's', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: h.step } as never
   })
   const clock = await session($, on)
   return { h, clock }
@@ -423,13 +424,16 @@ test('a helper that leaves the list ends after the grace; a failed list call end
   expect(await paneText($, 'terminal')).not.toContain('A ✓')
   h.listFails = false
   await clock.advance(1000)
-  expect(await paneText($, 'terminal')).toContain('A ✓')
+  expect(await paneText($, 'terminal')).toContain('1 done, 0 failed')
   // Ended: the next quiet turn closes the crew and the 1 s crew writes stop.
   await mainStart($, 'm2')
   await mainEnd($, 'm2')
   writes.length = 0
+  h.listCalls = 0
   await clock.advance(3000)
   expect(writes.filter(k => k === 'crew')).toEqual([])
+  // Nothing runs: the per-second status call is skipped too.
+  expect(h.listCalls).toBe(0)
   await mainStart($, 'm3')
   await spawnHelper($, 'B', 'B', 'builder-1')
   expect(await paneText($, 'terminal')).not.toContain('A ✓')
@@ -462,4 +466,109 @@ test('two prompts at once carry the reminder once', async ($, on) => {
   expect(h.contexts.filter(c => c?.length).length).toBe(1)
   await submit($)
   expect(h.contexts.filter(c => c?.length).length).toBe(1)
+})
+
+const runStep = async ($: Engine, agentId: string) => {
+  const stream = ($.turn.step as unknown as (e: object) => AsyncGenerator<unknown, unknown>)({ turnId: 's', index: 0, model: 'claude-opus-5-5', messageCount: 1, agentId })
+  while (!(await stream.next()).done) {
+    // Read the stream to its end.
+  }
+}
+
+test('an aborted main turn skips the review check, and the crew is not reminded later', async ($, on) => {
+  const { h } = await backgroundCrew($, on)
+  await $.turn.complete({ turnId: 'm3', reason: 'aborted', answer: '', durationMs: 1, isAborted: true } as never)
+  await submit($)
+  await mainStart($, 'm4')
+  await mainEnd($, 'm4')
+  await submit($)
+  expect(h.contexts).toEqual([undefined, undefined])
+})
+
+test('a helper\'s own sub-spawn and a workflow agent join no crew', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await $.agent.spawn({ tool_use_id: 'tu-1', prompt: 'p', description: 'Sub', subagentType: 'general-purpose', name: 'builder-1', parentAgentId: 'ag-X' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-2', prompt: 'p', description: 'Flow', subagentType: 'general-purpose', name: 'builder-2', workflow: { runId: 'wf_1', agentIndex: 1 } } as never)
+  expect(await paneText($, 'terminal')).toContain('No crew yet')
+  expect(h.opened).toEqual([])
+})
+
+// Another plugin's own spawn (here from its command).
+const OTHER = {
+  name: 'other',
+  register: ((on: On) => {
+    on('command.run', { command: 'other' }, async $ => {
+      await $.agent.spawn({ tool_use_id: 'tu-o', prompt: 'p', description: 'Theirs', subagentType: 'general-purpose', name: 'builder-1' } as never)
+      return { text: 'ok' }
+    })
+  }) as never,
+}
+
+test('a spawn another plugin makes joins no crew', { plugins: [OTHER] }, async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await $.command.run({ command: 'other', args: '' } as never)
+  expect(await paneText($, 'terminal')).toContain('No crew yet')
+  expect(h.opened).toEqual([])
+})
+
+test('a resumed helper is running again in its own row', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'A', 'builder-1')
+  await spawnHelper($, 'B', 'B', 'builder-2')
+  h.status['ag-A'] = 'completed'
+  await agentEnd($, 'ag-A')
+  h.status['ag-A'] = 'running'
+  await $.agent.spawn({ tool_use_id: 'tu-r', prompt: 'fix it', description: 'A', subagentType: 'general-purpose', resume: { agentId: 'ag-A' } } as never)
+  const text = await paneText($, 'terminal')
+  expect(text).toContain('Running · 2')
+  expect(text).not.toContain('A ✓')
+  expect(text).not.toContain('Finished')
+})
+
+test('a running helper shows its tokens from its steps, counted once at its end', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'A', 'builder-1')
+  await spawnHelper($, 'B', 'B', 'builder-2')
+  h.step = { input_tokens: 1000, output_tokens: 200, cache_creation_input_tokens: 0, cache_read_input_tokens: 300, model: 'claude-opus-5-5' }
+  await runStep($, 'ag-A')
+  await runStep($, 'ag-A')
+  expect(await paneText($, 'terminal')).toContain('3k tok')
+  await $.turn.complete({ turnId: 's-A', agentId: 'ag-A', reason: 'answer', answer: '', durationMs: 1, isAborted: false, usage: { input_tokens: 2000, output_tokens: 400, cache_creation_input_tokens: 0, cache_read_input_tokens: 600, model: 'claude-opus-5-5' } } as never)
+  const text = await paneText($, 'terminal')
+  expect(text).toContain('≈$0.00 · 3k tok')
+  expect(text).not.toContain('6k tok')
+})
+
+test('unnamed helpers (an ad-hoc fan-out) show in the pane but get no reminder', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'E1', 'Explore the hooks')
+  await spawnHelper($, 'E2', 'Explore the tests')
+  h.status['ag-Explore the hooks'] = 'completed'
+  h.status['ag-Explore the tests'] = 'completed'
+  await mainEnd($, 'm1')
+  await submit($)
+  expect(h.contexts).toEqual([undefined])
+  expect(await paneText($, 'terminal')).toContain('2 done, 0 failed')
+})
+
+test('a reviewer that joins before the reminder goes out drops it', async ($, on) => {
+  const { h } = await backgroundCrew($, on)
+  await mainEnd($, 'm3')
+  await spawnHelper($, 'R', 'R', 'reviewer-1')
+  await submit($)
+  await submit($)
+  expect(h.contexts).toEqual([undefined, undefined])
+})
+
+test('once nothing runs the finished helpers fold to one line', async ($, on) => {
+  await backgroundCrew($, on)
+  await mainEnd($, 'm3')
+  const text = await paneText($, 'terminal')
+  expect(text).toContain('2 done, 0 failed')
+  expect(text).not.toContain('A ✓')
 })

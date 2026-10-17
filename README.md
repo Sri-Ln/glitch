@@ -103,6 +103,7 @@ Crew                                         ≈$0.28 · 293k tok · 0:46
 - **Role, shown by the hat:** builder (hard hat), researcher (explorer hat), designer (beret), tester (goggles), other (cap). The role comes from the helper's name (`builder-1`, `researcher-2`, …), or failing that from the words in its task. The reviewer is your pet itself.
 - **Tier, shown by the hat color:** light (green) for a Haiku model or low effort; heavy (red) for Opus at high, xhigh or max effort; medium (blue) for everything else.
 - **≈cost** is an estimate. The session's own cost is split across the helpers by how many tokens each used.
+- Once every helper is done, the finished list folds to one line (`3 done, 0 failed`).
 - In the terminal there are no sprites: each row shows the role and tier as words instead.
 - `/glitch crew` (or `/glitch-pets crew`) opens or closes the pane. With `crewPane: auto` it opens by itself when the first helper starts.
 
@@ -113,7 +114,7 @@ The `crew` skill is the workflow Claude follows when work splits into 2 or more 
 3. **Review:** one reviewer checks the whole result against the plan.
 4. **Fix loop:** each finding goes back to the helper that did that part, then it is reviewed again, at most 2 rounds. Whatever is still open is reported plainly.
 
-A standing system-prompt rule asks for this. If 2 or more helpers finish with no reviewer, Claude gets a one-time reminder on its next turn to run the review.
+A standing system-prompt rule asks for this. If 2 or more crew helpers (named `builder-1`, `researcher-2` and so on) finish with no reviewer, Claude gets a one-time reminder on its next turn to run the review.
 
 | Setting | Default | Meaning |
 |---|---|---|

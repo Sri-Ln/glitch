@@ -4,7 +4,7 @@ import { PET_IDS } from './behavior/types'
 
 export const ROUTED_PETS = ['pet', 'crew']
 export const STORE_PET = 'pet'
-export const PETS_USAGE = 'Glitch pets: /glitch pet [name | off] · crew'
+export const PETS_USAGE = 'Glitch pets: /glitch-pets [name | off] · crew (also /glitch pet, /glitch crew)'
 
 export type PetArg = { kind: 'show' } | { kind: 'off' } | { kind: 'pick'; id: PetId } | { kind: 'unknown'; name: string }
 

@@ -39,6 +39,8 @@ export type Tier = 'light' | 'medium' | 'heavy'
 export type CrewRow = {
   id: string
   name?: string
+  /** Spawned under a crew name (`<role>-<n>`): only these count for the review reminder. */
+  named: boolean
   description: string
   role: Role
   tier: Tier
@@ -47,6 +49,9 @@ export type CrewRow = {
   tokens: number
   /** Price-shaped token weight, for sharing the crew's cost. */
   weight: number
+  /** Tokens and weight its steps reported in its current turn, so the turn's own sum counts them once. */
+  turnTokens: number
+  turnWeight: number
   tools: number
   startedAt: number
   endedAt: number | null

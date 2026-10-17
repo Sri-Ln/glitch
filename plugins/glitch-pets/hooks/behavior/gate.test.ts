@@ -4,8 +4,8 @@ import { needsReview } from './gate'
 import type { CrewRow, CrewState } from './crew'
 import { INITIAL_CREW } from './crew'
 
-const row = (id: string, role: CrewRow['role'], status: CrewRow['status']): CrewRow =>
-  ({ id, role, status, description: id, tier: 'medium', model: null, effort: null, tokens: 0, weight: 0, tools: 0, startedAt: 0, endedAt: null }) as CrewRow
+const row = (id: string, role: CrewRow['role'], status: CrewRow['status'], named = true): CrewRow =>
+  ({ id, role, status, named, description: id, tier: 'medium', model: null, effort: null, tokens: 0, weight: 0, tools: 0, startedAt: 0, endedAt: null }) as CrewRow
 const crewOf = (rows: CrewRow[], extra: Partial<CrewState> = {}): CrewState => ({ ...INITIAL_CREW, closed: false, startedAt: 0, rows, ...extra })
 const o = { enabled: true, stopHookActive: false, capReached: false }
 
@@ -34,4 +34,10 @@ test('a crew that spans main turns is still checked; a closed one is not', () =>
   const s = crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done')], { turnBusy: false })
   expect(needsReview(s, o)).toBe(true)
   expect(needsReview({ ...s, closed: true }, o)).toBe(false)
+})
+
+test('only crew-named helpers count; any reviewer row satisfies it', () => {
+  expect(needsReview(crewOf([row('a', 'researcher', 'done', false), row('b', 'researcher', 'done', false)]), o)).toBe(false)
+  expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done'), row('x', 'other', 'running', false)]), o)).toBe(true)
+  expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done'), row('r', 'reviewer', 'done', false)]), o)).toBe(false)
 })

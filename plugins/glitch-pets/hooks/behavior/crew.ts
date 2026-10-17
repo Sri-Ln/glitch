@@ -9,6 +9,8 @@ export type UsageLike = { input_tokens: number; output_tokens: number; cache_cre
 export type CrewRow = {
   id: string
   name?: string
+  /** Spawned under a crew name (`<role>-<n>`): only these count for the review reminder. */
+  named: boolean
   description: string
   role: Role
   tier: Tier
@@ -17,6 +19,9 @@ export type CrewRow = {
   tokens: number
   /** Price-shaped token weight (tokenWeight), for sharing the crew's cost. */
   weight: number
+  /** Tokens and weight its steps reported in its current turn, so the turn's own sum counts them once. */
+  turnTokens: number
+  turnWeight: number
   tools: number
   startedAt: number
   endedAt: number | null
@@ -77,11 +82,17 @@ export const onMainTurnStart = (s: CrewState): CrewState => ({ ...s, turnBusy: a
 /** A main turn ends: a quiet one (not busy, nothing running) closes the crew. */
 export const onMainTurnEnd = (s: CrewState): CrewState => ({ ...s, closed: s.closed || (!s.turnBusy && !anyRunning(s)), turnBusy: false })
 
+const usageTokens = (u: UsageLike): number => u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens
+
+/** A spawn: a new row, or, for an agent already in the crew (a resume), its row running again with its counts kept. */
 export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; model: string | null; now: number; costNow: number }): CrewState {
+  if (s.rows.some(r => r.id === a.agentId)) {
+    return { ...mapRow(s, a.agentId, r => ({ ...r, status: 'running', endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
+  }
   const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
   const row: CrewRow = {
-    id: a.agentId, ...(a.name ? { name: a.name } : {}), description: a.description, role: roleOf(a.name, a.description),
-    tier: tierOf(a.model, null), model: a.model, effort: null, tokens: 0, weight: 0, tools: 0, startedAt: a.now, endedAt: null, status: 'running',
+    id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description, role: roleOf(a.name, a.description),
+    tier: tierOf(a.model, null), model: a.model, effort: null, tokens: 0, weight: 0, turnTokens: 0, turnWeight: 0, tools: 0, startedAt: a.now, endedAt: null, status: 'running',
   }
   return { ...base, turnBusy: true, rows: [...base.rows.filter(r => r.id !== a.agentId), row] }
 }
@@ -91,11 +102,22 @@ export const onStep = (s: CrewState, agentId: string, model: string, effort: str
 
 export const onTool = (s: CrewState, agentId: string): CrewState => mapRow(s, agentId, r => ({ ...r, tools: r.tools + 1 }))
 
+/** One step's usage (per request), counted as it comes so a running row shows its tokens. */
+export const onStepUsage = (s: CrewState, agentId: string, u: UsageLike): CrewState =>
+  mapRow(s, agentId, r => {
+    const t = usageTokens(u)
+    const w = tokenWeight(u)
+    return { ...r, tokens: r.tokens + t, weight: r.weight + w, turnTokens: r.turnTokens + t, turnWeight: r.turnWeight + w }
+  })
+
+/** The agent's turn ends: its usage (the sum of the turn's requests) adds only what its steps did not report. */
 export const onAgentTurnEnd = (s: CrewState, agentId: string, u: UsageLike | undefined, now: number): CrewState =>
   mapRow(s, agentId, r => ({
     ...r,
-    tokens: r.tokens + (u ? u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens : 0),
-    weight: r.weight + (u ? tokenWeight(u) : 0),
+    tokens: r.tokens + (u ? Math.max(0, usageTokens(u) - r.turnTokens) : 0),
+    weight: r.weight + (u ? Math.max(0, tokenWeight(u) - r.turnWeight) : 0),
+    turnTokens: 0,
+    turnWeight: 0,
     endedAt: r.status === 'running' ? r.endedAt : r.endedAt ?? now,
   }))
 

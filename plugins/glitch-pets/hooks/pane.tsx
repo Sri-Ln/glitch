@@ -57,7 +57,7 @@ export function crewTree(v: CrewView, el: El): RenderElement {
       {running.length ? <T>{`Running · ${running.length}`}</T> : null}
       {running.map(line)}
       {finished.length ? <T>{`Finished · ${finished.length}`}</T> : null}
-      {running.length === 0 && finished.length > 3 ? <T dimColor>{`${done} done, ${finished.length - done} failed`}</T> : finished.map(line)}
+      {running.length === 0 && finished.length > 0 ? <T dimColor>{`${done} done, ${finished.length - done} failed`}</T> : finished.map(line)}
     </B>
   )
 }

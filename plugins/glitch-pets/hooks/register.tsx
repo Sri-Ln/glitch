@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
-import { INITIAL_CREW, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onTool, progressOf, reviewerRunning, shares } from './behavior/crew'
+import { INITIAL_CREW, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, progressOf, reviewerRunning, shares } from './behavior/crew'
 import type { CrewState } from './behavior/crew'
 import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
 import { withHat } from './behavior/hats'
@@ -110,6 +110,8 @@ function miniOf(p: Persona, role: Role, tier: Tier): Sprite {
 // Helpers' statuses from the engine's list; the crewDone remark once the reviewer finishes and nothing else runs.
 // While a row runs, each refresh touches the crew so the pane's clocks move.
 async function refreshCrew($: EngineInterface) {
+  // Nothing runs: no status can change, so no call.
+  if (!(await read($, crew)).rows.some(r => r.status === 'running')) return
   const list = await $.agent.list().catch(() => null)
   if (!list) return
   const now = await $.clock.now()
@@ -252,6 +254,13 @@ export const register: Register = (on, options) => {
     // The missed-review reminder rides the next prompt that reaches the model (not a
     // plugin's own, not a slash command's), as context the person never sees.
     if (!reviewMissed || reminderInFlight || !config.crewReview || e.origin.kind === 'plugin' || (e as { command?: unknown }).command) return next(e)
+    // Stale by now (a reviewer joined, the turn was aborted, a new crew): dropped.
+    const now = await read($, crew).catch(() => null)
+    if (!now || !needsReview(now, { enabled: true, stopHookActive: false, capReached: false })) {
+      reviewMissed = false
+      return next(e)
+    }
+    if (reminderInFlight) return next(e)
     reminderInFlight = true
     let r: Awaited<ReturnType<typeof next>>
     try {
@@ -303,7 +312,9 @@ export const register: Register = (on, options) => {
         // Each main turn's end: is the crew's work unreviewed (the reminder goes out
         // with the next prompt), then a quiet turn closes the crew.
         try {
-          if (config.crewReview) {
+          // An interrupted turn is the person's call: no reminder for this crew.
+          if (e.isAborted) await update($, crew, c => ({ ...c, gateFired: true }))
+          else if (config.crewReview) {
             const stats = (await hudStats($)) as { total?: number } | null
             const capReached = isCapReached((await hudBudget($)) as BudgetLike | null, stats?.total ?? 0)
             if (needsReview(await read($, crew), { enabled: true, stopHookActive: false, capReached })) reviewMissed = true
@@ -348,6 +359,8 @@ export const register: Register = (on, options) => {
   on('agent.spawn', async ($, e, next) => {
     const r = await next(e)
     if (r.deny !== undefined || !r.agentId) return r
+    // Only the main loop's own helpers: not a helper's sub-spawn, a workflow's agent or another plugin's.
+    if (e.parentAgentId !== undefined || e.workflow !== undefined || next.origin.plugin !== 'engine') return r
     const agentId = r.agentId
     try {
       const now = await $.clock.now()
@@ -374,7 +387,10 @@ export const register: Register = (on, options) => {
       const effort = e.effort === undefined ? null : String(e.effort)
       await update($, crew, c => onStep(c, agentId, e.model, effort)).catch(() => undefined)
     }
-    return yield* next(e)
+    const r = yield* next(e)
+    const usage = r?.usage
+    if (agentId !== undefined && usage) await update($, crew, c => onStepUsage(c, agentId, usage)).catch(() => undefined)
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
