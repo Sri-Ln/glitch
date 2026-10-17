@@ -46,6 +46,7 @@ const persona = (): Persona => ({
   hatAnchor: { x: 8, y: 2 },
   laptopPaw: 'p',
   voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['one', 'two', 'three']])) as unknown as Persona['voice'],
+  rod: { hold: { frame: A, tip: { x: 15, y: 1 } }, flick: { frame: A, tip: { x: 15, y: 2 } }, bent: { frame: B, tip: { x: 15, y: 3 } }, stowed: A },
 })
 const withWorking = (fps: number): Persona => {
   const p = persona()

@@ -1,5 +1,5 @@
 // Screenhead: a tiny CRT bot whose face is its screen. Earnest, literal, a little robotic.
-import type { Frame, Persona } from '../behavior/types'
+import type { Frame, Persona, RodPose } from '../behavior/types'
 
 const patch = (rows: Frame, p: Record<number, string>): Frame => rows.map((r, y) => p[y] ?? r)
 const at = (rows: Frame, x: number, y: number, ch: string): Frame =>
@@ -80,6 +80,32 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[4, 5], [5, 5], [10, 5], [11, 5]], 's'))),
 )
 
+// Investigating: the screen shows a "?", then a cyan scan line sweeps a squinting face (mouth pulled to one side).
+const asking = face(BASE, { 4: 'ssssgggsss', 5: 'sssgsssgss', 6: 'sssssggsss', 7: 'ssssssssss', 8: 'sssssgssss' })
+const squint = face(BASE, { 4: 'ssssssssss', 5: 'ssssssssss', 6: 'sgggssgggs', 7: 'ssssssssss', 8: 'sssssssggs' })
+const scanning = (y: number): Frame => face(squint, { [y]: 'cccccccccc' })
+const investigating = [asking, at(asking, 7, 0, 'A'), scanning(4), scanning(7)]
+// Pleased (a crew member finished): the signature flourish. Little arms pop out and up, the screen
+// reads "OK", the antenna flashes, then a ^ ^ smile with a blush. No hop: that is happy's.
+type Pt = readonly [number, number]
+const put = (rows: Frame, pts: readonly Pt[], ch: string): Frame => pts.reduce((r, [x, y]) => at(r, x, y, ch), rows)
+const beam = face(BASE, { 5: 'sggssssggs', 6: 'ssssssssss', 7: 'ssgssssgss', 8: 'sssggggsss' })
+const beamShut = face(beam, { 5: 'ssgssssgss', 6: 'sgsgssgsgs' })
+const OK = face(BASE, { 4: 'ssgggsgsgs', 5: 'ssgsgsgsgs', 6: 'ssgsgsggss', 7: 'ssgsgsgsgs', 8: 'ssgggsgsgs' })
+const flash = (f: Frame): Frame => at(f, 7, 0, 'A')
+const armsOut = (f: Frame): Frame => put(f, [[0, 7], [1, 7], [14, 7], [15, 7]], 'f')
+const armsUp = (f: Frame): Frame => put(f, [[1, 7], [0, 6], [0, 5], [14, 7], [15, 6], [15, 5]], 'f')
+const blush = (f: Frame): Frame => put(f, [[4, 7], [11, 7]], 'C')
+const pleased = [beam, armsOut(OK), flash(armsUp(OK)), armsUp(OK), flash(armsUp(blush(beamShut))), armsOut(blush(beamShut))]
+
+// The fishing rod (the reward): a robotic arm folds out of the screen's right side and grips it.
+const rodBase = pleased[5] as Frame
+const rodPose = (tip: Pt): RodPose => {
+  const arm = put(put(rodBase, [[14, 8], [15, 8]], 'f'), [[14, 9]], 'f')
+  const cane = Array.from({ length: 7 - tip[1] }, (_, i) => [15, tip[1] + 1 + i] as Pt)
+  return { frame: put(put(put(arm, cane, 'b'), [tip], 'M'), [[15, 9]], 'm'), tip: { x: tip[0], y: tip[1] } }
+}
+
 const screenhead: Persona = {
   id: 'screenhead',
   name: 'Screenhead',
@@ -102,7 +128,10 @@ const screenhead: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => clipboard(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 3 },
+    pleased: { frames: pleased, fps: 5 },
   },
+  rod: { hold: rodPose([15, 1]), flick: rodPose([15, 2]), bent: rodPose([15, 3]), stowed: rodBase },
   hatAnchor: { x: 7, y: 2 },
   laptopPaw: 'f',
   voice: {

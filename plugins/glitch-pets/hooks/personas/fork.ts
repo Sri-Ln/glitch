@@ -1,5 +1,5 @@
 // Fork: an octopus who runs eight things at once. The organised multitasker, a born lead.
-import type { Frame, Persona } from '../behavior/types'
+import type { Frame, Persona, RodPose } from '../behavior/types'
 
 type Pt = readonly [number, number]
 const E = '................'
@@ -47,8 +47,10 @@ const REST: Frame = patch(BASE, { 12: '.Oo..Oo..oO..oO.' })
 const EYES: Pt[] = [[4, 6], [5, 6], [4, 7], [5, 7], [10, 6], [11, 6], [10, 7], [11, 7]]
 const noEyes = (f: Frame): Frame => put(f, EYES, 'o')
 const closed = (f: Frame): Frame => put(noEyes(f), [[4, 7], [5, 7], [10, 7], [11, 7]], 'e')
-// Happy: top row of each eye kept (a ^), mouth a small U.
-const smile = put(put(BASE, [[4, 7], [5, 7], [10, 7], [11, 7]], 'o'), [[5, 8], [10, 8], [6, 9], [7, 9], [8, 9], [9, 9]], 'e')
+// Happy: top row of each eye kept (a ^), mouth a small U. The skirt's dark seams at x 6 and 9 sit right
+// under the U's ends, where they read as drips, so the smile fills them with body colour.
+const grin = (f: Frame): Frame => put(put(put(f, [[4, 7], [5, 7], [10, 7], [11, 7]], 'o'), [[6, 10], [9, 10]], 'o'), [[5, 8], [10, 8], [6, 9], [7, 9], [8, 9], [9, 9]], 'e')
+const smile = grin(BASE)
 
 const ZS: Pt[][] = [[[14, 3]], [[14, 2], [15, 1]], [[13, 1], [15, 0]]]
 const sleepyBase = lower(closed(REST), 8)
@@ -81,6 +83,46 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), mark(REST, [[4, 6], [5, 6], [10, 6], [11, 6]], 'o')),
 )
 
+// Investigating: two arms on the problem at once. The left holds a big lens up by the head (its glint
+// winks), the right reaches up to scratch the top of it; one eye narrows, a small "hm" mouth.
+const pondering = put(put(REST, [[10, 6], [11, 6]], 'o'), [[8, 9]], 'e')
+const RING: Pt[] = [[1, 0], [2, 0], [0, 1], [3, 1], [0, 2], [3, 2], [1, 3], [2, 3]]
+const holdLens = (rows: Frame, glint: boolean): Frame => {
+  const r = put(put(RING.reduce((f, [x, y]) => spark(f, x, y, 'M'), rows), [[1, 4], [1, 5]], 'm'), [[1, 6], [1, 7], [1, 8], [1, 9], [1, 10]], 'o')
+  return glint ? at(r, 1, 1, 'B') : r
+}
+const SCRATCH: Pt[][] = [
+  [[14, 10], [15, 9], [15, 8], [15, 7], [15, 6], [14, 5]],
+  [[14, 10], [15, 9], [15, 8], [15, 7], [15, 6], [15, 5], [14, 4], [14, 3]],
+]
+const investigating = [[0, 0], [1, 1], [0, 1], [1, 0]].map(([g, s]) => put(holdLens(pondering, g === 1), SCRATCH[s!] as Pt[], 'o'))
+// Pleased (a crew member finished): the signature flourish. Fork juggles three coloured balls over its
+// head while the outer arms take turns to toss them, smiling and blushing. No hop: that is happy's.
+const smileRest = grin(REST)
+const blush = (f: Frame): Frame => put(f, [[3, 8], [12, 8]], 'C')
+/** Paints a small block at (x, y) over whatever is there; '.' in the block is see-through. */
+const stamp = (rows: Frame, x: number, y: number, block: readonly string[]): Frame =>
+  block.reduce((r, line, dy) => [...line].reduce((rr, ch, dx) => (ch === '.' ? rr : at(rr, x + dx, y + dy, ch)), r), rows)
+const JUGGLE: Pt[] = [[0, 7], [0, 3], [3, 0], [11, 0], [14, 3], [14, 7]]
+const juggleBase = lower(blush(smileRest), 5)
+const pleased = [0, 1, 2, 3, 4, 5].map(n => {
+  let f = n % 2 ? put(juggleBase, [[15, 11], [15, 10], [14, 9]], 'o') : put(juggleBase, [[0, 11], [0, 10], [1, 9]], 'o')
+  for (const [k, c] of [[0, 'C'], [2, 'Y'], [4, 'L']] as const) {
+    const [x, y] = JUGGLE[(n + k) % 6] as Pt
+    f = stamp(f, x, y, [c + c, c + c])
+  }
+  return f
+})
+
+// The fishing rod (the reward): one outer tentacle reaches up and wraps the rod twice; the rest stay put.
+// The tip is where the line hangs: it snaps back a pixel on the cast and bends under the gift.
+const rodBase = blush(smileRest)
+const rodPose = (tip: Pt): RodPose => {
+  const wrapped = put(put(rodBase, [[15, 11], [15, 12], [14, 12]], '.'), [[14, 10], [14, 9], [14, 8], [15, 10]], 'o')
+  const cane = Array.from({ length: 9 - tip[1] }, (_, i) => [15, tip[1] + 1 + i] as Pt)
+  return { frame: put(put(put(wrapped, cane, 'b'), [tip], 'M'), [[13, 9]], 'm'), tip: { x: tip[0], y: tip[1] } }
+}
+
 const fork: Persona = {
   id: 'fork',
   name: 'Fork',
@@ -103,6 +145,19 @@ const fork: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, 1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 3 },
+    pleased: { frames: pleased, fps: 5 },
+  },
+  rod: { hold: rodPose([15, 1]), flick: rodPose([15, 2]), bent: rodPose([15, 3]), stowed: rodBase },
+  leadStatus: {
+    many: 'juggling the crew ({n} at work)',
+    one: 'waiting on {who}',
+    reviewing: 'checking against the plan',
+    worry: '{who} dropped a thread',
+    investigating: 'untangling {who}',
+    joy: '{who} done, ticked off',
+    allDone: 'all {n} accounted for',
+    someFailed: '{d} done, {f} to replan',
   },
   hatAnchor: { x: 7, y: 1 },
   laptopPaw: 'o',

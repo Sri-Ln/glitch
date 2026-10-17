@@ -4,7 +4,7 @@
 export const PET_IDS = ['screenhead', 'blob', 'pixel', 'dot', 'fork', 'bud'] as const
 export type PetId = (typeof PET_IDS)[number]
 
-export const MOOD_IDS = ['idle', 'working', 'happy', 'tired', 'sleepy', 'worried', 'oops', 'cheering', 'leading', 'reviewing', 'crying'] as const
+export const MOOD_IDS = ['idle', 'working', 'happy', 'tired', 'sleepy', 'worried', 'oops', 'cheering', 'leading', 'reviewing', 'crying', 'investigating', 'pleased'] as const
 export type MoodId = (typeof MOOD_IDS)[number]
 
 export const VOICE_MOMENTS = ['happy', 'worried', 'oops', 'cheering', 'sleepy', 'crying', 'crewDone'] as const
@@ -17,6 +17,15 @@ export const GRID = { width: 16, height: 13 } as const
 export type Frame = readonly string[]
 
 export type MoodArt = { frames: readonly Frame[]; fps: number }
+
+/** One fishing-rod pose: the frame, and the rod tip (grid x, y) the line hangs from. */
+export type RodPose = { frame: Frame; tip: { x: number; y: number } }
+/** The lead's rod for the reward: up and straight, the cast (tip snapped back), bent under the gift, and put away. */
+export type RodArt = { hold: RodPose; flick: RodPose; bent: RodPose; stowed: Frame }
+
+/** What the lead row can say, in the order the lead's mood picks them (first match wins). */
+export const LEAD_SITUATIONS = ['worry', 'joy', 'reviewing', 'investigating', 'many', 'one', 'allDone', 'someFailed'] as const
+export type LeadSituation = (typeof LEAD_SITUATIONS)[number]
 
 export type Persona = {
   id: PetId
@@ -35,6 +44,10 @@ export type Persona = {
   laptopPaw: string
   /** 3–5 lines per moment, in this pet's own voice. */
   voice: Readonly<Record<VoiceMoment, readonly string[]>>
+  /** The fishing rod the lead lowers a gift with when a crew member finishes. */
+  rod: RodArt
+  /** The lead row's wording in this pet's voice; `{n}`, `{who}`, `{d}`, `{f}` are filled in. Missing ones use the neutral wording. */
+  leadStatus?: Readonly<Partial<Record<LeadSituation, string>>>
 }
 
 /** What glitch-hud draws: one frame as an image. */
