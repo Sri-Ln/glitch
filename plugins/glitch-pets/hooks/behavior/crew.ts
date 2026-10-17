@@ -34,18 +34,19 @@ export type CrewState = {
 
 export const INITIAL_CREW: CrewState = { turnNo: 0, mainTurn: 0, startedAt: null, costAtStart: 0, rows: [], gateFired: false }
 
-const ROLE_NAME = /^(builder|researcher|designer|tester|reviewer)-\d+$/
+const ROLE_NAME = /^(builder|researcher|designer|tester|reviewer)-\d+$/i
+// Stems take any word form (reviews, reviewer, researching, tests, builds…). The reviewer rule stays first.
 const ROLE_WORDS: [Role, RegExp][] = [
-  ['reviewer', /\b(review|audit|check the whole)\b/i],
-  ['researcher', /\b(research|find|investigate|explore|look up|survey)\b/i],
-  ['tester', /\b(test|verify|validate|qa)\b/i],
-  ['designer', /\b(design|draw|mock ?up|style|layout)\b/i],
-  ['builder', /\b(build|implement|write|create|fix|add|code|refactor)\b/i],
+  ['reviewer', /\b(review\w*|audit\w*|check the whole)\b/i],
+  ['researcher', /\b(research\w*|find\w*|investigat\w*|explor\w*|look(s|ed|ing)? up|survey\w*)\b/i],
+  ['tester', /\b(test\w*|verif\w*|validat\w*|qa)\b/i],
+  ['designer', /\b(design\w*|draw\w*|drew|mock(s|ed|ing)? ?ups?|styl\w*|layouts?)\b/i],
+  ['builder', /\b(build\w*|built|implement\w*|writ\w*|wrote|creat\w*|fix\w*|add(s|ed|ing)?|cod(e|es|ed|ing)|refactor\w*)\b/i],
 ]
 
 export function roleOf(name: string | undefined, description: string): Role {
   const m = name ? ROLE_NAME.exec(name) : null
-  if (m) return m[1] as Role
+  if (m) return (m[1] as string).toLowerCase() as Role
   for (const [role, re] of ROLE_WORDS) if (re.test(description)) return role
   return 'other'
 }
@@ -110,7 +111,7 @@ export function shares(rows: readonly CrewRow[], crewCost: number): Record<strin
 
 export function progressOf(row: CrewRow, rows: readonly CrewRow[]): number {
   if (row.status !== 'running') return 1
-  const most = Math.max(0, ...rows.filter(r => r.status === 'done').map(r => r.tools))
+  const most = Math.max(0, ...rows.filter(r => r.status === 'done' && r.role !== 'reviewer').map(r => r.tools))
   return most > 0 ? Math.min(0.95, row.tools / most) : 0.5
 }
 
