@@ -76,7 +76,8 @@ function applyOne(state: Reactions, e: CrewEvent): Reactions {
     r = r.reward ? { ...r, gifts, rewardNext: { rowId: e.id, at: e.at } } : { ...r, gifts, reward: { rowId: e.id, startedAt: e.at } }
   }
   const cur = r.current
-  if (cur && cur.kind === kind) return { ...r, pending: null, current: { ...cur, who: join(cur.who, e.name), until: e.at + holdOf(kind) } }
+  // Joins the reaction playing; a different kind already waiting still gets its turn.
+  if (cur && cur.kind === kind) return { ...r, pending: r.pending && r.pending.kind !== kind ? r.pending : null, current: { ...cur, who: join(cur.who, e.name), until: e.at + holdOf(kind) } }
   if (cur && e.at - cur.startedAt < MIN_REACTION_MS) {
     const p = r.pending
     return { ...r, pending: p && p.kind === kind ? { ...p, who: join(p.who, e.name), at: e.at } : { kind, who: [e.name], at: e.at } }

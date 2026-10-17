@@ -59,9 +59,9 @@ test('a different kind inside the first second waits, then takes over when the s
 
 test('the latest wins the pending slot', () => {
   const r = apply(INITIAL_REACTIONS, done('b1', T), failed('t2', T + 200), done('b3', T + 400))
-  // b3 is the same kind as the playing joy: it joins it, and the waiting worry is dropped.
-  expect(reactionAt(r, T + MIN_REACTION_MS)?.kind).toBe('joy')
-  expect(reactionAt(r, T + MIN_REACTION_MS)?.who).toEqual(['b1', 'b3'])
+  // b3 is the same kind as the playing joy: it joins it, and the waiting worry keeps its turn.
+  expect(reactionAt(r, T + 500)?.who).toEqual(['b1', 'b3'])
+  expect(reactionAt(r, T + MIN_REACTION_MS)?.kind).toBe('worry')
   const s = apply(INITIAL_REACTIONS, failed('b1', T), done('t2', T + 200), done('t4', T + 500))
   expect(reactionAt(s, T + MIN_REACTION_MS)).toEqual({ kind: 'joy', who: ['t2', 't4'], startedAt: T + MIN_REACTION_MS, until: T + MIN_REACTION_MS + JOY_MS })
 })
@@ -110,4 +110,13 @@ test('a state from before reactions existed reads as none', () => {
   expect(reactionAt(undefined, T)).toBe(null)
   expect(rewardAt(undefined, T)).toBe(null)
   expect(reactionMoodInputs(undefined, crewOf(), T)).toEqual({ crewJoyUntil: 0, crewWorryUntil: 0, investigateUntil: 0 })
+})
+
+test('a same-kind event joins the reaction playing and keeps a different kind waiting', () => {
+  // A joy plays; a worry arrives in its first second and waits; another joy joins the first.
+  const r = apply(INITIAL_REACTIONS, done('tester-1', T), failed('builder-1', T + 200), done('tester-2', T + 400))
+  expect(reactionAt(r, T + 500)?.who).toEqual(['tester-1', 'tester-2'])
+  // The failure is not lost: it takes over once the joy has had its second.
+  expect(reactionAt(r, T + MIN_REACTION_MS)?.kind).toBe('worry')
+  expect(reactionAt(r, T + MIN_REACTION_MS)?.who).toEqual(['builder-1'])
 })
