@@ -39,6 +39,19 @@ test('the contract checker names a wrong size, an unknown key, a letter key and 
   expect(problems).toContain('no pixel of the pet')
 })
 
+test('the checker holds a mini to its nextChangeMs: still when absent, a new frame at that time when set', () => {
+  const pet = PERSONAS.bud!
+  const idle = pet.moods.idle.frames[0]!
+  const blink = (ms: number) => [ms % 1000 < 500 ? idle[0]! : '0' + idle[0]!.slice(1), ...idle.slice(1)]
+  const base = { name: 'T', description: 'test', size: { columns: 16, rows: 13 }, keys: ['0'] }
+  const silent: CrewTheme = { ...base, id: 'silent', mini: ({ elapsedMs }) => ({ frame: blink(elapsedMs), palette: { ...pet.palette, '0': '#ffffff' } }) }
+  expect(themeProblems(silent, [pet]).join('\n')).toContain('changes frame but gives no nextChangeMs')
+  const late: CrewTheme = { ...base, id: 'late', mini: ({ elapsedMs }) => ({ frame: blink(elapsedMs), palette: { ...pet.palette, '0': '#ffffff' }, nextChangeMs: 1000 }) }
+  expect(themeProblems(late, [pet]).join('\n')).toContain('nextChangeMs')
+  const right: CrewTheme = { ...base, id: 'right', mini: ({ elapsedMs }) => ({ frame: blink(elapsedMs), palette: { ...pet.palette, '0': '#ffffff' }, nextChangeMs: 500 - (elapsedMs % 500) }) }
+  expect(themeProblems(right, [pet])).toEqual([])
+})
+
 test('the checker covers Haiku, Sonnet and Opus model ids', () => {
   expect(THEME_MODELS.map(m => m.split('-')[1])).toEqual(['haiku', 'sonnet', 'opus'])
 })
@@ -46,6 +59,13 @@ test('the checker covers Haiku, Sonnet and Opus model ids', () => {
 test('reserved theme keys never collide with a pet: every persona keeps its contract', () => {
   for (const p of pets) expect(personaProblems(p, { composed: true })).toEqual([])
   for (const theme of Object.values(CREW_THEMES)) for (const k of theme.keys) expect(/^[A-Za-z]$/.test(k)).toBe(false)
+})
+
+test("crewMini passes the theme's nextChangeMs through: busy-hands while running, none for hats or a finished member", () => {
+  expect(crewMini('busy-hands', input({ elapsedMs: 0 }), 2).nextChangeMs).toBe(200)
+  expect(crewMini('busy-hands', input({ elapsedMs: 150 }), 2).nextChangeMs).toBe(50)
+  expect(crewMini('busy-hands', input({ status: 'done' }), 2).nextChangeMs).toBeUndefined()
+  expect(crewMini('hats', input(), 2).nextChangeMs).toBeUndefined()
 })
 
 test('crewMini draws the theme at its declared size and pixel', () => {
@@ -56,12 +76,12 @@ test('crewMini draws the theme at its declared size and pixel', () => {
   expect(s.source).toContain(`viewBox="0 0 ${columns} ${rows}"`)
   expect(s.alt).toContain('Bud')
   expect(s.alt).toContain('builder')
-  const h = crewMini('hats', input(), 1.5)
-  expect(h.width).toBe(24)
-  expect(h.height).toBe(24)
+  expect([s.width, s.height]).toEqual([48, 26])
+  const h = crewMini('hats', input(), 2)
+  expect([h.width, h.height]).toEqual([32, 32])
 })
 
-test('crewMini falls back to busy-hands for an unknown theme, then hats when a theme throws', () => {
+test('crewMini falls back to busy-hands for an unknown theme, then the other themes when one throws', () => {
   expect(crewMini('nope', input(), 2).source).toBe(crewMini('busy-hands', input(), 2).source)
   const saved = CREW_THEMES['busy-hands']!
   const registry = CREW_THEMES as Record<string, CrewTheme>
@@ -83,7 +103,7 @@ test('a new theme needs only its registry line: listed, contract-checked and dra
     mini: ({ persona, elapsedMs }) => {
       const frame = [...(persona.moods.idle.frames[0] ?? [])]
       if (Math.floor(elapsedMs / 500) % 2) frame[0] = '0' + (frame[0] ?? '').slice(1)
-      return { frame, palette: { ...persona.palette, '0': '#ffffff' } }
+      return { frame, palette: { ...persona.palette, '0': '#ffffff' }, nextChangeMs: 500 - (elapsedMs % 500) }
     },
   }
   const registry = CREW_THEMES as Record<string, CrewTheme>
@@ -93,6 +113,7 @@ test('a new theme needs only its registry line: listed, contract-checked and dra
     expect(themeProblems(tiny, pets)).toEqual([])
     expect(crewMini('tiny', input({ elapsedMs: 600 }), 2).source).toContain('#ffffff')
     expect(crewMini('tiny', input({ elapsedMs: 600 }), 2).width).toBe(32)
+    expect(crewMini('tiny', input({ elapsedMs: 600 }), 2).nextChangeMs).toBe(400)
   } finally {
     delete registry.tiny
   }

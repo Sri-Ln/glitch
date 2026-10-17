@@ -2,12 +2,13 @@
 // Role = the action (hammering, stargazing, painting, pouring, stamping, juggling).
 // Model = output per beat (Haiku 1, Sonnet 2, Opus 3 sparks, stars, colors, bubbles, stamps or
 // balls) and tempo (Haiku quick, Opus deliberate). The pet's first idle frame on the left
-// 16 columns, the action in the 8 columns from x 15; 23 × 13. Gallery-safe: only `import type`.
+// 16 columns (never drawn over), the action in the 8 columns beside it; 24 × 13.
+// Gallery-safe: only `import type`.
 import type { Frame, Role } from '../behavior/types'
 import type { CrewMiniInput, CrewTheme } from './types'
 
 export type Model = 'haiku' | 'sonnet' | 'opus'
-/** One pixel of the action: x 0–7 (beside the pet, from column 15), y 0–12, palette key. */
+/** One pixel of the action: x 0–7 (beside the pet, from column 16), y 0–12, palette key. */
 export type Pt = readonly [number, number, string]
 
 /** The theme's own keys: punctuation only, never a pet's letter. */
@@ -30,9 +31,9 @@ const PALETTE: Record<string, string> = {
 }
 export const BUSY_KEYS: readonly string[] = Object.keys(PALETTE)
 
-const WIDTH = 23
+const WIDTH = 24
 const HEIGHT = 13
-const X0 = 15
+const X0 = 16
 const BEATS = 4
 
 /** The model family from the engine's model id; an unknown or missing one is the middle. */
@@ -144,9 +145,14 @@ const busyHands: CrewTheme = {
   fps: TEMPO.haiku,
   mini({ persona, role, model, status, elapsedMs }: CrewMiniInput) {
     const m = modelOf(model)
-    const beat = status === 'running' ? Math.floor((Math.max(0, elapsedMs) * TEMPO[m]) / 1000) % BEATS : STILL[role]
     const idle = persona.moods.idle.frames[0] ?? []
-    return { frame: frameOf(idle, role, beat, beatsOf(m)), palette: { ...persona.palette, ...PALETTE } }
+    const palette = { ...persona.palette, ...PALETTE }
+    if (status !== 'running') return { frame: frameOf(idle, role, STILL[role], beatsOf(m)), palette }
+    const t = Math.max(0, elapsedMs)
+    const n = Math.floor((t * TEMPO[m]) / 1000)
+    // Whole ms, rounded up: at t + nextChangeMs the next beat has begun.
+    const nextChangeMs = Math.max(1, Math.ceil(((n + 1) * 1000) / TEMPO[m] - t))
+    return { frame: frameOf(idle, role, n % BEATS, beatsOf(m)), palette, nextChangeMs }
   },
 }
 

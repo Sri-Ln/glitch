@@ -17,7 +17,12 @@ export type CrewMiniInput = {
 }
 
 /** One frame of the mini and the palette that draws it: the persona's palette plus the theme's own keys. */
-export type CrewMini = { frame: Frame; palette: Record<string, string> }
+export type CrewMini = {
+  frame: Frame
+  palette: Record<string, string>
+  /** Ms until this mini's frame next changes (at elapsedMs + nextChangeMs it differs). Absent: it is still from now on. */
+  nextChangeMs?: number
+}
 
 export type CrewTheme = {
   /** Registry key and the `crewTheme` setting's value: lowercase, dash-separated. */
@@ -33,7 +38,7 @@ export type CrewTheme = {
    * never the laptop's (behavior/types LAPTOP_KEYS); any digit or punctuation char is free.
    */
   keys: readonly string[]
-  /** How often the mini changes while running (frames per second); omitted means still. */
+  /** The quickest the mini changes (frames per second), for the gallery; omitted means still. The pane times by nextChangeMs. */
   fps?: number
   /** Pure: same input, same frame. Animates by `elapsedMs`; a done or failed member may hold a still. */
   mini(input: CrewMiniInput): CrewMini

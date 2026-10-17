@@ -26,13 +26,32 @@ test('tempo: Haiku quick, Opus deliberate; the theme fps covers the quickest', (
   expect(busyHands.fps).toBe(TEMPO.haiku)
 })
 
-test('a running member loops 4 beats at its tempo; the pet itself stays on the left 16 columns', () => {
+test('a running member loops 4 beats at its tempo', () => {
   const step = 1000 / TEMPO.haiku
   const frames = [0, 1, 2, 3, 4].map(i => busyHands.mini(at({ model: 'claude-haiku-4-5', elapsedMs: i * step + 1 })).frame)
-  expect(new Set(frames.slice(0, 4).map(art)).size).toBeGreaterThanOrEqual(2)
+  // Each beat differs from the next (a beat may repeat: the hammer goes up, down, up).
+  for (let i = 0; i < 4; i++) expect(art(frames[i + 1]!)).not.toBe(art(frames[i]!))
   expect(art(frames[4]!)).toBe(art(frames[0]!))
-  const idle = PERSONAS.fork!.moods.idle.frames[0]!
-  for (const f of frames) expect(f.map(r => r.slice(0, 15))).toEqual(idle.map(r => r.slice(0, 15)))
+})
+
+test("every pet's whole 16 columns are kept: the action never draws over the pet", () => {
+  for (const persona of Object.values(PERSONAS))
+    for (const role of ROLES)
+      for (const model of ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-opus-4-1'])
+        for (const ms of [0, 130, 260, 400, 700]) {
+          const idle = persona!.moods.idle.frames[0]!
+          expect(busyHands.mini(at({ persona: persona!, role, model, elapsedMs: ms })).frame.map(r => r.slice(0, 16))).toEqual([...idle])
+        }
+})
+
+test('nextChangeMs: the time to the next beat at the model tempo while running; none when finished', () => {
+  // Opus at 3 beats/s: beats at 0, 333.3, 666.7 ms.
+  expect(busyHands.mini(at({ model: 'claude-opus-4-1', elapsedMs: 0 })).nextChangeMs).toBe(334)
+  expect(busyHands.mini(at({ model: 'claude-opus-4-1', elapsedMs: 300 })).nextChangeMs).toBe(34)
+  expect(busyHands.mini(at({ model: 'claude-haiku-4-5', elapsedMs: 100 })).nextChangeMs).toBe(25)
+  expect(busyHands.mini(at({ model: null, elapsedMs: 0 })).nextChangeMs).toBe(200)
+  expect(busyHands.mini(at({ status: 'done', elapsedMs: 100 })).nextChangeMs).toBeUndefined()
+  expect(busyHands.mini(at({ status: 'failed', elapsedMs: 100 })).nextChangeMs).toBeUndefined()
 })
 
 test('more model, more output per beat: Opus shows more sparks than Haiku', () => {

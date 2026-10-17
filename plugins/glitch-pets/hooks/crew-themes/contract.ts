@@ -55,7 +55,17 @@ export function themeProblems(theme: CrewTheme, personas: readonly Persona[]): s
               if (!(key in persona.palette) && !theme.keys.includes(key)) out.add(`palette key "${key}" is not one of its keys or the pet's`)
               if (!HEX.test(color)) out.add(`palette "${key}" must be #rrggbb, got ${color}`)
             }
-            if (theme.mini(input).frame.join('\n') !== frame.join('\n')) out.add(`${at} is not pure: the same input drew two frames`)
+            const drawn = frame.join('\n')
+            const later = (ms: number): string => theme.mini({ ...input, elapsedMs: elapsedMs + ms }).frame.join('\n')
+            if (later(0) !== drawn) out.add(`${at} is not pure: the same input drew two frames`)
+            const next = mini.nextChangeMs
+            if (next === undefined) {
+              if ([1, 100, 1000, 10_000].some(ms => later(ms) !== drawn)) out.add(`${at} changes frame but gives no nextChangeMs`)
+            } else if (!(Number.isFinite(next) && next > 0)) out.add(`${at} nextChangeMs must be above 0, got ${next}`)
+            else {
+              if (next > 1 && later(next - 1) !== drawn) out.add(`${at} nextChangeMs ${next} is late: the frame changed before it`)
+              if (later(next) === drawn) out.add(`${at} nextChangeMs ${next} is early: the frame had not changed by then`)
+            }
           }
   return [...out].slice(0, 40)
 }

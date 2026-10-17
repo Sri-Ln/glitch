@@ -589,8 +589,8 @@ test('once nothing runs the finished helpers fold to one line', async ($, on) =>
 // ── Crew themes: /glitch crew theme [id], kept in the store like the pet ──
 test('/glitch crew theme lists the themes, current busy-hands by default', async ($, on) => {
   await session($, on)
-  for (const command of ['glitch', 'glitch-pets'] as const) {
-    const r = (await $.command.run({ command, args: 'crew theme' } as never)) as { text: string }
+  for (const [command, args] of [['glitch', 'crew theme'], ['glitch-pets', 'crew theme'], ['glitch', 'crew themes'], ['glitch-pets', 'crew themes']] as const) {
+    const r = (await $.command.run({ command, args } as never)) as { text: string }
     expect(r.text).toContain('busy-hands (Busy hands) (current)')
     expect(r.text).toContain('hats')
   }

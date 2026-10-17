@@ -27,6 +27,8 @@ test('crewThemeArgOf finds `crew theme [id]` in either entry point', () => {
   expect(crewThemeArgOf('pet fork')).toBeNull()
   expect(crewThemeArgOf('crew theme')).toBe('')
   expect(crewThemeArgOf(' crew  Theme  hats ')).toBe('hats')
+  expect(crewThemeArgOf('crew themes')).toBe('')
+  expect(crewThemeArgOf('crew themes hats')).toBe('hats')
 })
 test('parseThemeArg', () => {
   expect(parseThemeArg('', ['busy-hands', 'hats'])).toEqual({ kind: 'show' })

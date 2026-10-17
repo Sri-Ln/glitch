@@ -1,15 +1,14 @@
 // Renders every persona × mood, and every crew theme × pet × role × model, to one HTML page
 // for an art review.
-// Usage: node plugins/glitch-pets/scripts/gallery.mjs [out.html]
+// Usage: node plugins/glitch-pets/scripts/gallery.mjs [out.html]   (Node 22.15 or later)
 // Beside the page it writes crew-theme-<id>.svg per theme: one flat still grid, for rasterising.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { registerHooks } from 'node:module'
+import * as nodeModule from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 
 import { MOOD_IDS } from '../hooks/behavior/types.ts'
 import { frameSvg } from '../hooks/behavior/player.ts'
 import { withLaptop } from '../hooks/behavior/laptop.ts'
-import { withHat } from '../hooks/behavior/hats.ts'
 
 const IDS = ['screenhead', 'blob', 'pixel', 'dot', 'fork', 'bud']
 const personas = []
@@ -25,8 +24,12 @@ for (const id of IDS) {
 
 // Hooks modules import plugin files extensionless (the engine resolves them); here a relative
 // specifier that does not resolve as written is tried again with .ts, so the crew-themes
-// registry loads as the plugin loads it.
-registerHooks({
+// registry loads as the plugin loads it. module.registerHooks needs Node 22.15 or later.
+if (typeof nodeModule.registerHooks !== 'function') {
+  console.error(`gallery.mjs needs Node 22.15 or later (module.registerHooks, to load the crew-themes registry); this is Node ${process.versions.node}.\nUsage: node plugins/glitch-pets/scripts/gallery.mjs [out.html]`)
+  process.exit(1)
+}
+nodeModule.registerHooks({
   resolve(specifier, context, nextResolve) {
     try {
       return nextResolve(specifier, context)
@@ -54,16 +57,6 @@ const rows = personas
   .map(p => `<tr><th>${p.name}<br><small>${p.temperament}</small></th>${MOOD_IDS.map(m => cell(p, m)).join('')}</tr>`)
   .join('\n')
 const ROLES = ['builder', 'researcher', 'designer', 'tester', 'reviewer', 'other']
-const TIERS = ['light', 'medium', 'heavy']
-const hatCell = (p, role) => {
-  const base = p.moods.idle.frames[0]
-  const hats = TIERS.map(tier => {
-    const { frame, palette } = withHat(base, p.hatAnchor, role, tier)
-    return `<div class="hat">${frameSvg({ ...p.palette, ...palette }, frame, 4)}<div class="cap">${role} · ${tier}</div></div>`
-  })
-  return `<td>${hats.join('')}</td>`
-}
-const hatRows = personas.map(p => `<tr><th>${p.name}</th>${ROLES.map(r => hatCell(p, r)).join('')}</tr>`).join('\n')
 // Crew themes: every theme × pet × role × model, animated through crewMini (the pane's own call).
 // A cell samples the theme every 25 ms over 8 s (a whole number of loops for each tempo) and
 // keeps each distinct frame once plus the sequence that plays them.
@@ -140,8 +133,6 @@ th{text-align:left;max-width:160px}.hat{display:inline-block;margin:0 4px}small{
 </style>
 <button onclick="document.body.classList.toggle('light')">dark / light</button>
 <table><tr><th></th>${MOOD_IDS.map(m => `<th>${m}</th>`).join('')}</tr>${rows}</table>
-<h2>Crew hats</h2>
-<table><tr><th></th>${ROLES.map(r => `<th>${r}</th>`).join('')}</tr>${hatRows}</table>
 ${themeSections}
 <script>
 for (const a of document.querySelectorAll('.anim[data-seq]')) {

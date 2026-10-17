@@ -32,10 +32,10 @@ export const STORE_CREW_THEME = 'crewTheme'
 
 export type ThemeArg = { kind: 'show' } | { kind: 'pick'; id: string } | { kind: 'unknown'; name: string }
 
-/** The theme argument when the words are `crew theme [id]` (either entry point), else null. */
+/** The theme argument when the words are `crew theme [id]` or `crew themes [id]` (either entry point), else null. */
 export function crewThemeArgOf(args: string): string | null {
   const words = args.trim().split(/\s+/).filter(Boolean)
-  if (words[0]?.toLowerCase() !== 'crew' || words[1]?.toLowerCase() !== 'theme') return null
+  if (words[0]?.toLowerCase() !== 'crew' || !['theme', 'themes'].includes(words[1]?.toLowerCase() ?? '')) return null
   return words.slice(2).join(' ')
 }
 
