@@ -28,6 +28,14 @@ export type CrewRow = {
   resumedAt?: number
   endedAt: number | null
   status: 'running' | 'done' | 'failed'
+  /** Failed because it was stopped (killed), not by its own error: no step-up. */
+  killed?: true
+  /** The crew agent type it runs as (`crew-light`, `crew-light-high`, …), when it is one. */
+  rung?: string
+  /** How many step-ups led to this row (0 or absent for a first try). */
+  stepUps?: number
+  /** The failed row this one retries, and the rung it failed on (for "stepped up from Haiku · low"). */
+  steppedUpFrom?: { id: string; rung: string; model: string; effort: string }
 }
 
 export type CrewState = {
@@ -87,7 +95,7 @@ export const onMainTurnEnd = (s: CrewState): CrewState => ({ ...s, closed: s.clo
 const usageTokens = (u: UsageLike): number => u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens
 
 /** A spawn: a new row, or, for an agent already in the crew (a resume), its row running again with its counts kept. */
-export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; model: string | null; now: number; costNow: number }): CrewState {
+export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; model: string | null; now: number; costNow: number; rung?: string; stepUps?: number; steppedUpFrom?: CrewRow['steppedUpFrom'] }): CrewState {
   if (s.rows.some(r => r.id === a.agentId)) {
     return { ...mapRow(s, a.agentId, r => ({ ...r, status: 'running', resumedAt: a.now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
   }
@@ -95,6 +103,7 @@ export function onSpawn(s: CrewState, a: { agentId: string; name?: string; descr
   const row: CrewRow = {
     id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description, role: roleOf(a.name, a.description),
     tier: tierOf(a.model, null), model: a.model, effort: null, tokens: 0, weight: 0, turnTokens: 0, turnWeight: 0, tools: 0, startedAt: a.now, endedAt: null, status: 'running',
+    ...(a.rung ? { rung: a.rung } : {}), ...(a.stepUps ? { stepUps: a.stepUps } : {}), ...(a.steppedUpFrom ? { steppedUpFrom: a.steppedUpFrom } : {}),
   }
   return { ...base, turnBusy: true, rows: [...base.rows.filter(r => r.id !== a.agentId), row] }
 }
@@ -137,7 +146,8 @@ export function onStatuses(s: CrewState, list: readonly { id: string; status: st
       // A teammate waiting for a message has done its part.
       if (st === 'completed' || st === 'idle') return { ...r, status: 'done', endedAt: now }
       if (st === undefined && now - (r.resumedAt ?? r.startedAt) >= LIST_GRACE_MS) return { ...r, status: 'done', endedAt: now }
-      if (st === 'failed' || st === 'killed') return { ...r, status: 'failed', endedAt: now }
+      if (st === 'failed') return { ...r, status: 'failed', endedAt: now }
+      if (st === 'killed') return { ...r, status: 'failed', killed: true, endedAt: now }
       return r
     }),
   }

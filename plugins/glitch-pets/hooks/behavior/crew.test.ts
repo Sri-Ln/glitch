@@ -184,3 +184,20 @@ test('a resumed agent gets a fresh list grace: missing just after the resume is 
   expect(onStatuses(s, [], 9000 + LIST_GRACE_MS - 1).rows[0]?.status).toBe('running')
   expect(onStatuses(s, [], 9000 + LIST_GRACE_MS).rows[0]?.status).toBe('done')
 })
+
+test('a crew-type spawn keeps its rung, and a retry where it stepped up from', () => {
+  let s = spawn(INITIAL_CREW, 'a1', { rung: 'crew-light' })
+  expect(s.rows[0]?.rung).toBe('crew-light')
+  expect(s.rows[0]?.stepUps).toBeUndefined()
+  expect('steppedUpFrom' in (s.rows[0] as object)).toBe(false)
+  s = spawn(s, 'a2', { rung: 'crew-light-high', stepUps: 1, steppedUpFrom: { id: 'a1', rung: 'crew-light', model: 'claude-haiku-5-5', effort: 'low' } })
+  expect(s.rows[1]?.rung).toBe('crew-light-high')
+  expect(s.rows[1]?.stepUps).toBe(1)
+  expect(s.rows[1]?.steppedUpFrom).toEqual({ id: 'a1', rung: 'crew-light', model: 'claude-haiku-5-5', effort: 'low' })
+})
+
+test('a killed row is marked killed; a failed one is not', () => {
+  const s = onStatuses(spawn(spawn(), 'a2'), [{ id: 'a1', status: 'failed' }, { id: 'a2', status: 'killed' }], 9000)
+  expect(s.rows[0]?.killed).toBeUndefined()
+  expect(s.rows[1]?.killed).toBe(true)
+})

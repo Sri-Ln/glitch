@@ -2,6 +2,8 @@
 // are reported, never thrown.
 import { PET_IDS } from './behavior/types'
 import type { PetId } from './behavior/types'
+import { parseCrewTiers } from './behavior/tiers'
+import type { CrewTiers } from './behavior/tiers'
 
 export type PetsConfig = {
   pet: PetId | 'off'
@@ -11,6 +13,8 @@ export type PetsConfig = {
   sleepyMs: number
   crewPane: 'auto' | 'manual'
   crewReview: boolean
+  /** Each crew tier's model and effort (the `crewTiers` JSON setting). */
+  crewTiers: CrewTiers
 }
 
 const MIN = 60_000
@@ -41,6 +45,8 @@ export function parsePetsConfig(o: Record<string, unknown>): { config: PetsConfi
     if (o.crewPane === 'auto' || o.crewPane === 'manual') crewPane = o.crewPane
     else problems.push('crewPane must be auto or manual')
   }
+  const tiers = parseCrewTiers(o.crewTiers)
+  problems.push(...tiers.problems)
   return {
     config: {
       pet,
@@ -50,6 +56,7 @@ export function parsePetsConfig(o: Record<string, unknown>): { config: PetsConfi
       sleepyMs: minutes('sleepyMinutes', 10),
       crewPane,
       crewReview: flag('crewReview', true),
+      crewTiers: tiers.tiers,
     },
     problems,
   }
