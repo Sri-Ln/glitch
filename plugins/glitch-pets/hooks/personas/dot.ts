@@ -81,6 +81,20 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[6, 3], [9, 3]], 'k'))),
 )
 
+// A "?" (Y), 3 wide and 5 tall, and a green tick (L), 4 wide and 3 tall, painted only on empty pixels.
+const qmark = (rows: Frame, x: number, y: number): Frame =>
+  ([[x, y], [x + 1, y], [x + 2, y + 1], [x + 1, y + 2], [x + 1, y + 4]] as Pt[]).reduce((r, [px, py]) => spark(r, px, py, 'Y'), rows)
+const tick = (rows: Frame, x: number, y: number): Frame =>
+  ([[x, y + 1], [x + 1, y + 2], [x + 2, y + 1], [x + 3, y]] as Pt[]).reduce((r, [px, py]) => spark(r, px, py, 'L'), rows)
+// Investigating: Dot turns her head to peer one way, then the other, one antenna bent forward to feel
+// for the problem, a "?" bobbing beside her. Rows 0-3 are the head and antennae.
+const turn = (rows: Frame, d: number): Frame => rows.map((r, y) => (y < 4 ? (d < 0 ? r.slice(1) + '.' : '.' + r.slice(0, -1)) : r))
+const feelRight = patch(BASE, { 0: '....k...........', 1: '.....k....kk....' })
+const feelLeft = patch(BASE, { 0: '...........k....', 1: '....kk....k.....' })
+const investigating = [qmark(turn(BASE, -1), 13, 0), qmark(turn(feelRight, -1), 13, 1), qmark(turn(BASE, 1), 13, 0), qmark(turn(feelLeft, 1), 13, 1)]
+// Pleased (a helper finished): a smile, a flutter of wings and a tick. She stays on her daisy: the hop is happy's.
+const pleased = [wingsOpen(smile), smile, tick(wingsOpen(smile), 12, 0), tick(smile, 12, 0)]
+
 const dot: Persona = {
   id: 'dot',
   name: 'Dot',
@@ -103,6 +117,8 @@ const dot: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 3 },
+    pleased: { frames: pleased, fps: 6 },
   },
   hatAnchor: { x: 7, y: 2 },
   laptopPaw: 'k',

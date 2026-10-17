@@ -80,6 +80,15 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[4, 5], [5, 5], [10, 5], [11, 5]], 's'))),
 )
 
+// Investigating: the screen shows a "?", then a cyan scan line sweeps a squinting face (mouth pulled to one side).
+const asking = face(BASE, { 4: 'ssssgggsss', 5: 'sssgsssgss', 6: 'sssssggsss', 7: 'ssssssssss', 8: 'sssssgssss' })
+const squint = face(BASE, { 4: 'ssssssssss', 5: 'ssssssssss', 6: 'sgggssgggs', 7: 'ssssssssss', 8: 'sssssssggs' })
+const scanning = (y: number): Frame => face(squint, { [y]: 'cccccccccc' })
+const investigating = [asking, at(asking, 7, 0, 'A'), scanning(4), scanning(7)]
+// Pleased (a helper finished): a quick smile, then a green tick fills the screen. No hop: that is happy's.
+const tick = face(BASE, { 4: 'ssssssssgs', 5: 'sssssssgss', 6: 'ssgsssgsss', 7: 'sssgsgssss', 8: 'ssssgsssss' })
+const pleased = [smile, tick, at(tick, 7, 0, 'A'), tick]
+
 const screenhead: Persona = {
   id: 'screenhead',
   name: 'Screenhead',
@@ -102,6 +111,8 @@ const screenhead: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => clipboard(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 3 },
+    pleased: { frames: pleased, fps: 5 },
   },
   hatAnchor: { x: 7, y: 2 },
   laptopPaw: 'f',

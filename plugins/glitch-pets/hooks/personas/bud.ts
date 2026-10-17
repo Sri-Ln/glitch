@@ -78,6 +78,18 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[5, 3], [10, 3]], 'K'))),
 )
 
+// A "?" (Y), 3 wide and 5 tall, painted only on empty pixels.
+const qmark = (rows: Frame, x: number, y: number): Frame =>
+  ([[x, y], [x + 1, y], [x + 2, y + 1], [x + 1, y + 2], [x + 1, y + 4]] as Pt[]).reduce((r, [px, py]) => spark(r, px, py, 'Y'), rows)
+// Investigating: the classic dog head tilt, one way then the other, eyes rolled up to think,
+// a "?" on the side the head tilts away from. Rows 0-8 are the head.
+const tilt = (rows: Frame, d: number): Frame => rows.map((r, y) => (y <= 8 ? (d < 0 ? r.slice(1) + '.' : '.' + r.slice(0, -1)) : r))
+const lookUp = put(put(BASE, EYES, 'b'), [[5, 2], [10, 2]], 'e')
+const investigating = [qmark(tilt(lookUp, 1), 0, 0), qmark(tilt(BASE, 1), 0, 0), qmark(tilt(lookUp, -1), 13, 0), qmark(tilt(BASE, -1), 13, 0)]
+// Pleased (a helper finished): tongue out, a quick wag and a couple of green twinkles. No hop: that is happy's.
+const twinkle = (rows: Frame, pts: Pt[]): Frame => pts.reduce((r, [x, y]) => spark(r, x, y, 'L'), rows)
+const pleased = [twinkle(wag(smile), [[1, 0], [14, 1]]), smile, twinkle(wag(smile), [[2, 0], [15, 0], [0, 1]]), smile]
+
 const bud: Persona = {
   id: 'bud',
   name: 'Bud',
@@ -106,6 +118,8 @@ const bud: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 2 },
+    pleased: { frames: pleased, fps: 6 },
   },
   hatAnchor: { x: 7, y: 0 },
   laptopPaw: 'b',

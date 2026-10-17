@@ -81,6 +81,27 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), mark(REST, [[4, 6], [5, 6], [10, 6], [11, 6]], 'o')),
 )
 
+// A green tick (L), 4 wide and 3 tall, painted only on empty pixels.
+const tick = (rows: Frame, x: number, y: number): Frame =>
+  ([[x, y + 1], [x + 1, y + 2], [x + 2, y + 1], [x + 3, y]] as Pt[]).reduce((r, [px, py]) => spark(r, px, py, 'L'), rows)
+// Investigating: two arms on the problem at once. The left holds a big lens up by the head (its glint
+// winks), the right reaches up to scratch the top of it; one eye narrows, a small "hm" mouth.
+const pondering = put(put(REST, [[10, 6], [11, 6]], 'o'), [[8, 9]], 'e')
+const RING: Pt[] = [[1, 0], [2, 0], [0, 1], [3, 1], [0, 2], [3, 2], [1, 3], [2, 3]]
+const holdLens = (rows: Frame, glint: boolean): Frame => {
+  const r = put(put(RING.reduce((f, [x, y]) => spark(f, x, y, 'M'), rows), [[1, 4], [1, 5]], 'm'), [[1, 6], [1, 7], [1, 8], [1, 9], [1, 10]], 'o')
+  return glint ? at(r, 1, 1, 'B') : r
+}
+const SCRATCH: Pt[][] = [
+  [[14, 10], [15, 9], [15, 8], [15, 7], [15, 6], [14, 5]],
+  [[14, 10], [15, 9], [15, 8], [15, 7], [15, 6], [15, 5], [14, 4], [14, 3]],
+]
+const investigating = [[0, 0], [1, 1], [0, 1], [1, 0]].map(([g, s]) => put(holdLens(pondering, g === 1), SCRATCH[s!] as Pt[], 'o'))
+// Pleased (a helper finished): a smile, two outer arms thrown up, a tick. No hop: that is happy's.
+const smileRest = put(put(REST, [[4, 7], [5, 7], [10, 7], [11, 7]], 'o'), [[5, 8], [10, 8], [6, 9], [7, 9], [8, 9], [9, 9]], 'e')
+const armsUp = put(smileRest, [[0, 10], [0, 9], [15, 10], [15, 9]], 'o')
+const pleased = [smileRest, tick(armsUp, 12, 0), armsUp, tick(smileRest, 12, 0)]
+
 const fork: Persona = {
   id: 'fork',
   name: 'Fork',
@@ -103,6 +124,8 @@ const fork: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, 1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 3 },
+    pleased: { frames: pleased, fps: 6 },
   },
   hatAnchor: { x: 7, y: 1 },
   laptopPaw: 'o',

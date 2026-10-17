@@ -85,6 +85,19 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[4, 8], [5, 8], [10, 8], [11, 8]], 'p'))),
 )
 
+// A "?" (Y), 3 wide and 5 tall, and a green tick (L), 4 wide and 3 tall, painted only on empty pixels.
+const qmark = (rows: Frame, x: number, y: number): Frame =>
+  ([[x, y], [x + 1, y], [x + 2, y + 1], [x + 1, y + 2], [x + 1, y + 4]] as Pt[]).reduce((r, [px, py]) => spark(r, px, py, 'Y'), rows)
+const tick = (rows: Frame, x: number, y: number): Frame =>
+  ([[x, y + 1], [x + 1, y + 2], [x + 2, y + 1], [x + 3, y]] as Pt[]).reduce((r, [px, py]) => spark(r, px, py, 'L'), rows)
+// Investigating: one eye narrowed, mouth slid to the side, a pseudopod scratching the top of its head, a "?" bobbing.
+const puzzled = put(put(BASE, [[10, 8], [11, 8], [7, 10], [8, 10]], 'p'), [[9, 10]], 'e')
+const scratch = (rows: Frame, n: number): Frame => put(rows, n ? [[14, 7], [14, 6], [15, 5], [14, 4], [13, 3]] : [[14, 7], [14, 6], [14, 5], [13, 4], [12, 3]], 'p')
+const investigating = [0, 1, 0, 1].map((n, i) => qmark(scratch(i === 2 ? shift(puzzled, -1) : puzzled, n), 1, n))
+// Pleased (a helper finished): a squish of joy and a tick, in place. No hop: that is happy's.
+const squashSmile = patch(put(SQUASH, [[5, 9], [6, 9], [9, 9], [10, 9]], 'p'), { 10: 'opppppeeeepppppo' })
+const pleased = [smile, tick(squashSmile, 11, 0), tick(smile, 11, 0), smile]
+
 const blob: Persona = {
   id: 'blob',
   name: 'Byte blob',
@@ -107,6 +120,8 @@ const blob: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 3 },
+    pleased: { frames: pleased, fps: 6 },
   },
   hatAnchor: { x: 7, y: 3 },
   laptopPaw: 'p',
