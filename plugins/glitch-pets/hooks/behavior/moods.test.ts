@@ -5,7 +5,7 @@ import type { MoodInputs } from './moods'
 
 const T = 1_000_000
 const base = (over: Partial<MoodInputs> = {}): MoodInputs => ({
-  now: T, turnSince: null, lastPromptAt: T, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0,
+  now: T, turnSince: null, lastPromptAt: T, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, pokedUntil: 0,
   capReached: false, budget: null, cacheSecondsLeft: 3000,
   helpersRunning: 0, reviewerRunning: false, tiredMs: 600_000, sleepyMs: 600_000, ...over,
 })
@@ -47,4 +47,10 @@ test('isCapReached at or past a cap', () => {
   expect(isCapReached(B, 10)).toBe(true)
   expect(isCapReached(B, 9.99)).toBe(false)
   expect(isCapReached({ ...B, isOff: true }, 50)).toBe(false)
+})
+
+test('a click hops over any mood, then the mood comes back', () => {
+  expect(moodOf(base({ pokedUntil: T + 1, turnSince: T - 1000 }))).toBe('happy')
+  expect(moodOf(base({ pokedUntil: T + 1, cryUntil: T + 1 }))).toBe('happy')
+  expect(moodOf(base({ pokedUntil: T, turnSince: T - 1000 }))).toBe('working')
 })

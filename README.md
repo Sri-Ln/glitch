@@ -21,7 +21,7 @@ One line above the prompt. In the terminal it is text with theme colors and icon
 | context | `▓▓▓▓░░ 63%` | context window used; amber from 65%, red from 85% |
 | git | ` main ±4 ↑1` | branch, changed files, ahead/behind; hidden outside a repo |
 
-**Desktop, VS Code and mobile.** These apps draw the band with vector icons, a real context bar and worded values (`Turn 12`, `$0.42 reply · $3.10 session · $21.40 today`, `47:12 left`, `63% context`). The desktop already shows the branch above the band, so git is left out there unless you change **Parts** in the settings or run `/glitch hud parts …`.
+**Desktop, VS Code and mobile.** These apps draw the band with vector icons, a real context bar and worded values (`Turn 12`, `$0.42 reply · $3.10 session · $21.40 today`, `47:12 left`, `63% context`). The desktop already shows the branch above the band, so git is left out there unless you change **Parts** in the settings or run `/glitch hud parts …`. tok/s is left out on the desktop too: turn it on with the **Show tok/s** setting or `/glitch hud speed on`.
 
 **The three costs.** A *reply* is everything Claude does to answer one message: every model call, tool use and subagent until it stops. It is left out while it equals the session figure (the first reply). *Session* is the figure `/cost` shows. *Today* adds up every session that ran glitch-hud on this computer since local midnight, in any project; it is not your account's spend on other machines or on claude.ai. With a cap set, the figure shows it: `$3.10 of $5.00 session`.
 
@@ -59,7 +59,7 @@ Left empty, `cacheWarnMinutes` fits the lifetime: marks at 10 and 5 minutes left
 
 ## glitch-pets
 
-Pick a pet and it sits at the end of the HUD row on the desktop app. While Claude works, your pet types on a little laptop; between turns it does its signature move. It reacts to the session through moods, says a short word now and then as a toast, and keeps a daily streak. It is not drawn in the terminal; there, remarks arrive as toasts.
+Pick a pet and it sits at the end of the HUD row on the desktop app. While Claude works, your pet types on a little laptop; between turns it does its signature move. It reacts to the session through moods, says a short word now and then as a toast, and keeps a daily streak. Click the pet and it hops for a moment, then goes back to what it was doing. It is not drawn in the terminal; there, remarks arrive as toasts.
 
 | Pet | Kind | Temperament | Signature move (idle) |
 |---|---|---|---|
@@ -111,6 +111,7 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 | `/glitch hud` | hud | show or hide the band |
 | `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list, e.g. `cost,cache,context` or `cost, cache` |
 | `/glitch hud cost <list>` | hud | cost figures and order for this session, e.g. `session,today` |
+| `/glitch hud speed on\|off\|auto` | hud | show or hide tok/s, kept for later sessions; `auto` follows the setting |
 | `/glitch budget [+N \| N \| off \| on]` | hud | show, raise, set, disable or re-enable this session's caps |
 | `/glitch warm` | hud | keep-warm ping now |
 | `/glitch demo cache <min>` | hud | preview the cache part and warnings at N minutes left; demo warnings say "(demo)", never auto-warm, and the real countdown comes back when the demo runs out or at the next answer |
@@ -134,6 +135,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`. In
 | Setting | Default | Meaning |
 |---|---|---|
 | `parts` | `turn,speed,cost,cache,context,git` | which parts show, in order |
+| `showSpeed` | `auto` | tok/s: `auto` shows it in the terminal only (and on the desktop when Parts was changed), `on` or `off` everywhere |
 | `costShows` | `reply,session,today` | which cost figures show, in order |
 | `budgetSession` | `0` | USD cap per session; 0 is off |
 | `budgetDaily` | `0` | USD cap per local day, across sessions; 0 is off |

@@ -157,15 +157,16 @@ test('band (desktop): worded values, fixed-size icons and a bar, no git', async 
   expect(row).toContain('60:00 left')
   expect(row).toContain('63% context')
   expect(row).not.toContain('main')
+  // tok/s is the terminal's under the default `auto`.
+  expect(row).not.toContain('tok/s')
   expect(svgs.map(x => x.props.alt)).toEqual([
-    'Output speed of the last answer',
     'Session $0.42 · Today on this machine $0.42',
     'Prompt cache countdown. Press ↻ to keep it warm.',
     'Context 63% full',
   ])
   // Plain images at a set size: an interactive Svg drew as a tall frame on the desktop.
   expect(svgs.every(x => x.props.isInteractive === undefined && typeof x.props.width === 'number' && typeof x.props.height === 'number')).toBe(true)
-  expect(svgs.map(x => x.props.height)).toEqual([14, 14, 14, 8])
+  expect(svgs.map(x => x.props.height)).toEqual([14, 14, 8])
 })
 
 test('band (desktop): git shows once the person picks the parts', async ($, on) => {
@@ -262,7 +263,11 @@ test('band (desktop): the keep-warm control is one glyph and reads … while it 
   }
   expect(await label()).toBe('↻')
   const padded = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
-  expect((await padded.find({ key: 'glitch-warm-box' }))?.props.paddingX).toBe(1)
+  // A cell before ↻ only: the gap after it is the row's own.
+  const box = await padded.find({ key: 'glitch-warm-box' })
+  expect(box?.props.paddingLeft).toBe(1)
+  expect(box?.props.paddingX).toBeUndefined()
+  expect(box?.props.paddingRight).toBeUndefined()
   await padded.unmount()
   const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
   const pressed = ui.press({ key: 'glitch-warm' })
@@ -660,12 +665,12 @@ const keyOrder = async ($: Engine, surface: 'terminal' | 'desktop') => {
   return keys
 }
 
-test('desktop row: speed, cost, cache with its keep-warm, context, then pet and ✕', async ($, on) => {
+test('desktop row: cost, cache with its keep-warm, context, then pet and ✕', async ($, on) => {
   withPet(on, petSprite)
   await session($, on)
   await turn($, 0.1)
   const keys = (await keyOrder($, 'desktop')).filter(k => ['speed', 'cost', 'cache', 'context', 'glitch-warm', 'glitch-pet', 'glitch-hide'].includes(k))
-  expect(keys).toEqual(['speed', 'cost', 'cache', 'glitch-warm', 'context', 'glitch-pet', 'glitch-hide'])
+  expect(keys).toEqual(['cost', 'cache', 'glitch-warm', 'context', 'glitch-pet', 'glitch-hide'])
   // Pet and ✕ are siblings under the row's one columnGap: equal space either side of the pet.
   const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
   const pet = await ui.find({ key: 'glitch-pet' })
@@ -728,5 +733,91 @@ test('fit reserves the pet: at a tight width git and speed drop before the pet g
   expect(await ui.find({ key: 'glitch-pet' })).toBeTruthy()
   const row = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join('')
   expect(row).not.toContain('tok/s')
+  await ui.unmount()
+})
+
+test('tok/s under auto: shown in the terminal, left out on the desktop', async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  // No answer timed yet: the terminal shows the bolt and a dash.
+  expect(await rowText($, 160)).toContain('⚡')
+  expect(await rowText($, 160, 'desktop')).not.toContain('tok/s')
+})
+
+test('tok/s under auto shows on the desktop once Parts names it', { options: { parts: 'speed,cost,cache' } }, async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  expect(await rowText($, 160, 'desktop')).toContain('tok/s')
+})
+
+test('showSpeed on shows tok/s on the desktop, off hides it in the terminal', { options: { showSpeed: 'on' } }, async ($, on) => {
+  await session($, on)
+  await turn($, 0.1)
+  expect(await rowText($, 160, 'desktop')).toContain('tok/s')
+  await $.command.run({ command: 'glitch-hud', args: 'hud speed off' } as never)
+  expect(await rowText($, 160)).not.toContain('⚡')
+  await $.command.run({ command: 'glitch-hud', args: 'hud speed auto' } as never)
+  expect(await rowText($, 160)).toContain('⚡')
+  expect(await rowText($, 160, 'desktop')).not.toContain('tok/s')
+})
+
+test('/glitch hud speed is kept for the next session; auto clears it', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  await session($, on, MAIN, { store })
+  expect((await $.command.run({ command: 'glitch-hud', args: 'hud speed on' } as never)) as unknown).toEqual({ text: 'tok/s: on.' })
+  expect(store.speed).toBe('on')
+  await $.session.start({ source: 'resume', cwd: 'C:\repo', surface: 'desktop', isInteractive: true } as never)
+  await turn($, 0.1)
+  expect(await rowText($, 160, 'desktop')).toContain('tok/s')
+  await $.command.run({ command: 'glitch-hud', args: 'hud speed auto' } as never)
+  expect('speed' in store).toBe(false)
+  expect((await $.command.run({ command: 'glitch-hud', args: 'hud speed fast' } as never)) as unknown).toEqual({ text: 'Usage: /glitch hud speed auto | on | off' })
+})
+
+// The test's `$` has no `$.state`: the plugin's writes of `poke` are watched instead.
+const pokes = (on: On) => {
+  const seen: unknown[] = []
+  on('state.set', (_$, e, next) => {
+    const w = e as { key?: string; value?: unknown }
+    if (w.key === 'poke') seen.push(w.value)
+    return next(e)
+  })
+  return seen
+}
+
+test('a press on the pet records the time for glitch-pets', async ($, on) => {
+  withPet(on, petSprite)
+  const seen = pokes(on)
+  const clock = await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  const target = await ui.find({ key: 'glitch-pet-target' })
+  // Laid over the pet, so the row keeps its size.
+  expect(target?.props.position).toBe('absolute')
+  expect(await ui.find({ key: 'glitch-pet-poke' })).toBeTruthy()
+  await clock.advance(5000)
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'glitch-pet-poke' })
+  await ui.unmount()
+  expect(seen).toEqual([{ at: Date.parse('2026-10-12T10:00:00Z') + 5000 }])
+})
+
+test('a right click or a hover on the pet is no press', async ($, on) => {
+  withPet(on, petSprite)
+  const seen = pokes(on)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'right', in: 'glitch-pet-poke' })
+  await ui.pointer({ type: 'enter', x: 1, y: 0, in: 'glitch-pet-poke' })
+  await ui.unmount()
+  expect(seen).toEqual([])
+})
+
+test('no pet, no press target', async ($, on) => {
+  withPet(on, null)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  expect(await ui.find({ key: 'glitch-pet-poke' })).toBeFalsy()
   await ui.unmount()
 })

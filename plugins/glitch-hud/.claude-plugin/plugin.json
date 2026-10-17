@@ -8,6 +8,7 @@
   "dependencies": ["glitch-core"],
   "userConfig": {
     "parts": { "type": "string", "title": "Parts", "description": "Comma list, in order: turn,speed,cost,cache,context,git", "default": "turn,speed,cost,cache,context,git" },
+    "showSpeed": { "type": "string", "title": "Show tok/s", "description": "auto: in the terminal only (and on the desktop when Parts was chosen); /glitch hud speed on|off overrides it", "default": "auto", "options": ["auto", "on", "off"] },
     "costShows": { "type": "string", "title": "Cost shows", "description": "Comma list, in order: reply (the last answer), session, today (every session on this machine)", "default": "reply,session,today" },
     "budgetSession": { "type": "number", "title": "Session budget (USD)", "description": "0 turns it off", "default": 0 },
     "budgetDaily": { "type": "number", "title": "Daily budget (USD)", "description": "Across sessions, per local day; 0 turns it off", "default": 0 },

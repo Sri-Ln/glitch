@@ -1,4 +1,4 @@
-import type { CostScope, PartId } from '../types'
+import type { CostScope, PartId, SpeedMode } from '../types'
 import { defaultMarks } from './cache'
 
 export type NotifyMode = 'windows' | 'toast' | 'off'
@@ -17,6 +17,8 @@ export type HudConfig = {
   /** How long the prompt cache lives after a request: 60 or 5 minutes. */
   cacheTtlMs: number
   notify: NotifyMode
+  /** tok/s: auto shows it in the terminal only (and on the desktop when Parts was chosen). */
+  speed: SpeedMode
   autoWarm: boolean
   autoWarmMaxIdle: number
 }
@@ -35,9 +37,14 @@ export const DEFAULT_CONFIG: HudConfig = {
   cacheWarnMinutes: null,
   cacheTtlMs: 60 * 60_000,
   notify: 'toast',
+  speed: 'auto',
   autoWarm: false,
   autoWarmMaxIdle: 120,
 }
+
+export const SPEED_MODES: SpeedMode[] = ['auto', 'on', 'off']
+
+export const parseSpeed = (s: unknown): SpeedMode | null => (SPEED_MODES.includes(s as SpeedMode) ? (s as SpeedMode) : null)
 
 export const parseParts = (s: string): PartId[] | null => parseList(s, ALL_PARTS)
 
@@ -117,6 +124,11 @@ export function parseConfig(o: Record<string, unknown>): { config: HudConfig; pr
   if (o.notify !== undefined) {
     if (o.notify === 'windows' || o.notify === 'toast' || o.notify === 'off') config.notify = o.notify
     else problems.push('notify: must be windows, toast or off, using toast')
+  }
+  if (o.showSpeed !== undefined) {
+    const speed = parseSpeed(o.showSpeed)
+    if (speed) config.speed = speed
+    else problems.push('showSpeed: must be auto, on or off, using auto')
   }
   readNumbers(['autoWarmMaxIdle'])
   return { config, problems }

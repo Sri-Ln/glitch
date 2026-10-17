@@ -4,7 +4,7 @@ import type { Budget, Level } from '../types'
 import { crossed, levelOf, usd } from './budget'
 import { clockText } from './cache'
 
-export const USAGE = 'Glitch HUD: /glitch hud [parts <list> | cost <list>] · budget [+N|N|off|on] · warm · demo cache <min> | demo budget <pct>'
+export const USAGE = 'Glitch HUD: /glitch hud [parts <list> | cost <list> | speed on|off|auto] · budget [+N|N|off|on] · warm · demo cache <min> | demo budget <pct>'
 export const BUDGET_USAGE = 'Usage: /glitch budget [+N | N | off | on]'
 export const DEMO_USAGE = 'Usage: /glitch demo cache <minutes> | demo budget <percent>'
 export const WARM_PROMPT = 'Keep-warm ping from the Glitch HUD. Reply with just: ok'
