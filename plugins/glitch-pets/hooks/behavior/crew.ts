@@ -99,6 +99,10 @@ export const onAgentTurnEnd = (s: CrewState, agentId: string, u: UsageLike | und
     endedAt: r.status === 'running' ? r.endedAt : r.endedAt ?? now,
   }))
 
+/** A row missing from the agent list this long after its spawn has ended (the list drops a finished task soon). */
+export const LIST_GRACE_MS = 3000
+
+/** Rows from a successful `agent.list` (never call it with a failed call's empty stand-in). */
 export function onStatuses(s: CrewState, list: readonly { id: string; status: string }[], now: number): CrewState {
   const by = new Map(list.map(a => [a.id, a.status]))
   return {
@@ -106,7 +110,9 @@ export function onStatuses(s: CrewState, list: readonly { id: string; status: st
     rows: s.rows.map(r => {
       if (r.status !== 'running') return r
       const st = by.get(r.id)
-      if (st === 'completed') return { ...r, status: 'done', endedAt: now }
+      // A teammate waiting for a message has done its part.
+      if (st === 'completed' || st === 'idle') return { ...r, status: 'done', endedAt: now }
+      if (st === undefined && now - r.startedAt >= LIST_GRACE_MS) return { ...r, status: 'done', endedAt: now }
       if (st === 'failed' || st === 'killed') return { ...r, status: 'failed', endedAt: now }
       return r
     }),

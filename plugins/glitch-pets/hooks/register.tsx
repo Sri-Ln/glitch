@@ -59,6 +59,8 @@ let crewDonePending = false
 const minis = new Map<string, Sprite>()
 /** The crew's 2+ helpers finished with no reviewer: the next prompt carries the reminder. */
 let reviewMissed = false
+/** A prompt is carrying the reminder now: claimed before awaiting, so two prompts at once cannot both. */
+let reminderInFlight = false
 
 // $.state.get needs a literal plugin and key, so these three cannot be merged.
 async function hudStats($: EngineInterface): Promise<unknown> {
@@ -209,6 +211,7 @@ export const register: Register = (on, options) => {
   ticks = 0
   crewDonePending = false
   reviewMissed = false
+  reminderInFlight = false
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -248,8 +251,14 @@ export const register: Register = (on, options) => {
     }
     // The missed-review reminder rides the next prompt that reaches the model (not a
     // plugin's own, not a slash command's), as context the person never sees.
-    if (!reviewMissed || !config.crewReview || e.origin.kind === 'plugin' || (e as { command?: unknown }).command) return next(e)
-    const r = await next({ ...e, context: [...(e.context ?? []), GATE_TEXT] })
+    if (!reviewMissed || reminderInFlight || !config.crewReview || e.origin.kind === 'plugin' || (e as { command?: unknown }).command) return next(e)
+    reminderInFlight = true
+    let r: Awaited<ReturnType<typeof next>>
+    try {
+      r = await next({ ...e, context: [...(e.context ?? []), GATE_TEXT] })
+    } finally {
+      reminderInFlight = false
+    }
     if (r.drop === undefined) {
       reviewMissed = false
       await update($, crew, c => ({ ...c, gateFired: true })).catch(() => undefined)
@@ -278,6 +287,9 @@ export const register: Register = (on, options) => {
       return await next(e)
     } finally {
       if (e.agentId === undefined) {
+        // Statuses first, while the turn still counts as running: a reviewer that just
+        // finished holds crewDone for the remark below, which then wins over happy.
+        await refreshCrew($).catch(() => undefined)
         try {
           const now = await $.clock.now()
           await update($, mood, m => onTurnEnd(m, e.reason, now))
@@ -291,7 +303,6 @@ export const register: Register = (on, options) => {
         // Each main turn's end: is the crew's work unreviewed (the reminder goes out
         // with the next prompt), then a quiet turn closes the crew.
         try {
-          await refreshCrew($)
           if (config.crewReview) {
             const stats = (await hudStats($)) as { total?: number } | null
             const capReached = isCapReached((await hudBudget($)) as BudgetLike | null, stats?.total ?? 0)

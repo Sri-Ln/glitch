@@ -234,17 +234,21 @@ const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
 
 // The engine around a crew: agents' statuses, the session's cost, what each prompt carried.
 const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
-  const h = { status: {} as Record<string, string>, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[] }
+  const h = { status: {} as Record<string, string>, listFails: false, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[] }
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
-  on('prompt.submit', (_$, e) => {
+  on('prompt.submit', async (_$, e) => {
     h.contexts.push(e.context)
+    if (h.hold) await h.hold
     return { text: e.text } as never
   })
   on('agent.spawn', (_$, e) => {
     h.status[`ag-${e.description}`] = 'running'
     return { model: 'claude-opus-5-5', agentId: `ag-${e.description}` } as never
   })
-  on('agent.list', () => ({ value: Object.entries(h.status).map(([id, status]) => ({ id, description: id, type: 'general-purpose', status })) }) as never)
+  on('agent.list', () => {
+    if (h.listFails) throw new Error('list refused')
+    return { value: Object.entries(h.status).map(([id, status]) => ({ id, description: id, type: 'general-purpose', status })) } as never
+  })
   on('ui.open', (_$, e) => {
     h.opened.push(e.id)
     return { value: { isPlaced: true } } as never
@@ -400,4 +404,62 @@ test('with the crew review off: no rule and no reminder', { options: { crewRevie
   expect(sectionIds(await composeOnce($))).toEqual(['intro'])
   await submit($)
   expect(h.contexts).toEqual([undefined])
+})
+
+test('a helper that leaves the list ends after the grace; a failed list call ends nothing', async ($, on) => {
+  const writes: string[] = []
+  on('state.set', (_$, e, next) => {
+    writes.push(String((e as { key?: string }).key))
+    return next(e)
+  })
+  const { h, clock } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'A', 'builder-1')
+  await mainEnd($, 'm1')
+  // The task leaves the list; a refused list call must not end the row.
+  delete h.status['ag-A']
+  h.listFails = true
+  await clock.advance(5000)
+  expect(await paneText($, 'terminal')).not.toContain('A ✓')
+  h.listFails = false
+  await clock.advance(1000)
+  expect(await paneText($, 'terminal')).toContain('A ✓')
+  // Ended: the next quiet turn closes the crew and the 1 s crew writes stop.
+  await mainStart($, 'm2')
+  await mainEnd($, 'm2')
+  writes.length = 0
+  await clock.advance(3000)
+  expect(writes.filter(k => k === 'crew')).toEqual([])
+  await mainStart($, 'm3')
+  await spawnHelper($, 'B', 'B', 'builder-1')
+  expect(await paneText($, 'terminal')).not.toContain('A ✓')
+  expect(h.opened).toEqual(['glitch-crew', 'glitch-crew'])
+})
+
+test('at a long turn\'s end the crewDone remark wins over happy', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'R', 'R', 'reviewer-1')
+  h.status['ag-R'] = 'completed'
+  await $.turn.complete({ turnId: 'm1', reason: 'answer', answer: '', durationMs: 200_000, isAborted: false } as never)
+  const crewDone = ['The pack is done! I checked them all!', 'Everyone did great! Review done!', 'All checked! Good pack!'].map(l => `Bud: ${l}`)
+  const remarks = toasts.filter(t => t.startsWith('Bud: '))
+  expect(remarks.length).toBe(1)
+  expect(crewDone).toContain(remarks[0])
+})
+
+test('two prompts at once carry the reminder once', async ($, on) => {
+  const { h, clock } = await backgroundCrew($, on)
+  await mainEnd($, 'm3')
+  // The first prompt is still entering when the second arrives.
+  let release = () => {}
+  h.hold = new Promise<void>(r => (release = r))
+  const both = Promise.all([submit($), submit($)])
+  await clock.advance(100)
+  release()
+  await both
+  h.hold = null
+  expect(h.contexts.filter(c => c?.length).length).toBe(1)
+  await submit($)
+  expect(h.contexts.filter(c => c?.length).length).toBe(1)
 })

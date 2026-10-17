@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { INITIAL_CREW, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onTool, progressOf, reviewerRunning, roleOf, shares, tierOf, tokenWeight } from './crew'
+import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onTool, progressOf, reviewerRunning, roleOf, shares, tierOf, tokenWeight } from './crew'
 
 test('roleOf reads <role>-<n> names first, then the description', () => {
   expect(roleOf('builder-2', 'whatever')).toBe('builder')
@@ -137,4 +137,15 @@ test('a main turn start only records whether it is busy', () => {
   const s = onMainTurnStart(spawn())
   expect(s.turnBusy).toBe(true)
   expect(s.rows).toEqual(spawn().rows)
+})
+
+test('an idle agent (a teammate waiting) is done', () => {
+  const s = onStatuses(spawn(), [{ id: 'a1', status: 'idle' }], 2000)
+  expect(s.rows[0]).toMatchObject({ status: 'done', endedAt: 2000 })
+})
+
+test('a row missing from the list ends once past the grace, not before', () => {
+  expect(onStatuses(spawn(), [], 1000 + LIST_GRACE_MS)).toMatchObject({ rows: [{ status: 'done', endedAt: 1000 + LIST_GRACE_MS }] })
+  expect(onStatuses(spawn(), [], 1000 + LIST_GRACE_MS - 1).rows[0]?.status).toBe('running')
+  expect(onStatuses(spawn(), [{ id: 'other', status: 'running' }], 1500).rows[0]?.status).toBe('running')
 })
