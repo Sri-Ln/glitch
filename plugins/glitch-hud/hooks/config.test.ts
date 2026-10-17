@@ -9,6 +9,16 @@ test('config: defaults when nothing is set', async () => {
   expect(DEFAULT_CONFIG.cacheWarnMinutes).toBeNull()
   expect(DEFAULT_CONFIG.costShows).toEqual(['reply', 'session', 'today'])
   expect(DEFAULT_CONFIG.cacheTtlMs).toBe(60 * 60_000)
+  // Warnings stay inside the session that raised them unless the person opts in to the OS.
+  expect(DEFAULT_CONFIG.notify).toBe('toast')
+})
+
+test('config: each notify mode is kept as given', async () => {
+  for (const mode of ['windows', 'toast', 'off'] as const) {
+    const { config, problems } = parseConfig({ notify: mode })
+    expect(config.notify).toBe(mode)
+    expect(problems).toEqual([])
+  }
 })
 
 test('config: a 5-minute cache lifetime with no marks typed names no problem', async () => {
@@ -68,7 +78,7 @@ test('config: every bad value falls back and is named', async () => {
     'parts: unknown or empty entry, using default',
     'budgetSession: must be a number ≥ 0, using 0',
     'cacheWarnMinutes: must be minutes between 1 and 59, using 10,5',
-    'notify: must be windows, toast or off, using windows',
+    'notify: must be windows, toast or off, using toast',
     'autoWarmMaxIdle: must be a number ≥ 0, using 120',
   ])
 })

@@ -34,7 +34,7 @@ export const DEFAULT_CONFIG: HudConfig = {
   budgetBlocksAgents: false,
   cacheWarnMinutes: null,
   cacheTtlMs: 60 * 60_000,
-  notify: 'windows',
+  notify: 'toast',
   autoWarm: false,
   autoWarmMaxIdle: 120,
 }
@@ -116,7 +116,7 @@ export function parseConfig(o: Record<string, unknown>): { config: HudConfig; pr
   }
   if (o.notify !== undefined) {
     if (o.notify === 'windows' || o.notify === 'toast' || o.notify === 'off') config.notify = o.notify
-    else problems.push('notify: must be windows, toast or off, using windows')
+    else problems.push('notify: must be windows, toast or off, using toast')
   }
   readNumbers(['autoWarmMaxIdle'])
   return { config, problems }
