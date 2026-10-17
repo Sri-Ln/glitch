@@ -47,8 +47,10 @@ const REST: Frame = patch(BASE, { 12: '.Oo..Oo..oO..oO.' })
 const EYES: Pt[] = [[4, 6], [5, 6], [4, 7], [5, 7], [10, 6], [11, 6], [10, 7], [11, 7]]
 const noEyes = (f: Frame): Frame => put(f, EYES, 'o')
 const closed = (f: Frame): Frame => put(noEyes(f), [[4, 7], [5, 7], [10, 7], [11, 7]], 'e')
-// Happy: top row of each eye kept (a ^), mouth a small U.
-const smile = put(put(BASE, [[4, 7], [5, 7], [10, 7], [11, 7]], 'o'), [[5, 8], [10, 8], [6, 9], [7, 9], [8, 9], [9, 9]], 'e')
+// Happy: top row of each eye kept (a ^), mouth a small U. The skirt's dark seams at x 6 and 9 sit right
+// under the U's ends, where they read as drips, so the smile fills them with body colour.
+const grin = (f: Frame): Frame => put(put(put(f, [[4, 7], [5, 7], [10, 7], [11, 7]], 'o'), [[6, 10], [9, 10]], 'o'), [[5, 8], [10, 8], [6, 9], [7, 9], [8, 9], [9, 9]], 'e')
+const smile = grin(BASE)
 
 const ZS: Pt[][] = [[[14, 3]], [[14, 2], [15, 1]], [[13, 1], [15, 0]]]
 const sleepyBase = lower(closed(REST), 8)
@@ -98,7 +100,7 @@ const SCRATCH: Pt[][] = [
 ]
 const investigating = [[0, 0], [1, 1], [0, 1], [1, 0]].map(([g, s]) => put(holdLens(pondering, g === 1), SCRATCH[s!] as Pt[], 'o'))
 // Pleased (a helper finished): a smile, two outer arms thrown up, a tick. No hop: that is happy's.
-const smileRest = put(put(REST, [[4, 7], [5, 7], [10, 7], [11, 7]], 'o'), [[5, 8], [10, 8], [6, 9], [7, 9], [8, 9], [9, 9]], 'e')
+const smileRest = grin(REST)
 const armsUp = put(smileRest, [[0, 10], [0, 9], [15, 10], [15, 9]], 'o')
 const pleased = [smileRest, tick(armsUp, 12, 0), armsUp, tick(smileRest, 12, 0)]
 
