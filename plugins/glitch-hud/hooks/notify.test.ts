@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { NotifyIO } from './notify'
+import { DEFAULT_CONFIG } from './config'
 import { notify, projectName, toastArgv } from './notify'
 
 // notify takes its engine calls as an injected NotifyIO; the stub records them.
@@ -92,4 +93,25 @@ test('notify: off and toast modes', async () => {
   expect(calls.toasts).toEqual(['t: m'])
   expect(calls.run).toBe(0)
   expect(calls.notify).toBe(0)
+})
+
+test('notify: with default settings on Windows a cache warning is an in-app toast only', async () => {
+  // PowerShell and Claude Code's notification would both succeed; neither may be used.
+  const { $, calls } = stubEngine({
+    env: { OS: 'Windows_NT' },
+    run: () => ({ exitCode: 0, stdout: '', stderr: '' }),
+    notify: () => ({ isSent: true, channel: 'kitty' }),
+  })
+  expect(await notify($, DEFAULT_CONFIG.notify, 'proj — Glitch', 'Prompt cache expires in 5 min')).toBe('toast')
+  expect(calls.run).toBe(0)
+  expect(calls.notify).toBe(0)
+  expect(calls.toasts).toEqual(['proj — Glitch: Prompt cache expires in 5 min'])
+})
+
+test('notify: off on Windows runs nothing and shows nothing', async () => {
+  const { $, calls } = stubEngine({ env: { OS: 'Windows_NT' }, run: () => ({ exitCode: 0, stdout: '', stderr: '' }), notify: () => ({ isSent: true }) })
+  expect(await notify($, 'off', 't', 'm')).toBe('off')
+  expect(calls.run).toBe(0)
+  expect(calls.notify).toBe(0)
+  expect(calls.toasts).toEqual([])
 })

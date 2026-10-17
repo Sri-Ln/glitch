@@ -11,6 +11,9 @@ let usd = 0
 let toasts: string[] = []
 let gitOut: string | null = null
 let gitRuns = 0
+// PowerShell toasts run and Claude Code notifications sent (the `windows` route).
+let psRuns = 0
+let uiNotifies = 0
 // How many of the next toasts the host refuses (throws).
 let toastThrows = 0
 // While set, the session's usage cannot be read / the host refuses the plugin's state writes.
@@ -30,6 +33,8 @@ const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { reg
   toasts = []
   gitOut = git
   gitRuns = 0
+  psRuns = 0
+  uiNotifies = 0
   toastThrows = 0
   usageFails = false
   stateRefused = false
@@ -70,7 +75,15 @@ const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { reg
     if (usageFails) throw new Error('usage refused')
     return { value: { startedAt: 0, context: { window: 1_000_000, tokens: 630_000, percent: 63 }, rateLimits: [], cost: { usd } } } as never
   })
-  on('process.run', () => {
+  on('ui.notify', () => {
+    uiNotifies++
+    return { value: { isSent: true } } as never
+  })
+  on('process.run', (_$, e) => {
+    if (e.argv[0] === 'powershell.exe') {
+      psRuns++
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
+    }
     gitRuns++
     return { value: gitOut === null ? { exitCode: 128, stdout: '', stderr: '' } : { exitCode: 0, stdout: gitOut, stderr: '' } } as never
   })
@@ -448,6 +461,56 @@ test('band: cache marks notify once each, never while a turn runs, and re-arm', 
   await ($.turn.complete as (e: unknown) => Promise<unknown>)({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't2', reason: 'answer' })
   await clock.advance(50 * 60_000)
   expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 10 min'])
+})
+
+test('band: with default settings a cache warning is an in-app toast, never a Windows or Claude Code notification', async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  await clock.advance(50 * 60_000)
+  expect(toasts).toEqual(['repo — Glitch: Prompt cache expires in 10 min'])
+  expect(psRuns).toBe(0)
+  expect(uiNotifies).toBe(0)
+})
+
+test('band: notify windows still sends the cache warning as a native Windows toast', { options: { notify: 'windows' } }, async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  await clock.advance(50 * 60_000)
+  expect(psRuns).toBe(1)
+  expect(uiNotifies).toBe(0)
+  expect(toasts).toEqual([])
+})
+
+test('band: notify off sends no cache warning at all', { options: { notify: 'off' } }, async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  await clock.advance(50 * 60_000)
+  expect(psRuns).toBe(0)
+  expect(uiNotifies).toBe(0)
+  expect(toasts).toEqual([])
+})
+
+test('band: with default settings a budget cap shows one in-app toast, no Windows or Claude Code notification', { options: { budgetSession: 10 } }, async ($, on) => {
+  await session($, on)
+  await turn($, 10.5)
+  expect(toasts).toEqual(['Glitch: session spend $10.50 reached the $10.00 cap'])
+  expect(psRuns).toBe(0)
+  expect(uiNotifies).toBe(0)
+})
+
+test('band: notify windows at a budget cap still sends the Windows notification', { options: { budgetSession: 10, notify: 'windows' } }, async ($, on) => {
+  await session($, on)
+  await turn($, 10.5)
+  expect(toasts).toEqual(['Glitch: session spend $10.50 reached the $10.00 cap'])
+  expect(psRuns).toBe(1)
+})
+
+test('band: notify off at a budget cap keeps the session toast only', { options: { budgetSession: 10, notify: 'off' } }, async ($, on) => {
+  await session($, on)
+  await turn($, 10.5)
+  expect(toasts).toEqual(['Glitch: session spend $10.50 reached the $10.00 cap'])
+  expect(psRuns).toBe(0)
+  expect(uiNotifies).toBe(0)
 })
 
 test('session.start: a refused /glitch-hud registration toasts and start-up goes on', async ($, on) => {
