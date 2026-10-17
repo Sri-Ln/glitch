@@ -24,6 +24,9 @@ import { crewTree } from './pane'
 import type { CrewView } from './pane'
 import { PERSONAS } from './personas/index'
 import { onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
+// Crew themes (#41): the setting and /glitch crew theme. The pane draws minis with crewMini(view.crewTheme, ...).
+import { STORE_CREW_THEME, crewThemeArgOf, parseThemeArg, themeList } from './commands'
+import { CREW_THEMES, crewThemeIds } from './crew-themes/index'
 
 const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, failStreak: 0, pokedUntil: 0, pokeSeen: 0 }
 
@@ -277,6 +280,28 @@ function withStepUps<E extends { origin: { kind: string }; context?: readonly st
 }
 // ── end crew tiers (module part) ──
 
+// ── Crew themes (#41) ─────────────────────────────────────────────────────────────────────
+// The active theme lives in `view.crewTheme`: the saved choice, else the crewTheme setting.
+const themeOrConfig = (saved: unknown): string => (typeof saved === 'string' && Object.hasOwn(CREW_THEMES, saved) ? saved : config.crewTheme)
+
+async function restoreCrewTheme($: EngineInterface) {
+  const crewTheme = themeOrConfig(await $.store.get(STORE_CREW_THEME).catch(() => undefined))
+  await update($, view, v => ({ ...v, crewTheme }))
+}
+
+// `arg` is the theme argument (see crewThemeArgOf): empty lists the themes.
+async function answerCrewTheme($: EngineInterface, arg: string): Promise<string> {
+  const ids = crewThemeIds()
+  const list = async () => themeList(themeOrConfig((await read($, view)).crewTheme), ids.map(id => ({ id, name: CREW_THEMES[id]?.name ?? id })))
+  const parsed = parseThemeArg(arg, ids)
+  if (parsed.kind === 'show') return list()
+  if (parsed.kind === 'unknown') return `Unknown crew theme "${parsed.name}". ${await list()}`
+  await $.store.set(STORE_CREW_THEME, parsed.id).catch(() => undefined)
+  await update($, view, v => ({ ...v, crewTheme: parsed.id }))
+  return `Crew theme: ${CREW_THEMES[parsed.id]?.name ?? parsed.id}.`
+}
+// ── end crew themes ───────────────────────────────────────────────────────────────────────
+
 export const register: Register = (on, options) => {
   const parsed = parsePetsConfig(options as Record<string, unknown>)
   const problems = parsed.problems
@@ -304,6 +329,7 @@ export const register: Register = (on, options) => {
     const petId = saved === 'off' || (PET_IDS as readonly unknown[]).includes(saved) ? (saved as PetId | 'off') : config.pet
     const now = await $.clock.now()
     await update($, view, v => ({ ...v, petId }))
+    await restoreCrewTheme($).catch(() => undefined) // crew themes (#41)
     await update($, mood, m => ({ ...m, since: now, lastPromptAt: m.lastPromptAt || now }))
     if (!ticking) {
       ticking = true
@@ -498,11 +524,16 @@ export const register: Register = (on, options) => {
     }
   })
 
-  on('command.run', { command: 'glitch-pets' }, async ($, e) =>
-    ({ text: firstWord(e.args) === 'crew' ? await toggleCrew($) : await answerPets($, petArgsOf('glitch-pets', e.args)) }))
+  on('command.run', { command: 'glitch-pets' }, async ($, e) => {
+    const themeArg = crewThemeArgOf(e.args) // crew themes (#41)
+    if (themeArg !== null) return { text: await answerCrewTheme($, themeArg) }
+    return { text: firstWord(e.args) === 'crew' ? await toggleCrew($) : await answerPets($, petArgsOf('glitch-pets', e.args)) }
+  })
   on('command.run', { command: 'glitch' }, async ($, e, next) => {
     const word = firstWord(e.args)
     if (!ROUTED_PETS.includes(word)) return next(e)
+    const themeArg = crewThemeArgOf(e.args) // crew themes (#41)
+    if (themeArg !== null) return { text: await answerCrewTheme($, themeArg) }
     return { text: word === 'crew' ? await toggleCrew($) : await answerPets($, petArgsOf('glitch', e.args)) }
   })
 

@@ -55,6 +55,13 @@ test('a persona may not use a laptop palette key of its own', () => {
   expect(personaProblems({ ...p, palette: { ...p.palette, '4': '#000000' } }).join()).toContain('reserved for the laptop')
 })
 
+test('a persona keeps to letter keys: digits and punctuation are reserved for crew themes and the laptop', () => {
+  const p = good()
+  for (const key of ['0', '9', '^', '~', '(']) {
+    expect(personaProblems({ ...p, palette: { ...p.palette, [key]: '#000000' } }).join()).toContain('reserved for crew themes')
+  }
+})
+
 test('the laptop paw must be a palette key', () => {
   expect(personaProblems({ ...good(), laptopPaw: 'z' }).join()).toContain('laptopPaw')
 })

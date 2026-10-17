@@ -106,6 +106,7 @@ Crew                                         ≈$0.28 · 293k tok · 0:46
 - Once every helper is done, the finished list folds to one line (`3 done, 0 failed`).
 - In the terminal there are no sprites: each row shows the role and tier as words instead.
 - `/glitch crew` (or `/glitch-pets crew`) opens or closes the pane. With `crewPane: auto` it opens by itself when the first helper starts.
+- `/glitch crew theme [id]` (or `/glitch-pets crew theme [id]`) lists the crew looks, or picks one and keeps it: `busy-hands` (default: each helper acts its role out beside itself, and the model sets how much each beat makes and the tempo) or `hats`.
 
 The `crew` skill is the workflow Claude follows when work splits into 2 or more parts:
 
@@ -121,6 +122,7 @@ A standing system-prompt rule asks for this. If 2 or more crew helpers (named `b
 | `crewPane` | `auto` | `auto` opens the pane when helpers start; `manual` waits for `/glitch crew` |
 | `crewReview` | `true` | the crew rule in the system prompt, and the reminder when a review was skipped |
 | `crewTiers` | empty | JSON: each crew tier's model and effort (see below); empty uses the default table |
+| `crewTheme` | `busy-hands` | how helpers look in the pane: `busy-hands` or `hats`; `/glitch crew theme <id>` overrides it |
 
 #### Who picks the roles, models and effort
 

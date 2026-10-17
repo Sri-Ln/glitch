@@ -30,7 +30,11 @@ export type MoodState = {
   pokeSeen: number
 }
 
-export type PetsView = { petId: PetId | 'off' }
+export type PetsView = {
+  petId: PetId | 'off'
+  /** The crew pane's theme (a crew-themes registry id): /glitch crew theme, else the crewTheme setting. */
+  crewTheme?: string
+}
 
 export type Role = 'builder' | 'researcher' | 'designer' | 'tester' | 'reviewer' | 'other'
 export type Tier = 'light' | 'medium' | 'heavy'
