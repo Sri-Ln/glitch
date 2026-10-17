@@ -241,7 +241,7 @@ const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
 
 // The engine around a crew: agents' statuses, the session's cost, what each prompt carried.
 const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
-  const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[], contextOut: 'none' as 'none' | 'echo' | 'strip', spawned: [] as { type: string; model?: string; name?: string }[] }
+  const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[], contextOut: 'none' as 'none' | 'echo' | 'strip', spawned: [] as { type: string; model?: string; name?: string }[], toolInputs: [] as Record<string, unknown>[] }
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
   on('prompt.submit', async (_$, e) => {
     h.contexts.push(e.context)
@@ -266,7 +266,10 @@ const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
   })
   on('ui.panes', () => ({ value: [] }) as never)
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd: h.usd } } }) as never)
-  on('tool.call', () => ({ result: 'ok' }) as never)
+  on('tool.call', (_$, e) => {
+    h.toolInputs.push(e as never)
+    return { result: 'ok' } as never
+  })
   on('turn.step', async function* () {
     return { turnId: 's', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: h.step } as never
   })
@@ -1344,4 +1347,79 @@ test('with no crew the 1 s tick reads no cost', async ($, on) => {
   await clock.advance(3000)
   expect(usageCalls).toBe(0)
   expect(statsReads).toEqual([])
+})
+
+// ── Crew tiers, fix round 2: forced retries take the target rung's effort; tidy holds ──
+
+const agentCall = ($: Engine, d: string, type: string, name: string, effort?: string) =>
+  $.tool.call({ tool: 'Agent', description: d, prompt: 'p', subagent_type: `glitch-pets:${type}`, name, ...(effort ? { effort } : {}) } as never)
+
+test('a forced retry that carries its own effort runs at the target rung\'s effort', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  h.status['ag-A'] = 'failed'
+  await agentEnd($, 'ag-A')
+  await submit($)
+  await agentCall($, 'A2', 'crew-light', 'builder-1', 'max')
+  expect(h.toolInputs[0]?.effort).toBe('high')
+  // The same name above the failed rung keeps that rung's effort; another name its own type's.
+  await agentCall($, 'A3', 'crew-heavy', 'builder-1', 'max')
+  expect(h.toolInputs[1]?.effort).toBe('high')
+  await agentCall($, 'C', 'crew-medium', 'builder-2', 'max')
+  expect(h.toolInputs[2]?.effort).toBe('medium')
+  // And the spawn itself is forced the same way.
+  await spawnCrew($, 'A2', 'crew-light', 'builder-1')
+  expect(h.spawned[1]).toEqual({ type: 'glitch-pets:crew-light-high', name: 'builder-1' })
+})
+
+test('while a step-up note is in flight a turn end does not raise the review reminder', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  await spawnCrew($, 'B', 'crew-medium', 'builder-2')
+  await mainEnd($, 'm1')
+  await mainStart($, 'm2')
+  h.status['ag-A'] = 'failed'
+  h.status['ag-B'] = 'completed'
+  await agentEnd($, 'ag-A')
+  await agentEnd($, 'ag-B')
+  let release = () => undefined as void
+  h.hold = new Promise<void>(r => (release = r))
+  const first = submit($, { kind: 'task-notification' })
+  await mainEnd($, 'm2')
+  release()
+  h.hold = null
+  await first
+  await submit($)
+  expect(h.contexts[0]?.[0]).toContain('failed on')
+  expect(h.contexts[1]).toBeUndefined()
+})
+
+test('a note not acted on by the turn end stops holding the review, yet a later same-name retry still links', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  await spawnCrew($, 'B', 'crew-medium', 'builder-2')
+  await mainEnd($, 'm1')
+  await mainStart($, 'm2')
+  h.status['ag-A'] = 'failed'
+  h.status['ag-B'] = 'completed'
+  await agentEnd($, 'ag-A')
+  await agentEnd($, 'ag-B')
+  await mainEnd($, 'm2')
+  await submit($)
+  await mainStart($, 'm3')
+  // m3 ends with no retry: the note no longer holds the review.
+  await mainEnd($, 'm3')
+  await submit($)
+  expect(h.contexts[1]?.[0]).toContain('reviewer-1')
+  // A later retry by the name is still forced one rung up and counts.
+  await mainStart($, 'm4')
+  await spawnCrew($, 'A2', 'crew-light', 'builder-1')
+  expect(h.spawned[2]).toEqual({ type: 'glitch-pets:crew-light-high', name: 'builder-1' })
+  h.status['ag-A2'] = 'failed'
+  await agentEnd($, 'ag-A2')
+  await submit($)
+  expect(stepNotes(h)[1]).toContain('glitch-pets:crew-medium:')
 })

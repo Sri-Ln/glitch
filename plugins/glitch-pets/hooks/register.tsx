@@ -282,6 +282,10 @@ let ladder: Rung[] = ladderOf(parsePetsConfig({}).config.crewTiers)
 let stepUpsQueued: StepUp[] = []
 /** Notes sent this main turn: the retry spawn they ask for claims one, linking its row. */
 let stepUpsSent: StepUp[] = []
+/** Notes riding a prompt now (between its submit and its answer): they hold the review too. */
+let stepUpsInFlight: StepUp[] = []
+/** Notes a main turn ended without acting on: still claimable by name, no longer holding the review. */
+let stepUpsStale: StepUp[] = []
 /** Rows already stepped up from (queued, sent or claimed): a resumed row failing again is not stepped twice. */
 let steppedFrom = new Set<string>()
 
@@ -294,11 +298,51 @@ function queueStepUps(before: CrewState['rows'], after: CrewState['rows']) {
 }
 
 /** Failed rows whose retry is still to come: the review reminder waits for them. */
-const heldForStepUp = (): string[] => [...stepUpsQueued, ...stepUpsSent].map(u => u.fromId)
+const heldForStepUp = (): string[] => [...stepUpsQueued, ...stepUpsInFlight, ...stepUpsSent].map(u => u.fromId)
 
-/** A main turn ended: a note Claude read and did not act on is dropped (it no longer holds the review). */
+/** A main turn ended: a note Claude read and did not act on stops holding the review (a same-name retry still links). */
 function dropUnclaimedStepUps() {
+  stepUpsStale = [...stepUpsStale, ...stepUpsSent]
   stepUpsSent = []
+}
+
+/** A main turn that a step-up note rides is the crew's: it is busy, so its end does not close the crew before the review check. */
+const busyForStepUps = (c: CrewState): CrewState => (stepUpsSent.length || stepUpsInFlight.length ? { ...c, turnBusy: true } : c)
+
+type StepList = 'queued' | 'sent' | 'stale'
+const stepList = (l: StepList): StepUp[] => (l === 'queued' ? stepUpsQueued : l === 'sent' ? stepUpsSent : stepUpsStale)
+function setStepList(l: StepList, v: StepUp[]) {
+  if (l === 'queued') stepUpsQueued = v
+  else if (l === 'sent') stepUpsSent = v
+  else stepUpsStale = v
+}
+
+/**
+ * The retry a call or spawn is (read only; tool.call and agent.spawn decide alike): a
+ * pending step-up by name (queued, sent, then stale), else a sent note by type; and
+ * the rung it runs on: the step-up's target when the asked crew type is at or below
+ * the failed rung, else the asked one.
+ */
+function findRetry(type: string, name: string | undefined): { list: StepList; index: number; claimed: StepUp; target: Rung } | null {
+  const asked = rungOfType(ladder, type)
+  if (!asked) return null
+  let found: { list: StepList; index: number } | null = null
+  for (const l of ['queued', 'sent', 'stale'] as const) {
+    const i = name ? stepList(l).findIndex(u => u.name === name) : -1
+    if (i >= 0) {
+      found = { list: l, index: i }
+      break
+    }
+  }
+  if (!found) {
+    const { claimed } = claimStepUp(stepUpsSent, type, name)
+    if (claimed) found = { list: 'sent', index: stepUpsSent.indexOf(claimed) }
+  }
+  if (!found) return null
+  const claimed = stepList(found.list)[found.index] as StepUp
+  const at = (t: string) => ladder.findIndex(r => r.type === t)
+  const target = at(asked.type) <= at(claimed.from) ? (ladder[at(claimed.to)] ?? asked) : asked
+  return { ...found, claimed, target }
 }
 
 type CrewStep = { rung?: string; stepUps?: number; steppedUpFrom?: NonNullable<CrewState['rows'][number]['steppedUpFrom']> }
@@ -315,36 +359,21 @@ function crewSpawnOf<E extends { subagentType: string; model?: string; fork: boo
   if (c?.closed) {
     stepUpsQueued = []
     stepUpsSent = []
+    stepUpsStale = []
     steppedFrom = new Set()
   }
   const asked = (e as { resume?: unknown }).resume || e.fork || e.workflow ? null : rungOfType(ladder, e.subagentType)
   if (!asked) return none
-  const byName = (l: StepUp[]) => (e.name ? l.findIndex(u => u.name === e.name) : -1)
-  let claimed: StepUp | null = null
-  let restore = () => undefined as void
-  const qi = byName(stepUpsQueued)
-  const si = byName(stepUpsSent)
-  if (qi >= 0) {
-    claimed = stepUpsQueued[qi] as StepUp
-    stepUpsQueued = stepUpsQueued.filter((_, k) => k !== qi)
-    const u = claimed
-    restore = () => void stepUpsQueued.push(u)
-  } else {
-    const r = si >= 0 ? { claimed: stepUpsSent[si] as StepUp, rest: stepUpsSent.filter((_, k) => k !== si) } : claimStepUp(stepUpsSent, e.subagentType, e.name)
-    if (r.claimed) {
-      claimed = r.claimed
-      stepUpsSent = r.rest
-      const u = claimed
-      restore = () => void stepUpsSent.push(u)
-    }
-  }
-  if (!claimed) {
+  const retry = findRetry(e.subagentType, e.name)
+  if (!retry) {
     // Past the cap (or retried without a note): the name's earlier tries still count.
     const before = Math.max(0, ...(c?.rows ?? []).filter(r => r.rung && e.name && r.name === e.name).map(r => r.stepUps ?? 0))
-    return { e: crewModelOf(e), step: { rung: asked.type, ...(before ? { stepUps: before } : {}) }, restore }
+    return { e: crewModelOf(e), step: { rung: asked.type, ...(before ? { stepUps: before } : {}) }, restore: () => undefined }
   }
+  const { claimed, target } = retry
+  setStepList(retry.list, stepList(retry.list).filter((_, k) => k !== retry.index))
+  const restore = () => setStepList(retry.list, [...stepList(retry.list), claimed])
   const at = (t: string) => ladder.findIndex(r => r.type === t)
-  const target = at(asked.type) <= at(claimed.from) ? (ladder[at(claimed.to)] ?? asked) : asked
   const from = ladder[at(claimed.from)]
   const forced = target.type === asked.type ? e : { ...e, subagentType: `${AGENT_PREFIX}${target.type}` }
   return {
@@ -382,6 +411,7 @@ function withStepUps<E extends { origin: { kind: string }; context?: readonly st
   if (stepUpsQueued.length === 0 || e.origin.kind === 'plugin' || (e as { command?: unknown }).command) return { e, next }
   const ups = stepUpsQueued
   stepUpsQueued = []
+  stepUpsInFlight = [...stepUpsInFlight, ...ups]
   const notes = ups.map(u => stepUpNote(u, ladder))
   const wrapped = (async (x: E) => {
     let r: { context?: readonly string[]; drop?: unknown }
@@ -390,6 +420,8 @@ function withStepUps<E extends { origin: { kind: string }; context?: readonly st
     } catch (err) {
       stepUpsQueued = [...ups, ...stepUpsQueued]
       throw err
+    } finally {
+      stepUpsInFlight = stepUpsInFlight.filter(u => !ups.includes(u))
     }
     const entered = 'context' in r && r.context !== undefined ? notes.every(n => r.context?.includes(n)) : r.drop === undefined
     if (entered) stepUpsSent = [...stepUpsSent, ...ups]
@@ -503,7 +535,7 @@ export const register: Register = (on, options) => {
   on('turn.start', async ($, e, next) => {
     if ((e as { agentId?: string }).agentId === undefined) {
       try {
-        await update($, crew, onMainTurnStart)
+        await update($, crew, c => busyForStepUps(onMainTurnStart(c)))
         const now = await $.clock.now()
         await update($, mood, m => ({ ...m, turnSince: now }))
         const r = advance(asStreak(await $.store.get(STORE_STREAK).catch(() => null)), now)
@@ -537,12 +569,13 @@ export const register: Register = (on, options) => {
         // Each main turn's end: is the crew's work unreviewed (the reminder goes out
         // with the next prompt), then a quiet turn closes the crew.
         try {
+          // Every main turn's end, before the hud reads: unclaimed notes stop holding the review.
+          dropUnclaimedStepUps()
           // An interrupted turn is the person's call: no reminder for this crew.
           if (e.isAborted) await update($, crew, c => ({ ...c, gateFired: true }))
           else if (config.crewReview) {
             const stats = (await hudStats($)) as { total?: number } | null
             const capReached = isCapReached((await hudBudget($)) as BudgetLike | null, stats?.total ?? 0)
-            dropUnclaimedStepUps()
             if (needsReview(await read($, crew), { enabled: true, stopHookActive: false, capReached, held: heldForStepUp() })) reviewMissed = true
           }
           await update($, crew, onMainTurnEnd)
@@ -692,6 +725,8 @@ export const register: Register = (on, options) => {
   ladder = ladderOf(config.crewTiers)
   stepUpsQueued = []
   stepUpsSent = []
+  stepUpsInFlight = []
+  stepUpsStale = []
   steppedFrom = new Set()
 
   // A crew type's effort wins: an Agent call's own `effort` for a crew type is set to
@@ -699,7 +734,8 @@ export const register: Register = (on, options) => {
   // carries the step-up notes: one hook per event, so those are lines in the hooks above).
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     const a = e as typeof e & { subagent_type?: string; effort?: string }
-    const rung = a.effort !== undefined && a.subagent_type ? rungOfType(ladder, a.subagent_type) : null
+    const asked = a.effort !== undefined && a.subagent_type ? rungOfType(ladder, a.subagent_type) : null
+    const rung = asked ? (findRetry(a.subagent_type as string, (a as { name?: string }).name)?.target ?? asked) : null
     return next(!rung || a.effort === rung.effort ? e : ({ ...a, effort: rung.effort } as typeof e))
   })
   // ── end crew tiers (hooks) ──
