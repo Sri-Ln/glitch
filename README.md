@@ -88,23 +88,23 @@ Moods: idle, working, happy, tired, sleepy, worried, oops, cheering, leading, re
 
 ### Crew
 
-When Claude splits work across helper agents, the crew pane (`glitch-crew`) shows them live. Your pet leads: it shows the leading mood while helpers run and the reviewing mood while the reviewer checks their work. Each helper is a small copy of your pet in a hat.
+When Claude splits work across a crew of agents, the crew pane (`glitch-crew`) shows them live. Your pet leads: its line says what it is doing (waiting on a member, looking into a failure, checking the work), and its mood follows the crew. Each crew member is a small copy of your pet acting out its role, in the crew look you picked.
 
 ```
-Crew                                         ≈$0.28 · 293k tok · 0:46
- Bud · lead · reviewing
- Running · 1
-   Build the landing page                    medium · Opus 5.5 · medium   41k tok ≈$0.08  0:44  ▰▰▰▱
- Finished · 2
-   Research competitor launches ✓            light · Haiku 5.5 · low      44k tok ≈$0.02  0:17
-   Design the launch graphics ✓              heavy · Opus 5.5 · high      39k tok ≈$0.09  0:18
+Crew · 3 running · 1 done · 1 failed · ≈$0.31 · 74k tok · 0:37
+Bud · sniffing out builder-1
+● researcher-1 Research date formats         Haiku 5.5 low    9k ≈$0.04  0:37 ██████░░ 6/8
+● designer-1   Design the date picker        Opus 5.5 high   31k ≈$0.13  0:37 ██░░░░░░ 2/8
+● builder-1    ↑ Sonnet · medium · Build th… Sonnet 5.5 high  4k ≈$0.02  0:05 █░░░░░░░ 1/8
+✗ 2 finished · 1 completed · 1 failed [ Show ]
 ```
 
-- **Role, shown by the hat:** builder (hard hat), researcher (explorer hat), designer (beret), tester (goggles), other (cap). The role comes from the helper's name (`builder-1`, `researcher-2`, …), or failing that from the words in its task. The reviewer wears no hat: it is drawn as your pet, the crew's lead.
-- **Tier, shown by the hat color:** light (green) for a Haiku model or low effort; heavy (red) for Opus at high, xhigh or max effort; medium (blue) for everything else.
-- **≈cost** is an estimate. The session's own cost is split across the helpers by how many tokens each used.
-- Once every helper is done, the finished list folds to one line (`3 done, 0 failed`).
-- In the terminal there are no sprites: each row shows the role and tier as words instead.
+- **Role:** builder, researcher, designer, tester or other. It comes from the member's name (`builder-1`, `researcher-2`, …), or failing that from the words in its task. With the default look (`busy-hands`) each mini acts its role out beside itself, at its model's tempo; with `hats` it wears its role's hat.
+- **Model and effort** are shown as words on each row. A member retried one step up says what it stepped up from (`↑ stepped up from Haiku · low`; on the terminal `↑ Haiku · low`).
+- **A member finishing:** your pet does a little flourish and lowers a gift to that member's row on a fishing line (on the desktop); the member keeps the gift as a small badge. A member failing makes it worried, then it looks into the failure while the crew works on.
+- **≈cost** is an estimate. The session's own cost is split across the crew by how many tokens each used.
+- Once every member is done, the finished list folds to one line (`✓ 3 finished · 3 completed · 0 failed`); the desktop's Finished group folds to its tally.
+- In the terminal there are no sprites: the lead's line carries its reactions.
 - `/glitch crew` (or `/glitch-pets crew`) opens or closes the pane. With `crewPane: auto` it opens by itself when the first helper starts.
 - `/glitch crew theme [id]` (or `/glitch-pets crew theme [id]`) lists the crew looks, or picks one and keeps it: `busy-hands` (default: each helper acts its role out beside itself, and the model sets how much each beat makes and the tempo) or `hats`.
 
@@ -135,7 +135,7 @@ A standing system-prompt rule asks for this. If 2 or more crew helpers (named `b
   | medium | `glitch-pets:crew-medium` | Sonnet 5.5 (`claude-sonnet-5-5`) | medium |
   | heavy | `glitch-pets:crew-heavy` | Opus 5.5 (`claude-opus-5-5`) | high |
 
-  The type's model wins: if the Agent call passes a different `model`, the plugin sets it back to the type's when the helper starts, and it drops an `effort` the Agent call passes. The one thing that beats the type is a setup that forces one model on every subagent. A crew member can't start helpers of its own.
+  The type's model wins: if the Agent call passes a different `model`, the plugin sets it back to the type's when the helper starts, and it sets an `effort` the Agent call passes to the type's. The one thing that beats the type is a setup that forces one model on every subagent. A crew member can't start helpers of its own.
 - **Changing the table:** set `crewTiers` to a JSON object. Each tier you leave out keeps its default, for example:
 
   ```json
@@ -149,7 +149,7 @@ A standing system-prompt rule asks for this. If 2 or more crew helpers (named `b
 
   A task gets at most 2 step-ups. The step-up types (`crew-light-high`, `crew-medium-high`, `crew-heavy-xhigh`, `crew-heavy-max`) are registered next to the tiers. `xhigh` and `max` are only ever steps, never a tier's own effort. With your own `crewTiers`, the steps follow the same rule: the tier's model at high effort (if it isn't already high), then the next tier, and after the heavy tier each higher effort.
 - **Other agent types:** a helper Claude starts on any other type (`general-purpose`, your `.claude/agents/*.md`) picks its model as Claude Code always does: the Agent call's `model`, then the type's `model`, then your default subagent model, then the session's model. A fork always runs on its parent's model. The plugin leaves those alone and doesn't step them up.
-- **What the pane shows:** the model and effort each helper's requests actually use. The tier in the pane is worked out from those (Haiku or low effort is light, Opus at high effort or more is heavy).
+- **What the pane shows:** the model and effort each crew member's requests actually use.
 
 ## Themes
 
