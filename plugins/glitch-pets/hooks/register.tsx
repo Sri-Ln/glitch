@@ -144,6 +144,9 @@ async function say($: EngineInterface, moment: VoiceMoment) {
 
 async function tick($: EngineInterface) {
   const now = await $.clock.now()
+  // The crew pane needs the statuses with the pet off too.
+  ticks += 1
+  if (ticks % STATUS_TICKS === 0) await refreshCrew($)
   const p = personaFor((await read($, view)).petId)
   if (!p) {
     if (lastSource !== null) {
@@ -160,8 +163,6 @@ async function tick($: EngineInterface) {
   if (typeof pressed?.at === 'number' && pressed.at > (await read($, mood)).pokeSeen) {
     await update($, mood, x => onPoke(x, pressed.at as number, now))
   }
-  ticks += 1
-  if (ticks % STATUS_TICKS === 0) await refreshCrew($)
   const team = await read($, crew)
   const m = await read($, mood)
   const r = tickOnce({
