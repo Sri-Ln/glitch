@@ -5,6 +5,8 @@ export const OOPS_MS = 4000
 export const HAPPY_MS = 5000
 export const CHEER_MS = 6000
 export const CRY_MS = 6000
+/** The hop a click on the pet plays. */
+export const POKE_MS = 2000
 /** Failures in a row (main loop) that make the pet cry. */
 export const CRY_FAILS = 3
 export const WORRY_CACHE_S = 60
@@ -21,6 +23,7 @@ export type MoodInputs = {
   happyUntil: number
   cheerUntil: number
   cryUntil: number
+  pokedUntil: number
   capReached: boolean
   /** Spend as a fraction of the nearest cap (budgetFraction), null with no caps. */
   budget: number | null
@@ -45,6 +48,8 @@ export const isCapReached = (b: BudgetLike | null, sessionTotal: number): boolea
 
 export function moodOf(i: MoodInputs): MoodId {
   const running = i.turnSince !== null
+  // A click always answers at once, whatever the pet was doing; it goes back after.
+  if (i.pokedUntil > i.now) return 'happy'
   if (i.cryUntil > i.now || i.capReached) return 'crying'
   if (i.oopsUntil > i.now) return 'oops'
   if ((i.budget !== null && i.budget >= WORRY_BUDGET) || (i.cacheSecondsLeft !== null && i.cacheSecondsLeft > 0 && i.cacheSecondsLeft < WORRY_CACHE_S)) return 'worried'

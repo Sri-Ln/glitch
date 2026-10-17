@@ -1,11 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderNode, Timer } from 'claude-code'
 
-import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
+import { INITIAL_BUDGET, INITIAL_CACHE, INITIAL_GIT, INITIAL_POKE, INITIAL_STATS, INITIAL_VIEW, initialBudget } from './atoms'
 import { blockReason, dayKey, isExpired, ledgerKey, levelOf, parseLedgerKey, rebase, spendToday, withConfigCaps } from './budget'
 import { dueMark, endDemo, isDemoOver, shouldAutoWarm, startDemo, warnMarks } from './cache'
 import { BUDGET_USAGE, DEMO_USAGE, ROUTED, USAGE, WARM_PROMPT, budgetAlerts, budgetSummary, parseBudgetArg, splitArgs, warmMessage } from './commands'
-import { ALL_COST, ALL_PARTS, parseConfig, parseCostShows, parseParts } from './config'
+import { ALL_COST, ALL_PARTS, SPEED_MODES, parseConfig, parseCostShows, parseParts, parseSpeed } from './config'
 import type { HudConfig } from './config'
 import { readGit } from './git'
 import type { RunFn } from './git'
@@ -23,6 +23,7 @@ export const cache = atom({ plugin: 'glitch-hud', key: 'cache' } as const, INITI
 export const budget = atom({ plugin: 'glitch-hud', key: 'budget' } as const, INITIAL_BUDGET)
 export const git = atom({ plugin: 'glitch-hud', key: 'git' } as const, INITIAL_GIT)
 export const view = atom({ plugin: 'glitch-hud', key: 'view' } as const, INITIAL_VIEW)
+export const poke = atom({ plugin: 'glitch-hud', key: 'poke' } as const, INITIAL_POKE)
 
 // Responses shorter than this are mostly tool-call stubs; their timing is noise.
 const MIN_TOKENS = 20
@@ -30,8 +31,12 @@ const MIN_SECONDS = 0.5
 // Git and today's ledger are read again on this timer while idle.
 const GIT_EVERY_MS = 30_000
 const ROW_GAP = 2
-// Cells on each side of the desktop's keep-warm glyph.
+// Cells before the desktop's keep-warm glyph; after it the row's gap is enough.
 const WARM_PAD = 1
+// `/glitch hud speed on|off` outlives the session; `auto` clears it.
+const STORE_SPEED = 'speed'
+// The press target over the pet, in cells: inside the 24 px sprite.
+const POKE_CELLS = 3
 
 const COST_UNREADABLE = "Glitch: can't read the session cost right now; budget caps can't be checked until it's back."
 const LEDGER_FAILED = "Glitch: can't read or save the daily spend ledger right now; today's total may be incomplete."
@@ -223,6 +228,14 @@ async function answerHud($: EngineInterface, config: HudConfig, args: string): P
       await update($, view, v => ({ ...v, parts, isHidden: false }))
       return `HUD parts: ${parts.join(', ')}.`
     }
+    if (a === 'speed') {
+      const speed = parseSpeed(b)
+      if (!speed) return `Usage: /glitch hud speed ${SPEED_MODES.join(' | ')}`
+      if (speed === 'auto') await $.store.delete(STORE_SPEED).catch(() => undefined)
+      else await $.store.set(STORE_SPEED, speed).catch(() => undefined)
+      await update($, view, v => ({ ...v, speed, isHidden: false }))
+      return speed === 'auto' ? 'tok/s: auto (terminal only, unless Parts was chosen).' : `tok/s: ${speed}.`
+    }
     if (a === 'cost') {
       const cost = b ? parseCostShows(b) : null
       if (!cost) return `Unknown cost figure. Figures: ${ALL_COST.join(', ')}.`
@@ -238,6 +251,10 @@ async function answerHud($: EngineInterface, config: HudConfig, args: string): P
   if (sub === 'demo') return demoCommand($, a, b)
   return USAGE
 }
+
+// Under auto, tok/s is the terminal's: on the desktop it shows only when Parts was chosen.
+export const showsSpeed = (mode: 'auto' | 'on' | 'off', rich: boolean, chosen: boolean): boolean =>
+  mode === 'on' || (mode === 'auto' && (!rich || chosen))
 
 // The last warning mark may keep the cache warm by itself.
 async function autoWarm($: EngineInterface, config: HudConfig, mark: number, marks: number[]): Promise<void> {
@@ -277,6 +294,10 @@ export const register: Register = (on, options) => {
     }
     // Sum the ledger now, so today counts the other sessions from the first draw.
     await recordSpend($, config).catch(() => undefined)
+
+    // The tok/s choice made with /glitch hud speed in an earlier session.
+    const speed = parseSpeed(await $.store.get(STORE_SPEED).catch(() => undefined))
+    if (speed) await update($, view, v => ({ ...v, speed }))
 
     // The colors and the fitted marks read the lifetime from the state.
     await update($, cache, c => ({ ...c, ttlMs: config.cacheTtlMs }))
@@ -393,6 +414,14 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // A press on the pet: glitch-pets reads the time on its next tick and plays a reaction.
+  on('ui.message', async ($, e, next) => {
+    if (e.element !== 'glitch-pet-poke') return next(e)
+    const now = await $.clock.now()
+    await update($, poke, () => ({ at: now })).catch(() => undefined)
+    return {}
+  })
+
   on('prompt.submit', async ($, e, next) => {
     if (e.origin.kind !== 'plugin') {
       const now = await $.clock.now()
@@ -429,10 +458,11 @@ export const register: Register = (on, options) => {
       const parts = (v.parts ?? config.parts)
         .filter(id => id !== 'git' || (data.git !== null && (!rich || chosen)))
         .filter(id => id !== 'turn' || !rich || chosen)
+        .filter(id => id !== 'speed' || showsSpeed(v.speed ?? config.speed, rich, chosen))
       // The cache part is never dropped, so ↻ shows exactly when it is asked for here.
       const showsWarm = parts.includes('cache') && data.cache.secondsLeft !== null && !e.props.isWorking
       // ↻ is part of the cache part: one cell of gap, then the glyph (padded on desktop).
-      const warmCells = 1 + (rich ? 1 + 2 * WARM_PAD : 1)
+      const warmCells = 1 + (rich ? 1 + WARM_PAD : 1)
       const width = (id: (typeof parts)[number], compact: boolean) =>
         (rich
           ? richWidth(richPart(id, data, compact))
@@ -455,6 +485,7 @@ export const register: Register = (on, options) => {
           </Text>
         ))
       const Svg = 'Svg' in ui ? ui.Svg : null
+      const Client = 'Client' in ui ? ui.Client : null
       // A failed keep-warm only loses its toast.
       const warm = async () => {
         try {
@@ -470,8 +501,8 @@ export const register: Register = (on, options) => {
         id === 'cache' && showsWarm
           ? rich
             ? (
-                // The desktop draws the glyph flush against its neighbours: a cell each side.
-                <Box key="glitch-warm-box" paddingX={WARM_PAD} flexShrink={0}>
+                // The desktop draws the glyph flush against the time: a cell before it.
+                <Box key="glitch-warm-box" paddingLeft={WARM_PAD} flexShrink={0}>
                   <Button key="glitch-warm" label={data.cache.isWarming ? '…' : '↻'} plain dimColor onPress={warm} />
                 </Box>
               )
@@ -511,6 +542,11 @@ export const register: Register = (on, options) => {
             {pet && Svg ? (
               <Box key="glitch-pet" flexShrink={0} alignItems="flex-end">
                 <Svg source={pet.source} alt={pet.alt} width={pet.width} height={pet.height} />
+                {Client ? (
+                  <Box key="glitch-pet-target" position="absolute" top={0} left={0}>
+                    <Client key="glitch-pet-poke" module="./poke.tsx" width={POKE_CELLS} height={1} />
+                  </Box>
+                ) : null}
               </Box>
             ) : null}
             {rich && Svg ? null : <Box flexGrow={1} />}

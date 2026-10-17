@@ -82,10 +82,17 @@ export type Budget = {
 
 export type GitInfo = { branch: string; changed: number; ahead: number; behind: number }
 
-export type View = { isHidden: boolean; parts: PartId[] | null; cost: CostScope[] | null }
+/** Whether the band shows tok/s: auto is off on the desktop and on in the terminal. */
+export type SpeedMode = 'auto' | 'on' | 'off'
+
+/** `speed` is the person's `/glitch hud speed` choice; null follows the setting. */
+export type View = { isHidden: boolean; parts: PartId[] | null; cost: CostScope[] | null; speed: SpeedMode | null }
+
+/** The last press on the pet (clock ms; 0 for none): glitch-pets reacts to a new one. */
+export type Poke = { at: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    'glitch-hud': { stats: Stats; cache: CacheState; budget: Budget; git: GitInfo | null; view: View }
+    'glitch-hud': { stats: Stats; cache: CacheState; budget: Budget; git: GitInfo | null; view: View; poke: Poke }
   }
 }
