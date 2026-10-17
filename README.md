@@ -100,7 +100,7 @@ Crew                                         ≈$0.28 · 293k tok · 0:46
    Design the launch graphics ✓              heavy · Opus 5.5 · high      39k tok ≈$0.09  0:18
 ```
 
-- **Role, shown by the hat:** builder (hard hat), researcher (explorer hat), designer (beret), tester (goggles), other (cap). The role comes from the helper's name (`builder-1`, `researcher-2`, …), or failing that from the words in its task. The reviewer is your pet itself.
+- **Role, shown by the hat:** builder (hard hat), researcher (explorer hat), designer (beret), tester (goggles), other (cap). The role comes from the helper's name (`builder-1`, `researcher-2`, …), or failing that from the words in its task. The reviewer wears no hat: it is drawn as your pet, the crew's lead.
 - **Tier, shown by the hat color:** light (green) for a Haiku model or low effort; heavy (red) for Opus at high, xhigh or max effort; medium (blue) for everything else.
 - **≈cost** is an estimate. The session's own cost is split across the helpers by how many tokens each used.
 - Once every helper is done, the finished list folds to one line (`3 done, 0 failed`).

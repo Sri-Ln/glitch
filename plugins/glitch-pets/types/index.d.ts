@@ -54,6 +54,8 @@ export type CrewRow = {
   turnWeight: number
   tools: number
   startedAt: number
+  /** When a resume set it running again: the list grace counts from here, not from the first start. */
+  resumedAt?: number
   endedAt: number | null
   status: 'running' | 'done' | 'failed'
 }

@@ -268,7 +268,9 @@ export const register: Register = (on, options) => {
     } finally {
       reminderInFlight = false
     }
-    if (r.drop === undefined) {
+    // Sent only if it entered: a hook beneath may have rewritten the context.
+    const entered = 'context' in r && r.context !== undefined ? r.context.includes(GATE_TEXT) : r.drop === undefined
+    if (entered) {
       reviewMissed = false
       await update($, crew, c => ({ ...c, gateFired: true })).catch(() => undefined)
     }

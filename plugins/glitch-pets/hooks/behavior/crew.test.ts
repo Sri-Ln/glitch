@@ -177,3 +177,10 @@ test('step usage counts as it comes; the turn end adds only what the steps misse
   s = onAgentTurnEnd(s, 'a1', U(20, 0), 4000)
   expect(s.rows[0]?.tokens).toBe(180)
 })
+
+test('a resumed agent gets a fresh list grace: missing just after the resume is still running', () => {
+  let s = onStatuses(spawn(INITIAL_CREW, 'a1', { name: 'builder-1' }), [{ id: 'a1', status: 'completed' }], 5000)
+  s = spawn(s, 'a1', { now: 9000 })
+  expect(onStatuses(s, [], 9000 + LIST_GRACE_MS - 1).rows[0]?.status).toBe('running')
+  expect(onStatuses(s, [], 9000 + LIST_GRACE_MS).rows[0]?.status).toBe('done')
+})

@@ -24,6 +24,8 @@ export type CrewRow = {
   turnWeight: number
   tools: number
   startedAt: number
+  /** When a resume set it running again: the list grace counts from here, not from the first start. */
+  resumedAt?: number
   endedAt: number | null
   status: 'running' | 'done' | 'failed'
 }
@@ -87,7 +89,7 @@ const usageTokens = (u: UsageLike): number => u.input_tokens + u.output_tokens +
 /** A spawn: a new row, or, for an agent already in the crew (a resume), its row running again with its counts kept. */
 export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; model: string | null; now: number; costNow: number }): CrewState {
   if (s.rows.some(r => r.id === a.agentId)) {
-    return { ...mapRow(s, a.agentId, r => ({ ...r, status: 'running', endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
+    return { ...mapRow(s, a.agentId, r => ({ ...r, status: 'running', resumedAt: a.now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
   }
   const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
   const row: CrewRow = {
@@ -134,7 +136,7 @@ export function onStatuses(s: CrewState, list: readonly { id: string; status: st
       const st = by.get(r.id)
       // A teammate waiting for a message has done its part.
       if (st === 'completed' || st === 'idle') return { ...r, status: 'done', endedAt: now }
-      if (st === undefined && now - r.startedAt >= LIST_GRACE_MS) return { ...r, status: 'done', endedAt: now }
+      if (st === undefined && now - (r.resumedAt ?? r.startedAt) >= LIST_GRACE_MS) return { ...r, status: 'done', endedAt: now }
       if (st === 'failed' || st === 'killed') return { ...r, status: 'failed', endedAt: now }
       return r
     }),

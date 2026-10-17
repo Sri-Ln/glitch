@@ -234,11 +234,13 @@ const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
 
 // The engine around a crew: agents' statuses, the session's cost, what each prompt carried.
 const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
-  const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[] }
+  const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[], contextOut: 'none' as 'none' | 'echo' | 'strip' }
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
   on('prompt.submit', async (_$, e) => {
     h.contexts.push(e.context)
     if (h.hold) await h.hold
+    if (h.contextOut === 'echo') return { text: e.text, context: e.context } as never
+    if (h.contextOut === 'strip') return { text: e.text, context: [] } as never
     return { text: e.text } as never
   })
   on('agent.spawn', (_$, e) => {
@@ -466,6 +468,17 @@ test('two prompts at once carry the reminder once', async ($, on) => {
   expect(h.contexts.filter(c => c?.length).length).toBe(1)
   await submit($)
   expect(h.contexts.filter(c => c?.length).length).toBe(1)
+})
+
+test('a reminder a lower hook stripped is not counted as sent: the next prompt carries it', async ($, on) => {
+  const { h } = await backgroundCrew($, on)
+  await mainEnd($, 'm3')
+  h.contextOut = 'strip'
+  await submit($)
+  h.contextOut = 'echo'
+  await submit($)
+  await submit($)
+  expect(h.contexts.filter(c => c?.length).length).toBe(2)
 })
 
 const runStep = async ($: Engine, agentId: string) => {
