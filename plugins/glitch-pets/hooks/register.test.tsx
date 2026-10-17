@@ -96,12 +96,6 @@ test('/glitch-pets <unknown word> says the pet is unknown and lists the pets', a
   expect((r as { text: string }).text).toMatch(/^Unknown pet "dragon"\. Pets: /)
 })
 
-test('/glitch-pets crew is reserved and returns the usage', async ($, on) => {
-  await session($, on, {})
-  const r = await $.command.run({ command: 'glitch-pets', args: 'crew' } as never)
-  expect((r as { text: string }).text).toBe('Glitch pets: /glitch-pets [name | off] · /glitch pet [name | off]')
-})
-
 test('/glitch pet <name> through the glitch command picks the pet', async ($, on) => {
   const store: Record<string, unknown> = {}
   await session($, on, store)
@@ -126,4 +120,85 @@ test('a broken streak resets to 1 at the first turn of the day', async ($, on) =
   await $.turn.start({ turnId: 't1' } as never)
   await clock.advance(150)
   expect((store.streak as { count: number }).count).toBe(1)
+})
+
+const spawnHelper = async ($: Engine, id: string, description: string, name?: string) =>
+  $.agent.spawn({ tool_use_id: `tu-${id}`, prompt: 'p', description, subagentType: 'general-purpose', ...(name ? { name } : {}) } as never)
+
+const usageAt = (usd: number) => () => ({ value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd } } }) as never
+
+test('the first helper opens the crew pane (auto) and the pane lists it', async ($, on) => {
+  const opened: string[] = []
+  on('ui.open', (_$, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } } as never
+  })
+  on('agent.spawn', (_$, e) => ({ model: 'claude-opus-5-5', agentId: `ag-${e.description}` }) as never)
+  on('agent.list', () => ({ value: [] }) as never)
+  on('session.usage', usageAt(1))
+  await session($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawnHelper($, 'h1', 'Build the landing page', 'builder-1')
+  expect(opened).toEqual(['glitch-crew'])
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'glitch-pets', surface, component: 'Pane', props: { title: 'Crew', isFocused: false, bodyColumns: 120 } as never, requestId: 'glitch-crew' })
+    const text = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join(' ')
+    expect(text).toContain('Build the landing page')
+    expect(text).toContain(surface === 'terminal' ? 'builder' : 'Opus')
+    expect((await ui.findAll({ type: 'Svg' })).length).toBe(surface === 'terminal' ? 0 : 2)
+    await ui.unmount()
+  }
+})
+
+test('a second helper does not open the pane again, and manual never opens it', async ($, on) => {
+  const opened: string[] = []
+  on('ui.open', (_$, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.panes', () => ({ value: opened.length ? [{ id: 'glitch-crew', title: 'Crew', isShown: true, isFocused: false, isPlaced: true }] : [] }) as never)
+  on('agent.spawn', (_$, e) => ({ model: 'claude-opus-5-5', agentId: `ag-${e.description}` }) as never)
+  on('session.usage', usageAt(0))
+  await session($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawnHelper($, 'a', 'A', 'builder-1')
+  await spawnHelper($, 'b', 'B', 'builder-2')
+  expect(opened).toEqual(['glitch-crew'])
+})
+
+test('with no crew yet the pane says so', async ($, on) => {
+  await session($, on)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'glitch-pets', surface, component: 'Pane', props: { title: 'Crew', isFocused: false, bodyColumns: 120 } as never, requestId: 'glitch-crew' })
+    const text = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join(' ')
+    expect(text).toContain('No crew yet')
+    await ui.unmount()
+  }
+})
+
+const togglePane = (on: Parameters<typeof session>[1]) => {
+  let open = false
+  on('ui.open', () => {
+    open = true
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.close', () => {
+    open = false
+    return { value: undefined } as never
+  })
+  on('ui.panes', () => ({ value: open ? [{ id: 'glitch-crew', title: 'Crew', isShown: true, isFocused: false, isPlaced: true }] : [] }) as never)
+}
+
+test('/glitch-pets crew toggles the pane', async ($, on) => {
+  togglePane(on)
+  await session($, on)
+  expect(((await $.command.run({ command: 'glitch-pets', args: 'crew' } as never)) as { text: string }).text).toBe('Crew pane opened.')
+  expect(((await $.command.run({ command: 'glitch-pets', args: 'crew' } as never)) as { text: string }).text).toBe('Crew pane closed.')
+})
+
+test('/glitch crew toggles the pane too', async ($, on) => {
+  togglePane(on)
+  await session($, on)
+  expect(((await $.command.run({ command: 'glitch', args: 'crew' } as never)) as { text: string }).text).toBe('Crew pane opened.')
+  expect(((await $.command.run({ command: 'glitch', args: 'crew' } as never)) as { text: string }).text).toBe('Crew pane closed.')
 })

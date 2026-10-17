@@ -11,6 +11,8 @@
     "voice": { "type": "boolean", "title": "Pet remarks", "description": "One-line remarks as toasts", "default": true },
     "voiceEveryMinutes": { "type": "number", "title": "Minutes between remarks", "description": "At most one remark per this many minutes", "default": 3 },
     "tiredMinutes": { "type": "number", "title": "Tired after (minutes)", "description": "A turn this long makes the pet tired", "default": 10 },
-    "sleepyMinutes": { "type": "number", "title": "Sleepy after (minutes)", "description": "This long without a prompt makes the pet sleepy", "default": 10 }
+    "sleepyMinutes": { "type": "number", "title": "Sleepy after (minutes)", "description": "This long without a prompt makes the pet sleepy", "default": 10 },
+    "crewPane": { "type": "string", "title": "Crew pane", "description": "auto: open when helpers start; manual: /glitch crew", "default": "auto", "options": ["auto", "manual"] },
+    "crewReview": { "type": "boolean", "title": "Crew review gate", "description": "When 2+ helpers ran, a reviewer must check the result before Claude finishes", "default": true }
   }
 }

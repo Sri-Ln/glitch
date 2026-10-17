@@ -1,4 +1,5 @@
-// The state contract. Sprite, MoodId and PetId are inlined from hooks/behavior/types.ts
+// The state contract. Sprite, MoodId, PetId, Role and Tier are inlined from hooks/behavior/types.ts,
+// CrewRow and CrewState from hooks/behavior/crew.ts,
 // because `claude plugin validate` requires the contract to be self-contained.
 
 /** What glitch-hud draws: one frame as an image. */
@@ -31,8 +32,42 @@ export type MoodState = {
 
 export type PetsView = { petId: PetId | 'off' }
 
+export type Role = 'builder' | 'researcher' | 'designer' | 'tester' | 'reviewer' | 'other'
+export type Tier = 'light' | 'medium' | 'heavy'
+
+/** One helper of the crew, as the crew pane lists it. */
+export type CrewRow = {
+  id: string
+  name?: string
+  description: string
+  role: Role
+  tier: Tier
+  model: string | null
+  effort: string | null
+  tokens: number
+  /** Price-shaped token weight, for sharing the crew's cost. */
+  weight: number
+  tools: number
+  startedAt: number
+  endedAt: number | null
+  status: 'running' | 'done' | 'failed'
+}
+
+/** The helpers started from one main-loop turn. */
+export type CrewState = {
+  /** The main-loop turn this crew started in; 0 before any crew. */
+  turnNo: number
+  /** The main-loop turn running now. */
+  mainTurn: number
+  startedAt: number | null
+  costAtStart: number
+  rows: CrewRow[]
+  /** The missed-review reminder already went out for this crew. */
+  gateFired: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'glitch-pets': { sprite: Sprite | null; mood: MoodState; view: PetsView }
+    'glitch-pets': { sprite: Sprite | null; mood: MoodState; view: PetsView; crew: CrewState }
   }
 }
