@@ -1,7 +1,7 @@
 {
   "name": "glitch-pets",
-  "version": "0.2.0",
-  "description": "Glitch pets: pick one of six pixel critters; it sits at the end of the HUD row, shows moods and says a word now and then.",
+  "version": "0.3.0",
+  "description": "Glitch pets: pick one of six pixel critters; it sits at the end of the HUD row, shows moods and says a word now and then; leads a crew pane when Claude runs helper agents.",
   "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
   "license": "MIT",
   "types": "./types/index.d.ts",
@@ -11,6 +11,8 @@
     "voice": { "type": "boolean", "title": "Pet remarks", "description": "One-line remarks as toasts", "default": true },
     "voiceEveryMinutes": { "type": "number", "title": "Minutes between remarks", "description": "At most one remark per this many minutes", "default": 3 },
     "tiredMinutes": { "type": "number", "title": "Tired after (minutes)", "description": "A turn this long makes the pet tired", "default": 10 },
-    "sleepyMinutes": { "type": "number", "title": "Sleepy after (minutes)", "description": "This long without a prompt makes the pet sleepy", "default": 10 }
+    "sleepyMinutes": { "type": "number", "title": "Sleepy after (minutes)", "description": "This long without a prompt makes the pet sleepy", "default": 10 },
+    "crewPane": { "type": "string", "title": "Crew pane", "description": "auto: open when helpers start; manual: /glitch crew", "default": "auto", "options": ["auto", "manual"] },
+    "crewReview": { "type": "boolean", "title": "Crew review gate", "description": "The crew rule in the system prompt, and a reminder when 2+ helpers finished without a reviewer", "default": true }
   }
 }

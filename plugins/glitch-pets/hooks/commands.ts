@@ -2,16 +2,16 @@
 import type { PetId } from './behavior/types'
 import { PET_IDS } from './behavior/types'
 
-export const ROUTED_PETS = ['pet']
+export const ROUTED_PETS = ['pet', 'crew']
 export const STORE_PET = 'pet'
-export const PETS_USAGE = 'Glitch pets: /glitch-pets [name | off] · /glitch pet [name | off]'
+export const PETS_USAGE = 'Glitch pets: /glitch-pets [name | off] · crew (also /glitch pet, /glitch crew)'
 
 export type PetArg = { kind: 'show' } | { kind: 'off' } | { kind: 'pick'; id: PetId } | { kind: 'unknown'; name: string }
 
 // The pet argument of either entry point: `/glitch-pets [pet] <name>` or the routed `/glitch pet <name>`.
 export function petArgsOf(command: 'glitch-pets' | 'glitch', args: string): string {
   const words = args.trim().split(/\s+/).filter(Boolean)
-  const routed = command === 'glitch' || words[0] === ROUTED_PETS[0]
+  const routed = command === 'glitch' || words[0] === 'pet'
   return (routed ? words.slice(1) : words).join(' ')
 }
 

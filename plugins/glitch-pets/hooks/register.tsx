@@ -3,16 +3,23 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
+import { INITIAL_CREW, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, progressOf, reviewerRunning, shares } from './behavior/crew'
+import type { CrewState } from './behavior/crew'
+import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
+import { withHat } from './behavior/hats'
+import { isCapReached } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
-import { createPlayer } from './behavior/player'
+import { createPlayer, frameSvg } from './behavior/player'
 import { STORE_STREAK, advance, asStreak } from './behavior/streak'
-import type { MoodId, Persona, PetId, Sprite, VoiceMoment } from './behavior/types'
+import type { Frame, MoodId, Persona, PetId, Role, Sprite, Tier, VoiceMoment } from './behavior/types'
 import { PET_IDS } from './behavior/types'
 import { INITIAL_VOICE, pickLine } from './behavior/voice'
 import type { VoiceState } from './behavior/voice'
 import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petArgsOf, petList } from './commands'
 import { parsePetsConfig } from './config'
 import type { PetsConfig } from './config'
+import { crewTree } from './pane'
+import type { CrewView } from './pane'
 import { PERSONAS } from './personas/index'
 import { onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
 
@@ -21,6 +28,13 @@ const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastP
 export const sprite = atom({ plugin: 'glitch-pets', key: 'sprite' } as const, null as Sprite | null)
 export const mood = atom({ plugin: 'glitch-pets', key: 'mood' } as const, INITIAL_MOOD)
 export const view = atom({ plugin: 'glitch-pets', key: 'view' } as const, { petId: 'bud' } as PetsView)
+export const crew = atom({ plugin: 'glitch-pets', key: 'crew' } as const, INITIAL_CREW as CrewState)
+
+const PANE = 'glitch-crew'
+/** CSS px per pixel in the crew pane: the lead draws 24 × 20, a mini with its hat 24 × 24. */
+const PANE_PIXEL = 1.5
+/** Helpers' statuses are asked every this many ticks (1 s). */
+const STATUS_TICKS = 10
 
 export const TICK_MS = 100
 const LONG_TURN_MS = 120_000
@@ -39,6 +53,14 @@ let player = createPlayer()
 let voice: VoiceState = INITIAL_VOICE
 let lastSource: string | null = null
 let ticking = false
+let ticks = 0
+/** The reviewer finished while the main turn ran: crewDone waits for the turn's end (no remark mid-turn). */
+let crewDonePending = false
+const minis = new Map<string, Sprite>()
+/** The crew's 2+ helpers finished with no reviewer: the next prompt carries the reminder. */
+let reviewMissed = false
+/** A prompt is carrying the reminder now: claimed before awaiting, so two prompts at once cannot both. */
+let reminderInFlight = false
 
 // $.state.get needs a literal plugin and key, so these three cannot be merged.
 async function hudStats($: EngineInterface): Promise<unknown> {
@@ -73,6 +95,50 @@ async function hudPoke($: EngineInterface): Promise<unknown> {
   }
 }
 
+// A helper's static mini: the pet's first idle frame (never animated) under its role's hat.
+function miniOf(p: Persona, role: Role, tier: Tier): Sprite {
+  const key = `${p.id}|${role}|${tier}`
+  let s = minis.get(key)
+  if (!s) {
+    const hatted = withHat(p.moods.idle.frames[0] as Frame, p.hatAnchor, role, tier)
+    s = { source: frameSvg({ ...p.palette, ...hatted.palette }, hatted.frame, PANE_PIXEL), alt: `${p.name}, ${role}, ${tier}`, width: Math.round(16 * PANE_PIXEL), height: Math.round(hatted.frame.length * PANE_PIXEL) }
+    minis.set(key, s)
+  }
+  return s
+}
+
+// Helpers' statuses from the engine's list; the crewDone remark once the reviewer finishes and nothing else runs.
+// While a row runs, each refresh touches the crew so the pane's clocks move.
+async function refreshCrew($: EngineInterface) {
+  // Nothing runs: no status can change, so no call.
+  if (!(await read($, crew)).rows.some(r => r.status === 'running')) return
+  const list = await $.agent.list().catch(() => null)
+  if (!list) return
+  const now = await $.clock.now()
+  const before = await read($, crew)
+  const after = onStatuses(before, list, now)
+  if (after.rows.every((r, i) => r.status === before.rows[i]?.status)) {
+    if (before.rows.some(r => r.status === 'running')) await update($, crew, c => ({ ...c, tickAt: now }))
+    return
+  }
+  await update($, crew, c => onStatuses(c, list, now))
+  const c = await read($, crew)
+  const reviewerFinished = before.rows.some(r => r.role === 'reviewer' && r.status === 'running' && c.rows.find(x => x.id === r.id)?.status !== 'running')
+  if (!reviewerFinished || helpersRunning(c) > 0 || reviewerRunning(c)) return
+  if ((await read($, mood)).turnSince !== null) crewDonePending = true
+  else await say($, 'crewDone')
+}
+
+async function toggleCrew($: EngineInterface): Promise<string> {
+  const isOpen = (await $.ui.panes().catch(() => [])).some(x => x.id === PANE)
+  if (isOpen) {
+    await $.ui.close({ id: PANE })
+    return 'Crew pane closed.'
+  }
+  await $.ui.open({ id: PANE, title: 'Crew' })
+  return 'Crew pane opened.'
+}
+
 async function say($: EngineInterface, moment: VoiceMoment) {
   const p = personaFor((await read($, view)).petId)
   if (!p) return
@@ -85,6 +151,9 @@ async function say($: EngineInterface, moment: VoiceMoment) {
 
 async function tick($: EngineInterface) {
   const now = await $.clock.now()
+  // The crew pane needs the statuses with the pet off too.
+  ticks += 1
+  if (ticks % STATUS_TICKS === 0) await refreshCrew($)
   const p = personaFor((await read($, view)).petId)
   if (!p) {
     if (lastSource !== null) {
@@ -101,10 +170,11 @@ async function tick($: EngineInterface) {
   if (typeof pressed?.at === 'number' && pressed.at > (await read($, mood)).pokeSeen) {
     await update($, mood, x => onPoke(x, pressed.at as number, now))
   }
+  const team = await read($, crew)
   const m = await read($, mood)
   const r = tickOnce({
     now, persona: p, player, state: m, lastSource, total: stats?.total ?? 0, budget: b, cacheSecondsLeft: c?.secondsLeft ?? null,
-    helpersRunning: 0, reviewerRunning: false, tiredMs: config.tiredMs, sleepyMs: config.sleepyMs,
+    helpersRunning: helpersRunning(team), reviewerRunning: reviewerRunning(team), tiredMs: config.tiredMs, sleepyMs: config.sleepyMs,
   })
   if (r.moodChanged) {
     await update($, mood, x => ({ ...x, mood: r.mood, since: r.since }))
@@ -117,10 +187,11 @@ async function tick($: EngineInterface) {
   }
 }
 
+const firstWord = (args: string): string => (args.trim().split(/\s+/)[0] ?? '').toLowerCase()
+
 // `arg` is the pet argument (see petArgsOf): empty lists the pets.
 async function answerPets($: EngineInterface, arg: string): Promise<string> {
   const word = arg.trim().split(/\s+/)[0]
-  if (word?.toLowerCase() === 'crew') return PETS_USAGE
   const parsed = parsePetArg(word)
   if (parsed.kind === 'show') return petList((await read($, view)).petId, available)
   if (parsed.kind === 'unknown') return `Unknown pet "${parsed.name}". ${petList((await read($, view)).petId, available)}`
@@ -139,11 +210,15 @@ export const register: Register = (on, options) => {
   voice = INITIAL_VOICE
   lastSource = null
   ticking = false
+  ticks = 0
+  crewDonePending = false
+  reviewMissed = false
+  reminderInFlight = false
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     try {
-      await $.command.register({ name: 'glitch-pets', description: 'Glitch pets: /glitch-pets <name | off> (also /glitch pet)' })
+      await $.command.register({ name: 'glitch-pets', description: PETS_USAGE })
     } catch {
       $.ui.toast('Glitch pets: could not register /glitch-pets', { timeoutMs: 8000 })
     }
@@ -176,12 +251,36 @@ export const register: Register = (on, options) => {
         // The pet just misses this one.
       }
     }
-    return next(e)
+    // The missed-review reminder rides the next prompt that reaches the model (not a
+    // plugin's own, not a slash command's), as context the person never sees.
+    if (!reviewMissed || reminderInFlight || !config.crewReview || e.origin.kind === 'plugin' || (e as { command?: unknown }).command) return next(e)
+    // Stale by now (a reviewer joined, the turn was aborted, a new crew): dropped.
+    const now = await read($, crew).catch(() => null)
+    if (!now || !needsReview(now, { enabled: true, stopHookActive: false, capReached: false })) {
+      reviewMissed = false
+      return next(e)
+    }
+    if (reminderInFlight) return next(e)
+    reminderInFlight = true
+    let r: Awaited<ReturnType<typeof next>>
+    try {
+      r = await next({ ...e, context: [...(e.context ?? []), GATE_TEXT] })
+    } finally {
+      reminderInFlight = false
+    }
+    // Sent only if it entered: a hook beneath may have rewritten the context.
+    const entered = 'context' in r && r.context !== undefined ? r.context.includes(GATE_TEXT) : r.drop === undefined
+    if (entered) {
+      reviewMissed = false
+      await update($, crew, c => ({ ...c, gateFired: true })).catch(() => undefined)
+    }
+    return r
   })
 
   on('turn.start', async ($, e, next) => {
     if ((e as { agentId?: string }).agentId === undefined) {
       try {
+        await update($, crew, onMainTurnStart)
         const now = await $.clock.now()
         await update($, mood, m => ({ ...m, turnSince: now }))
         const r = advance(asStreak(await $.store.get(STORE_STREAK).catch(() => null)), now)
@@ -199,12 +298,41 @@ export const register: Register = (on, options) => {
       return await next(e)
     } finally {
       if (e.agentId === undefined) {
+        // Statuses first, while the turn still counts as running: a reviewer that just
+        // finished holds crewDone for the remark below, which then wins over happy.
+        await refreshCrew($).catch(() => undefined)
         try {
           const now = await $.clock.now()
           await update($, mood, m => onTurnEnd(m, e.reason, now))
-          if (e.reason === 'answer' && e.durationMs >= LONG_TURN_MS) await say($, 'happy')
+          if (crewDonePending) {
+            crewDonePending = false
+            await say($, 'crewDone')
+          } else if (e.reason === 'answer' && e.durationMs >= LONG_TURN_MS) await say($, 'happy')
         } catch {
           // Leave the mood as it was.
+        }
+        // Each main turn's end: is the crew's work unreviewed (the reminder goes out
+        // with the next prompt), then a quiet turn closes the crew.
+        try {
+          // An interrupted turn is the person's call: no reminder for this crew.
+          if (e.isAborted) await update($, crew, c => ({ ...c, gateFired: true }))
+          else if (config.crewReview) {
+            const stats = (await hudStats($)) as { total?: number } | null
+            const capReached = isCapReached((await hudBudget($)) as BudgetLike | null, stats?.total ?? 0)
+            if (needsReview(await read($, crew), { enabled: true, stopHookActive: false, capReached })) reviewMissed = true
+          }
+          await update($, crew, onMainTurnEnd)
+        } catch {
+          // No reminder this time.
+        }
+      } else {
+        const agentId = e.agentId
+        try {
+          const now = await $.clock.now()
+          await update($, crew, c => onAgentTurnEnd(c, agentId, e.usage, now))
+          await refreshCrew($)
+        } catch {
+          // The tick asks for the statuses again.
         }
       }
     }
@@ -212,14 +340,91 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    if (e.agentId === undefined) {
+    const agentId = e.agentId
+    if (agentId === undefined) {
       const now = await $.clock.now().catch(() => 0)
       await update($, mood, m => onToolResult(m, e, ran, now)).catch(() => undefined)
+    } else {
+      await update($, crew, c => onTool(c, agentId)).catch(() => undefined)
     }
     return ran
   })
 
-  on('command.run', { command: 'glitch-pets' }, async ($, e) => ({ text: await answerPets($, petArgsOf('glitch-pets', e.args)) }))
-  on('command.run', { command: 'glitch' }, async ($, e, next) =>
-    ROUTED_PETS.includes(e.args.trim().split(/\s+/)[0] ?? '') ? { text: await answerPets($, petArgsOf('glitch', e.args)) } : next(e))
+  // The standing rule, sent after the cache boundary so it never disturbs the shared prompt.
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    if (!config.crewReview) return composed
+    return { sections: [...composed.sections, { id: 'glitch-pets:crew', text: CREW_RULE, scope: 'session' as const }] }
+  })
+
+  // A helper joins the open crew, or starts a fresh one; a fresh crew opens the pane (auto).
+  on('agent.spawn', async ($, e, next) => {
+    const r = await next(e)
+    if (r.deny !== undefined || !r.agentId) return r
+    // Only the main loop's own helpers: not a helper's sub-spawn, a workflow's agent or another plugin's.
+    if (e.parentAgentId !== undefined || e.workflow !== undefined || next.origin.plugin !== 'engine') return r
+    const agentId = r.agentId
+    try {
+      const now = await $.clock.now()
+      const costNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? 0
+      // Decided inside the update, so two spawns at once cannot both start a crew.
+      let fresh = false
+      await update($, crew, c => {
+        fresh = c.closed
+        return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, model: r.model, now, costNow })
+      })
+      if (fresh && config.crewPane === 'auto' && !(await $.ui.panes().catch(() => [])).some(x => x.id === PANE)) {
+        await $.ui.open({ id: PANE, title: 'Crew' }).catch(() => undefined)
+      }
+    } catch {
+      // The pane misses this helper.
+    }
+    return r
+  })
+
+  // A helper's model and effort, as each of its requests names them.
+  on('turn.step', async function* ($, e, next) {
+    const agentId = e.agentId
+    if (agentId !== undefined) {
+      const effort = e.effort === undefined ? null : String(e.effort)
+      await update($, crew, c => onStep(c, agentId, e.model, effort)).catch(() => undefined)
+    }
+    const r = yield* next(e)
+    const usage = r?.usage
+    if (agentId !== undefined && usage) await update($, crew, c => onStepUsage(c, agentId, usage)).catch(() => undefined)
+    return r
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    try {
+      const ui = $.ui.resolve(e)
+      const { Box, Text } = ui
+      const c = await read($, crew)
+      if (c.rows.length === 0) return <Text dimColor>No crew yet. Helpers appear here when Claude splits work.</Text>
+      const now = await $.clock.now()
+      const p = personaFor((await read($, view)).petId)
+      const m = await read($, mood)
+      const usdNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? c.costAtStart
+      const crewCost = Math.max(0, usdNow - c.costAtStart)
+      const cost = shares(c.rows, crewCost)
+      const v: CrewView = {
+        lead: { name: p?.name ?? 'Lead', mood: m.mood, sprite: p ? player.sprite(p, m.mood, now - m.since, PANE_PIXEL) : null },
+        rows: c.rows.map(row => ({ row, mini: p ? miniOf(p, row.role, row.tier) : null, cost: cost[row.id] ?? 0, progress: progressOf(row, c.rows) })),
+        header: { cost: crewCost, tokens: c.rows.reduce((t, r) => t + r.tokens, 0), elapsedMs: elapsedOf(c, now) },
+        isTerminal: e.surface === 'terminal',
+        now,
+      }
+      return crewTree(v, { Box, Text, Svg: 'Svg' in ui ? ui.Svg : null } as never)
+    } catch {
+      return next(e)
+    }
+  })
+
+  on('command.run', { command: 'glitch-pets' }, async ($, e) =>
+    ({ text: firstWord(e.args) === 'crew' ? await toggleCrew($) : await answerPets($, petArgsOf('glitch-pets', e.args)) }))
+  on('command.run', { command: 'glitch' }, async ($, e, next) => {
+    const word = firstWord(e.args)
+    if (!ROUTED_PETS.includes(word)) return next(e)
+    return { text: word === 'crew' ? await toggleCrew($) : await answerPets($, petArgsOf('glitch', e.args)) }
+  })
 }

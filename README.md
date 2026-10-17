@@ -86,6 +86,42 @@ Moods: idle, working, happy, tired, sleepy, worried, oops, cheering, leading, re
 /plugin install glitch-pets@glitch
 ```
 
+### Crew
+
+When Claude splits work across helper agents, the crew pane (`glitch-crew`) shows them live. Your pet leads: it shows the leading mood while helpers run and the reviewing mood while the reviewer checks their work. Each helper is a small copy of your pet in a hat.
+
+```
+Crew                                         ≈$0.28 · 293k tok · 0:46
+ Bud · lead · reviewing
+ Running · 1
+   Build the landing page                    medium · Opus 5.5 · medium   41k tok ≈$0.08  0:44  ▰▰▰▱
+ Finished · 2
+   Research competitor launches ✓            light · Haiku 5.5 · low      44k tok ≈$0.02  0:17
+   Design the launch graphics ✓              heavy · Opus 5.5 · high      39k tok ≈$0.09  0:18
+```
+
+- **Role, shown by the hat:** builder (hard hat), researcher (explorer hat), designer (beret), tester (goggles), other (cap). The role comes from the helper's name (`builder-1`, `researcher-2`, …), or failing that from the words in its task. The reviewer wears no hat: it is drawn as your pet, the crew's lead.
+- **Tier, shown by the hat color:** light (green) for a Haiku model or low effort; heavy (red) for Opus at high, xhigh or max effort; medium (blue) for everything else.
+- **≈cost** is an estimate. The session's own cost is split across the helpers by how many tokens each used.
+- Once every helper is done, the finished list folds to one line (`3 done, 0 failed`).
+- In the terminal there are no sprites: each row shows the role and tier as words instead.
+- `/glitch crew` (or `/glitch-pets crew`) opens or closes the pane. With `crewPane: auto` it opens by itself when the first helper starts.
+
+The `crew` skill is the workflow Claude follows when work splits into 2 or more parts:
+
+1. **Plan:** a short task list, with a role and tier for each task.
+2. **Helpers:** role-named helpers run the independent tasks in parallel.
+3. **Review:** one reviewer checks the whole result against the plan.
+4. **Fix loop:** each finding goes back to the helper that did that part, then it is reviewed again, at most 2 rounds. Whatever is still open is reported plainly.
+
+A standing system-prompt rule asks for this. If 2 or more crew helpers (named `builder-1`, `researcher-2` and so on) finish with no reviewer, Claude gets a one-time reminder on its next turn to run the review.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `crewPane` | `auto` | `auto` opens the pane when helpers start; `manual` waits for `/glitch crew` |
+| `crewReview` | `true` | the crew rule in the system prompt, and the reminder when a review was skipped |
+
+
 ## Themes
 
 Six built-in themes: `glitch` (default, electric cyan and magenta), `neon`, `mono`, `sunset`, `matrix`, `paper`. `/glitch theme` lists them, `/glitch theme neon` switches and remembers the choice across sessions, `/glitch theme default` clears it.
@@ -108,6 +144,7 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 | `/glitch theme [name\|default]` | core | list themes, or switch and persist |
 | `/glitch-pets [name\|off]` | pets | list pets, switch and persist, or turn the pet off |
 | `/glitch pet [name\|off]` | pets | the same, through the core command |
+| `/glitch crew` | pets | open or close the crew pane (also `/glitch-pets crew`) |
 | `/glitch hud` | hud | show or hide the band |
 | `/glitch hud parts <list>` | hud | parts and order for this session, as a comma list, e.g. `cost,cache,context` or `cost, cache` |
 | `/glitch hud cost <list>` | hud | cost figures and order for this session, e.g. `session,today` |

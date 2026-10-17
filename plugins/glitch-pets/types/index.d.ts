@@ -1,4 +1,5 @@
-// The state contract. Sprite, MoodId and PetId are inlined from hooks/behavior/types.ts
+// The state contract. Sprite, MoodId, PetId, Role and Tier are inlined from hooks/behavior/types.ts,
+// CrewRow and CrewState from hooks/behavior/crew.ts,
 // because `claude plugin validate` requires the contract to be self-contained.
 
 /** What glitch-hud draws: one frame as an image. */
@@ -31,8 +32,51 @@ export type MoodState = {
 
 export type PetsView = { petId: PetId | 'off' }
 
+export type Role = 'builder' | 'researcher' | 'designer' | 'tester' | 'reviewer' | 'other'
+export type Tier = 'light' | 'medium' | 'heavy'
+
+/** One helper of the crew, as the crew pane lists it. */
+export type CrewRow = {
+  id: string
+  name?: string
+  /** Spawned under a crew name (`<role>-<n>`): only these count for the review reminder. */
+  named: boolean
+  description: string
+  role: Role
+  tier: Tier
+  model: string | null
+  effort: string | null
+  tokens: number
+  /** Price-shaped token weight, for sharing the crew's cost. */
+  weight: number
+  /** Tokens and weight its steps reported in its current turn, so the turn's own sum counts them once. */
+  turnTokens: number
+  turnWeight: number
+  tools: number
+  startedAt: number
+  /** When a resume set it running again: the list grace counts from here, not from the first start. */
+  resumedAt?: number
+  endedAt: number | null
+  status: 'running' | 'done' | 'failed'
+}
+
+/** The helpers started together; open until a quiet main turn ends. */
+export type CrewState = {
+  /** No crew is open: the next spawn starts a fresh one. True before any crew. */
+  closed: boolean
+  /** The main turn running now had a helper running at its start, or spawned one. */
+  turnBusy: boolean
+  startedAt: number | null
+  /** Clock ms of the last refresh while a row runs, so the pane's clocks move. */
+  tickAt: number
+  costAtStart: number
+  rows: CrewRow[]
+  /** The missed-review reminder already went out for this crew. */
+  gateFired: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'glitch-pets': { sprite: Sprite | null; mood: MoodState; view: PetsView }
+    'glitch-pets': { sprite: Sprite | null; mood: MoodState; view: PetsView; crew: CrewState }
   }
 }
