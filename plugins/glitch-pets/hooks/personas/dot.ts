@@ -1,5 +1,5 @@
 // Dot: a ladybug who sits on a daisy. Tidy, gentle, encouraging.
-import type { Frame, Persona } from '../behavior/types'
+import type { Frame, Persona, RodPose } from '../behavior/types'
 
 type Pt = readonly [number, number]
 const E = '................'
@@ -81,6 +81,40 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[6, 3], [9, 3]], 'k'))),
 )
 
+// A "?" (Y), 3 wide and 5 tall, painted only on empty pixels.
+const qmark = (rows: Frame, x: number, y: number): Frame =>
+  ([[x, y], [x + 1, y], [x + 2, y + 1], [x + 1, y + 2], [x + 1, y + 4]] as Pt[]).reduce((r, [px, py]) => spark(r, px, py, 'Y'), rows)
+// Investigating: Dot turns her head to peer one way, then the other, one antenna bent forward to feel
+// for the problem, a "?" bobbing beside her. Rows 0-3 are the head and antennae.
+const turn = (rows: Frame, d: number): Frame => rows.map((r, y) => (y < 4 ? (d < 0 ? r.slice(1) + '.' : '.' + r.slice(0, -1)) : r))
+const feelRight = patch(BASE, { 0: '....k...........', 1: '.....k....kk....' })
+const feelLeft = patch(BASE, { 0: '...........k....', 1: '....kk....k.....' })
+const investigating = [qmark(turn(BASE, -1), 13, 0), qmark(turn(feelRight, -1), 13, 1), qmark(turn(BASE, 1), 13, 0), qmark(turn(feelLeft, 1), 13, 1)]
+// Pleased (a crew member finished): the signature flourish, a tidy cheerleader. Her antennae become
+// pom-poms and wave, her wings flutter, a pink smile. She stays on her daisy: the hop is happy's.
+const squint = put(smile, [[6, 3], [9, 3]], 'k')
+const blush = (f: Frame): Frame => put(f, [[5, 3], [10, 3]], 'r')
+const pomsHigh = (f: Frame): Frame => patch(f, { 0: '..YY........YY..', 1: '..YYkk....kkYY..' })
+const pomsOut = (f: Frame): Frame => patch(f, { 0: E, 1: 'YY............YY', 2: 'YYkkk.kkkk.kkkYY' })
+const pleased = [
+  smile,
+  pomsHigh(blush(smile)),
+  pomsOut(wingsOpen(blush(squint))),
+  pomsHigh(blush(squint)),
+  pomsOut(wingsOpen(blush(smile))),
+  pomsHigh(smile),
+]
+
+// The fishing rod (the reward): one antenna holds it out level like a pole; the other is a pom-pom,
+// still cheering. The cast lifts the outer end off the grid edge; the gift makes it droop.
+const rodBase = blush(smile)
+const rodPose = (tip: Pt): RodPose => {
+  const pom = put(put(rodBase, [[2, 0], [3, 0], [2, 1], [3, 1]], 'Y'), [[4, 0], [4, 1], [5, 1]], '.')
+  const held = put(put(pom, [[4, 1], [5, 1]], 'k'), [[11, 0]], 'm')
+  const cane: Pt[] = tip[1] === 0 ? [[12, 0], [13, 0], [14, 0]] : tip[1] === 1 ? [[12, 0], [13, 0], [14, 1]] : [[12, 0], [13, 1], [14, 1]]
+  return { frame: put(put(held, cane, 'b'), [tip], 'M'), tip: { x: tip[0], y: tip[1] } }
+}
+
 const dot: Persona = {
   id: 'dot',
   name: 'Dot',
@@ -103,7 +137,10 @@ const dot: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 3 },
+    pleased: { frames: pleased, fps: 5 },
   },
+  rod: { hold: rodPose([15, 0]), flick: rodPose([15, 0]), bent: rodPose([15, 2]), stowed: rodBase },
   hatAnchor: { x: 7, y: 2 },
   laptopPaw: 'k',
   voice: {

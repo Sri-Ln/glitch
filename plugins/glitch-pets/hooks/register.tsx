@@ -23,12 +23,13 @@ import type { PetsConfig } from './config'
 import { crewTree } from './pane'
 import type { CrewView } from './pane'
 import { PERSONAS } from './personas/index'
-import { onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
+import { onCrewChange, onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
+import { INITIAL_REACTIONS } from './behavior/reactions'
 // Crew themes (#41): the setting and /glitch crew theme. The pane draws minis with crewMini(view.crewTheme, ...).
 import { STORE_CREW_THEME, crewThemeArgOf, parseThemeArg, themeList } from './commands'
 import { CREW_THEMES, crewThemeIds } from './crew-themes/index'
 
-const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, failStreak: 0, pokedUntil: 0, pokeSeen: 0 }
+const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, failStreak: 0, pokedUntil: 0, pokeSeen: 0, reactions: INITIAL_REACTIONS }
 
 export const sprite = atom({ plugin: 'glitch-pets', key: 'sprite' } as const, null as Sprite | null)
 export const mood = atom({ plugin: 'glitch-pets', key: 'mood' } as const, INITIAL_MOOD)
@@ -129,6 +130,8 @@ async function refreshCrew($: EngineInterface) {
   await update($, crew, c => onStatuses(c, list, now))
   const c = await read($, crew)
   queueStepUps(before.rows, c.rows)
+  // The lead reacts: a member done is a brief joy and a reward, one failed a worry (behavior/reactions.ts).
+  await update($, mood, m => onCrewChange(m, before, c, now))
   const reviewerFinished = before.rows.some(r => r.role === 'reviewer' && r.status === 'running' && c.rows.find(x => x.id === r.id)?.status !== 'running')
   if (!reviewerFinished || helpersRunning(c) > 0 || reviewerRunning(c)) return
   if ((await read($, mood)).turnSince !== null) crewDonePending = true
@@ -180,11 +183,12 @@ async function tick($: EngineInterface) {
   const m = await read($, mood)
   const r = tickOnce({
     now, persona: p, player, state: m, lastSource, total: stats?.total ?? 0, budget: b, cacheSecondsLeft: c?.secondsLeft ?? null,
-    helpersRunning: helpersRunning(team), reviewerRunning: reviewerRunning(team), tiredMs: config.tiredMs, sleepyMs: config.sleepyMs,
+    helpersRunning: helpersRunning(team), reviewerRunning: reviewerRunning(team), tiredMs: config.tiredMs, sleepyMs: config.sleepyMs, crew: team,
   })
   if (r.moodChanged) {
     await update($, mood, x => ({ ...x, mood: r.mood, since: r.since }))
-    const moment = SPEAKS_ON_ENTRY[r.mood]
+    // Crew news has no remark here: a member's failure is not the budget's worry.
+    const moment = r.fromCrew ? undefined : SPEAKS_ON_ENTRY[r.mood]
     if (moment) await say($, moment)
   }
   if (r.sprite) {

@@ -15,6 +15,35 @@ const good = (): Persona => ({
   hatAnchor: { x: 8, y: 2 },
   laptopPaw: 'a',
   voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['one', 'two', 'three']])) as unknown as Persona['voice'],
+  rod: { hold: { frame: F, tip: { x: 15, y: 1 } }, flick: { frame: F, tip: { x: 15, y: 2 } }, bent: { frame: F, tip: { x: 15, y: 3 } }, stowed: F },
+})
+
+test('the rod needs its three poses and the stowed frame, each a grid frame with a tip inside the grid', () => {
+  const p = good()
+  expect(personaProblems({ ...p, rod: undefined } as unknown as Persona).join()).toContain('rod is missing')
+  expect(personaProblems({ ...p, rod: { ...p.rod, bent: { frame: F, tip: { x: 16, y: 0 } } } }).join()).toContain('rod bent tip')
+  expect(personaProblems({ ...p, rod: { ...p.rod, hold: { frame: F.slice(1), tip: { x: 1, y: 1 } } } }).join()).toContain('rod hold has 12 rows')
+  expect(personaProblems({ ...p, rod: { ...p.rod, stowed: F.map(r => r.replace('aa', 'zz')) } }).join()).toContain('rod stowed row 6 uses "z"')
+})
+
+test('leadStatus wording is optional, but only for known situations and never empty', () => {
+  const p = good()
+  expect(personaProblems({ ...p, leadStatus: { many: 'juggling {n}', joy: '{who} is done' } })).toEqual([])
+  expect(personaProblems({ ...p, leadStatus: { nonsense: 'x' } as never }).join()).toContain('not a lead situation')
+  expect(personaProblems({ ...p, leadStatus: { worry: ' ' } }).join()).toContain('leadStatus worry')
+  // A pair is the wording for one, then for more than one.
+  expect(personaProblems({ ...p, leadStatus: { joy: ['{who} is done', '{who} are done'] } })).toEqual([])
+  expect(personaProblems({ ...p, leadStatus: { joy: ['{who} is done'] as never } }).join()).toContain('leadStatus joy')
+})
+
+test('the contract covers the lead moods investigating and pleased', () => {
+  const p = good()
+  const moods = { ...p.moods } as Record<string, unknown>
+  delete moods.investigating
+  delete moods.pleased
+  const problems = personaProblems({ ...p, moods: moods as unknown as Persona['moods'] }).join()
+  expect(problems).toContain('mood investigating is missing')
+  expect(problems).toContain('mood pleased is missing')
 })
 
 test('a complete persona has no problems', () => {

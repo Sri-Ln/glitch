@@ -1,6 +1,7 @@
-// Renders every persona × mood, and every crew theme × pet × role × model, to one HTML page
-// for an art review.
-// Usage: node plugins/glitch-pets/scripts/gallery.mjs [out.html]   (Node 22.15 or later)
+// Renders every persona × mood, the lead's fishing-rod poses, and every crew theme × pet × role × model,
+// to one HTML page for an art review.
+// Usage: node plugins/glitch-pets/scripts/gallery.mjs [out.html] [--focus mood,mood]   (Node 22.15 or later)
+// --focus adds a section on top for those moods: each pet animated at 3× and at pane size, plus its frame strip.
 // Beside the page it writes crew-theme-<id>.svg per theme: one flat still grid, for rasterising.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import * as nodeModule from 'node:module'
@@ -9,6 +10,7 @@ import { dirname, join, resolve } from 'node:path'
 import { MOOD_IDS } from '../hooks/behavior/types.ts'
 import { frameSvg } from '../hooks/behavior/player.ts'
 import { withLaptop } from '../hooks/behavior/laptop.ts'
+import { GIFT } from '../hooks/behavior/reward-art.ts'
 
 const IDS = ['screenhead', 'blob', 'pixel', 'dot', 'fork', 'bud']
 const personas = []
@@ -22,11 +24,26 @@ for (const id of IDS) {
   }
 }
 
+const args = process.argv.slice(2)
+const fi = args.indexOf('--focus')
+const focus = fi >= 0 ? (args.splice(fi, 2)[1] ?? '').split(',').filter(m => MOOD_IDS.includes(m)) : []
+// Pane size: register.tsx draws the crew pane's lead at 1.5 CSS px per pixel.
+const anim = (p, art, px) => `<div class="anim" data-fps="${art.fps}">${art.frames.map((f, i) => `<span${i ? ' hidden' : ''}>${frameSvg(p.palette, f, px)}</span>`).join('')}</div>`
+const focusCell = (p, mood) => {
+  const art = p.moods[mood]
+  if (!art) return '<td>missing</td>'
+  const strip = art.frames.map(f => frameSvg(p.palette, f, 3)).join('<i></i>')
+  return `<td><div class="pair">${anim(p, art, 3)}${anim(p, art, 1.5)}</div><div class="strip">${strip}</div><div class="cap">${mood} · ${art.frames.length}f · ${art.fps}fps</div></td>`
+}
+const focusHtml = focus.length
+  ? `<h2>Focus: ${focus.join(', ')}</h2><p class="cap">Animated at 3× and at pane size (1.5×), then every frame at 3×.</p>
+<table><tr><th></th>${focus.map(m => `<th>${m}</th>`).join('')}</tr>${personas.map(p => `<tr><th>${p.name}</th>${focus.map(m => focusCell(p, m)).join('')}</tr>`).join('\n')}</table><h2>All moods</h2>`
+  : ''
 // Hooks modules import plugin files extensionless (the engine resolves them); here a relative
 // specifier that does not resolve as written is tried again with .ts, so the crew-themes
 // registry loads as the plugin loads it. module.registerHooks needs Node 22.15 or later.
 if (typeof nodeModule.registerHooks !== 'function') {
-  console.error(`gallery.mjs needs Node 22.15 or later (module.registerHooks, to load the crew-themes registry); this is Node ${process.versions.node}.\nUsage: node plugins/glitch-pets/scripts/gallery.mjs [out.html]`)
+  console.error(`gallery.mjs needs Node 22.15 or later (module.registerHooks, to load the crew-themes registry); this is Node ${process.versions.node}.\nUsage: node plugins/glitch-pets/scripts/gallery.mjs [out.html] [--focus mood,mood]`)
   process.exit(1)
 }
 nodeModule.registerHooks({
@@ -46,7 +63,7 @@ const manifest = JSON.parse(readFileSync(new URL('../.claude-plugin/plugin.json'
 const options = manifest.userConfig?.crewTheme?.options ?? []
 if (options.join() !== Object.keys(CREW_THEMES).join()) console.error(`plugin.json crewTheme options (${options.join(', ')}) differ from the registry (${Object.keys(CREW_THEMES).join(', ')})`)
 
-const out = resolve(process.argv[2] ?? '.superpowers/gallery/pets.html')
+const out = resolve(args[0] ?? '.superpowers/gallery/pets.html')
 const cell = (p, mood) => {
   const art = p.moods[mood]
   if (!art) return '<td>missing</td>'
@@ -75,6 +92,16 @@ const animOf = (themeId, input) => {
   }
   return `<div class="anim" data-step="${STEP}" data-seq="${seq.join(',')}">${frames.map((f, i) => `<span${i ? ' hidden' : ''}>${f}</span>`).join('')}</div>`
 }
+// The fishing-rod reward: each lead's rod poses (the tip the line hangs from is ringed) and the shared gift.
+const POSES = ['hold', 'flick', 'bent', 'stowed']
+const rodCell = (p, pose) => {
+  const r = pose === 'stowed' ? { frame: p.rod.stowed, tip: null } : p.rod[pose]
+  const svg = frameSvg(p.palette, r.frame, 4)
+  const ring = r.tip ? `<rect x="${r.tip.x}" y="${r.tip.y}" width="1" height="1" fill="none" stroke="#ff3fd0" stroke-width="0.15"/>` : ''
+  return `<td>${svg.replace('</svg>', `${ring}</svg>`)}<div class="cap">${pose}${r.tip ? ` · tip ${r.tip.x},${r.tip.y}` : ''}</div></td>`
+}
+const giftSvg = p => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5 6" width="30" height="36" shape-rendering="crispEdges">${GIFT.flatMap((row, y) => [...row].map((ch, x) => (ch === '.' ? '' : `<rect x="${x}" y="${y}" width="1" height="1" fill="${p.palette[ch]}"/>`))).join('')}</svg>`
+const rodRows = personas.map(p => `<tr><th>${p.name}</th>${POSES.map(k => rodCell(p, k)).join('')}<td>${giftSvg(p)}<div class="cap">gift</div></td></tr>`).join('\n')
 const themeSection = theme => {
   const head = `<tr><th></th>${ROLES.map(r => `<th>${r}</th>`).join('')}</tr>`
   const body = personas
@@ -130,9 +157,12 @@ body{font:13px system-ui;margin:16px;background:#14161f;color:#e8ebff}
 body.light{background:#f0f0f0;color:#222}
 table{border-collapse:collapse}td,th{padding:8px;border:1px solid #333;text-align:center;vertical-align:bottom}
 th{text-align:left;max-width:160px}.hat{display:inline-block;margin:0 4px}small{opacity:.7;font-weight:normal}.cap{font-size:11px;opacity:.7}
+.pair{display:flex;gap:12px;align-items:flex-end;justify-content:center}.strip{margin-top:6px;display:flex;gap:4px;justify-content:center}.strip i{width:1px;background:#444}
 </style>
 <button onclick="document.body.classList.toggle('light')">dark / light</button>
-<table><tr><th></th>${MOOD_IDS.map(m => `<th>${m}</th>`).join('')}</tr>${rows}</table>
+${focusHtml}<table><tr><th></th>${MOOD_IDS.map(m => `<th>${m}</th>`).join('')}</tr>${rows}</table>
+<h2>Fishing-rod reward</h2>
+<table><tr><th></th>${POSES.map(k => `<th>${k}</th>`).join('')}<th>gift</th></tr>${rodRows}</table>
 ${themeSections}
 <script>
 for (const a of document.querySelectorAll('.anim[data-seq]')) {

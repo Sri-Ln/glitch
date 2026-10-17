@@ -54,3 +54,25 @@ test('a click hops over any mood, then the mood comes back', () => {
   expect(moodOf(base({ pokedUntil: T + 1, cryUntil: T + 1 }))).toBe('happy')
   expect(moodOf(base({ pokedUntil: T, turnSince: T - 1000 }))).toBe('working')
 })
+
+test('crew news: a finish is pleased, a failure is worried, both over the steady crew moods', () => {
+  expect(moodOf(base({ crewJoyUntil: T + 1, helpersRunning: 2, reviewerRunning: true }))).toBe('pleased')
+  expect(moodOf(base({ crewWorryUntil: T + 1, crewJoyUntil: T + 1, helpersRunning: 1 }))).toBe('worried')
+  expect(moodOf(base({ crewJoyUntil: T, helpersRunning: 1 }))).toBe('leading')
+})
+
+test("crew news ranks under the session's own trouble", () => {
+  expect(moodOf(base({ crewJoyUntil: T + 1, budget: 0.95 }))).toBe('worried')
+  expect(moodOf(base({ crewJoyUntil: T + 1, cacheSecondsLeft: 30 }))).toBe('worried')
+  expect(moodOf(base({ crewJoyUntil: T + 1, oopsUntil: T + 1 }))).toBe('oops')
+  expect(moodOf(base({ crewWorryUntil: T + 1, cheerUntil: T + 1 }))).toBe('cheering')
+  expect(moodOf(base({ crewJoyUntil: T + 1, pokedUntil: T + 1 }))).toBe('happy')
+})
+
+test('investigating: only while helpers run and inside its cap; a reviewer running outranks it', () => {
+  expect(moodOf(base({ investigateUntil: T + 1, helpersRunning: 1 }))).toBe('investigating')
+  expect(moodOf(base({ investigateUntil: T + 1, helpersRunning: 0 }))).toBe('idle')
+  expect(moodOf(base({ investigateUntil: T, helpersRunning: 1 }))).toBe('leading')
+  expect(moodOf(base({ investigateUntil: T + 1, helpersRunning: 1, reviewerRunning: true }))).toBe('reviewing')
+  expect(moodOf(base({ investigateUntil: T + 1, helpersRunning: 1, crewJoyUntil: T + 1 }))).toBe('pleased')
+})
