@@ -15,18 +15,20 @@ Write a short plan in your reply:
 |---|------|------|------|-------|----------|
 
 - **Role**: builder (writes or changes code/files), researcher (finds and reports), designer (visuals, layouts, copy structure), tester (verifies, runs checks).
-- **Tier**: light (small, mechanical: a fast model or low effort), medium (normal work), heavy (hard reasoning: the most capable model at high effort). Pick the lightest tier that will do the job well.
+- **Tier**: light (small, mechanical: a lookup, a rename, a one-file edit), medium (normal work), heavy (hard reasoning: a tricky design, debugging across a system). Pick the lightest tier that will do the job well. Each tier is an agent type that sets its model and effort: `glitch-pets:crew-light`, `glitch-pets:crew-medium`, `glitch-pets:crew-heavy`.
 - **Needs**: which earlier task's output it uses; tasks with no needs run in parallel.
 
 ## 2. Helpers
 
 - Launch every parallel task together, in the background, each named `<role>-<n>` (`builder-1`, `researcher-1`, …) with a one-line description (the pane shows it).
+- Start each helper with `subagent_type: glitch-pets:crew-<tier>` from its plan row, and pass no `model` and no `effort`: the type sets both.
+- If a helper fails, a Glitch crew note names the next step up (for example `glitch-pets:crew-light-high`). Retry that task once with that type, the same prompt and the same name. Use the step-up types (`crew-<tier>-high`, `crew-heavy-xhigh`, `crew-heavy-max`) only when a note names one.
 - Each prompt states: the task, the files or sources in scope, constraints from the user, and exactly what to return (a short report: what was done, where, anything unsure).
 - Start dependent tasks only when what they need has arrived.
 
 ## 3. Review (always, once every helper has finished)
 
-- Launch one agent named `reviewer-1` with: the plan, every helper's report, and the paths of what changed. It checks the **whole** result against the plan and the user's request and returns findings, each with where it is and which task it belongs to — or "no findings".
+- Launch one agent named `reviewer-1` (usually `glitch-pets:crew-heavy`) with: the plan, every helper's report, and the paths of what changed. It checks the **whole** result against the plan and the user's request and returns findings, each with where it is and which task it belongs to — or "no findings".
 
 ## 4. Fix loop (at most 2 rounds)
 

@@ -120,22 +120,34 @@ A standing system-prompt rule asks for this. If 2 or more crew helpers (named `b
 |---|---|---|
 | `crewPane` | `auto` | `auto` opens the pane when helpers start; `manual` waits for `/glitch crew` |
 | `crewReview` | `true` | the crew rule in the system prompt, and the reminder when a review was skipped |
+| `crewTiers` | empty | JSON: each crew tier's model and effort (see below); empty uses the default table |
 
 #### Who picks the roles, models and effort
 
-- **Roles and the split:** Claude decides them. The `crew` skill guides it: Claude writes the plan, gives each task a role and a tier, and names each helper `<role>-<n>`. The plugin doesn't set the roles or the split.
-- **Model:** Claude Code decides it when the helper starts. It uses the first of these that is set:
-  1. the `model` Claude passes in the Agent call (an alias like `haiku`, or a full model id);
-  2. the `model` in the agent type's definition (`.claude/agents/*.md` frontmatter, or a plugin's agent);
-  3. your default subagent model, if you set one;
-  4. otherwise, the model of the session that started the helper.
+- **Roles, the split and the tier:** Claude decides them. The `crew` skill guides it: Claude writes the plan, gives each task a role and a tier, and names each helper `<role>-<n>`.
+- **Model and effort:** the plugin sets them from the tier. At session start it registers one agent type per tier, and Claude starts each helper with `subagent_type: glitch-pets:crew-<tier>`:
 
-  A fork always runs on its parent's model. If your setup forces one model on every subagent, that model wins over all of these.
-- **Effort:** comes from the agent type's `effort` (`low` to `max`). If that isn't set, the engine's own default applies. A plugin hook can't change one helper's effort when it starts.
-- **Why one helper can run on a different model:** Claude picked a lighter tier for that task and passed a `model`, or the helper's agent type pins its own model. For example, a type with `model: sonnet` runs on Sonnet even when your session runs on Opus.
-- **What the plugin does:** it watches each helper and shows the model and effort that helper's requests use. The tier in the pane is worked out from those (Haiku or low effort is light, Opus at high effort or more is heavy). The plugin doesn't choose or enforce models today.
-- **What you can configure today:** add agent definitions in `.claude/agents/` with `model` and `effort` in their frontmatter, for example a `researcher` agent with `model: haiku` and `effort: low`. When Claude uses that agent type, its helper runs on that model unless the Agent call passes its own `model`.
+  | Tier | Agent type | Model | Effort |
+  |---|---|---|---|
+  | light | `glitch-pets:crew-light` | Haiku 5.5 (`claude-haiku-5-5`) | low |
+  | medium | `glitch-pets:crew-medium` | Sonnet 5.5 (`claude-sonnet-5-5`) | medium |
+  | heavy | `glitch-pets:crew-heavy` | Opus 5.5 (`claude-opus-5-5`) | high |
 
+  The type's model wins: if the Agent call passes a different `model`, the plugin sets it back to the type's when the helper starts, and it drops an `effort` the Agent call passes. The one thing that beats the type is a setup that forces one model on every subagent. A crew member can't start helpers of its own.
+- **Changing the table:** set `crewTiers` to a JSON object. Each tier you leave out keeps its default, for example:
+
+  ```json
+  { "light": { "model": "claude-sonnet-5-5", "effort": "low" }, "heavy": { "effort": "medium" } }
+  ```
+
+  `model` is an alias (`haiku`, `sonnet`, `opus`) or a full model id. A tier's `effort` is `low`, `medium` or `high`. A bad value keeps that field's default, and a toast at session start says what was wrong.
+- **Step-up on failure:** when a crew helper fails (an error, not a stop you asked for), Claude gets a one-time note with its next prompt, often the failed helper's own notification. The note says to retry the task one step up, with the same prompt and name. A step raises the effort first, then the model:
+
+  `Haiku low → Haiku high → Sonnet medium → Sonnet high → Opus high → Opus xhigh → Opus max`
+
+  A task gets at most 2 step-ups. The step-up types (`crew-light-high`, `crew-medium-high`, `crew-heavy-xhigh`, `crew-heavy-max`) are registered next to the tiers. `xhigh` and `max` are only ever steps, never a tier's own effort. With your own `crewTiers`, the steps follow the same rule: the tier's model at high effort (if it isn't already high), then the next tier, and after the heavy tier each higher effort.
+- **Other agent types:** a helper Claude starts on any other type (`general-purpose`, your `.claude/agents/*.md`) picks its model as Claude Code always does: the Agent call's `model`, then the type's `model`, then your default subagent model, then the session's model. A fork always runs on its parent's model. The plugin leaves those alone and doesn't step them up.
+- **What the pane shows:** the model and effort each helper's requests actually use. The tier in the pane is worked out from those (Haiku or low effort is light, Opus at high effort or more is heavy).
 
 ## Themes
 

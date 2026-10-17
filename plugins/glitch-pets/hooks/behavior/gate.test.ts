@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { needsReview } from './gate'
+import { CREW_RULE, needsReview } from './gate'
 import type { CrewRow, CrewState } from './crew'
 import { INITIAL_CREW } from './crew'
 
@@ -40,4 +40,9 @@ test('only crew-named helpers count; any reviewer row satisfies it', () => {
   expect(needsReview(crewOf([row('a', 'researcher', 'done', false), row('b', 'researcher', 'done', false)]), o)).toBe(false)
   expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done'), row('x', 'other', 'running', false)]), o)).toBe(true)
   expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done'), row('r', 'reviewer', 'done', false)]), o)).toBe(false)
+})
+
+test('the crew rule names the crew tier types', () => {
+  expect(CREW_RULE).toContain('glitch-pets:crew-<tier>')
+  expect(CREW_RULE).toContain('no model or effort')
 })
