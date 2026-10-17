@@ -35,9 +35,9 @@ Set a cap per session (`budgetSession`), per local day (`budgetDaily`), or both.
 
 - 75% of a cap: the cost turns amber.
 - 90%: red, plus a toast.
-- 100%: toast plus a notification.
+- 100%: a toast; with `notify` = `windows` also a Windows notification.
 
-The 90% and 100% toasts appear in the session whatever `notify` says; `notify` only picks how the 100% notification (and the cache warnings) reach you, and `off` drops those.
+The 90% and 100% toasts appear in the session whatever `notify` says; `notify` = `windows` adds the Windows notification at 100%; `notify` also picks how the cache warnings reach you (an in-app toast by default, a Windows notification with `windows`, none with `off`).
 
 Each level fires once per cap per session; raising a cap re-arms the higher levels. The daily ledger sums every session's spend for the local date: each session keeps its own entry per day under its session id, so sessions running side by side, a reload, a `/clear` or a resume never double count; entries older than 7 days are pruned. Caps changed in `/config` apply when the plugin reloads, except a session cap you already set with `/glitch budget`.
 
@@ -52,7 +52,7 @@ Claude Code's prompt cache lives for a fixed time after the last request: 1 hour
 Left empty, `cacheWarnMinutes` fits the lifetime: marks at 10 and 5 minutes left for 1 hour, at 2 and 1 for 5 minutes. Marks you type at or above the lifetime can never fire: they are ignored and named once at session start. The countdown turns the warning color at a third of the lifetime left (20 minutes of an hour, 1:40 of 5 minutes) and the alert color at a sixth (10 minutes, 0:50).
 
 - **Warnings.** At each warning mark, once per answer, while idle, you get a notification titled `<project> — Glitch`: "Prompt cache expires in N min".
-- **Notification chain.** With `notify` = `windows`, a native Windows toast is tried first; if that fails (or the OS is not Windows) Claude Code's own notification channel is used, then an in-app toast. `toast` goes straight to the in-app toast; `off` turns off the cache warnings and the budget-cap notification (the budget toasts above still show).
+- **Where warnings go.** By default (`notify` = `toast`) a warning is an in-app toast in the session that raised it, so background sessions never reach the OS notification centre. Set `notify` = `windows` to opt in to OS notifications: a native Windows toast is tried first; if that fails (or the OS is not Windows) Claude Code's own notification channel is used, then an in-app toast. `off` turns off the cache warnings (the budget toasts above still show).
 - **Keep-warm.** `↻` on the cache part, or `/glitch warm`, sends a tool-less fork of the session's last request with a one-line question after it. The request is served from the prompt cache, which refreshes it, and nothing is added to the transcript. It is refused while a turn runs. The reply reports how many tokens were read from cache, and the countdown resets to the full lifetime (60:00, or 05:00).
 - **Cost.** One ping is a cache read of the whole context: about $0.04 at 200k tokens of context on Opus 5.5, versus about $1.60 to rebuild an expired cache.
 - **autoWarm** (off by default). At the last warning mark, ping once if you submitted a prompt within `autoWarmMaxIdle` minutes; never twice in a row without a prompt from you in between.
@@ -142,7 +142,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`. In
 | `budgetBlocksAgents` | `false` | refuse new subagents at a cap |
 | `cacheTtlMinutes` | `60` | prompt cache lifetime: `60` (most plans) or `5` |
 | `cacheWarnMinutes` | empty | minutes-left marks that notify; empty fits the lifetime (`10,5` for 1 hour, `2,1` for 5 minutes); marks at or above the lifetime are ignored |
-| `notify` | `windows` | `windows` (native toast), `toast` (inside Claude Code) or `off` (no cache or cap notifications; budget toasts still show) |
+| `notify` | `toast` | `toast` (inside the Claude Code session that raised it), `windows` (native Windows notification) or `off` (no cache or cap notifications; budget toasts still show) |
 | `autoWarm` | `false` | keep the cache warm by itself at the last warning mark |
 | `autoWarmMaxIdle` | `120` | minutes without a prompt from you after which autoWarm stops |
 
