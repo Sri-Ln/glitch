@@ -673,7 +673,7 @@ test('pane: one header line on the terminal, a lead row with total time on the d
       expect(all).toContain('so far')
       expect(await ui.find({ key: 'crew-totals' })).toBeTruthy()
       // The lead is drawn at 2×: 32 px wide (its slot keeps that room while tester-1's reward draws it).
-      expect(drawnByKey(await ui.drawn(), 'crew-lead-sprite')?.props?.width).toBe(Math.ceil(32 / 7))
+      expect(drawnByKey(await ui.drawn(), 'crew-lead-sprite')?.props?.width).toBe(Math.ceil(48 / 7) + 2)
       const lead = (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('Bud the dog'))
       if (lead) expect(lead.props.width).toBe(32)
       else expect(await rewardBox(ui)).toBeTruthy()
@@ -1528,7 +1528,17 @@ test('pane: a finish casts the reward from the lead to the receiver\'s row; the 
     if (surface === 'desktop') {
       const box = await rewardBox(ui)
       expect(box?.props?.position).toBe('absolute')
-      expect([box?.props?.top, box?.props?.left]).toEqual([0, 0])
+      // At the first member's mini column (1 cell in), from the lead row's top.
+      expect([box?.props?.top, box?.props?.left]).toEqual([0, 1])
+      // The lead sits at the right of a slot one gutter wider than the sprite column, so the
+      // line from its rod tip (pixel columns 14-15) drops through the gutter, not over the minis.
+      const slot = drawnByKey(await ui.drawn(), 'crew-lead-sprite')
+      expect(slot?.props?.justifyContent).toBe('flex-end')
+      const miniCols = Math.ceil(48 / 7)
+      expect(slot?.props?.width).toBe(miniCols + 2)
+      const tipX = (miniCols + 2) * 7 - 32 + 14.5 * 2
+      expect(tipX).toBeGreaterThanOrEqual((1 + miniCols) * 7)
+      expect(tipX).toBeLessThanOrEqual((2 + miniCols) * 7)
       const overlay = (await svgs(ui)).find(s => s.source.includes('data-moment'))
       expect(overlay?.source).toContain(`data-moment="${START + 1000}"`)
       // The overlay draws the lead: the pane's own sprite steps aside, its slot kept.
@@ -1625,6 +1635,10 @@ test('pane: a stepped-up member says what it stepped up from (compact on the ter
     expect(await ui.find({ key: surface === 'desktop' ? 'crew-member:ag-A' : 'crew-line:ag-A' })).toBeTruthy()
     await ui.unmount()
   }
+  // In a narrower desktop dock it shortens rather than cut the rung off.
+  const narrow = await mountPane($, 'desktop', 30)
+  expect((await textsOf(narrow)).join(' | ')).toContain('↑ from Haiku · low')
+  await narrow.unmount()
 })
 
 test('pane (desktop): one toggle Button per accordion header, its chevron inside', async ($, on) => {
@@ -1686,6 +1700,27 @@ test('a fullscreen command in a desktop-only session still docks for the termina
   await session($, on, {}, ['desktop'])
   await runCrew($, { kind: 'composer' }, { isFullscreen: true, columns: 240 })
   expect(asked).toEqual([{ columns: 90 }])
+})
+
+test('pane (terminal): at 40 cells the fold keeps its glyph and Button whole, the header its time; the desktop chips put ≈cost before tokens', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, 40)
+    const tree = await ui.drawn()
+    if (surface === 'terminal') {
+      const fold = drawnByKey(tree, 'crew-fold')
+      const parts = ((fold?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
+      expect(parts[0]?.props?.flexShrink).toBe(0)
+      expect(parts[parts.length - 1]?.props?.flexShrink).toBe(0)
+      const head = stringOf(textIn(drawnByKey(tree, 'crew-head')))
+      expect(head.length).toBeLessThanOrEqual(40)
+      expect(head).toMatch(/0:01$/)
+    } else {
+      const chips = JSON.stringify(drawnByKey(tree, `crew-chips:${B_ID}`))
+      expect(chips.indexOf('≈$')).toBeLessThan(chips.indexOf(' tok'))
+    }
+    await ui.unmount()
+  }
 })
 
 test('pane (terminal): the progress column is at most 40 cells', async ($, on) => {

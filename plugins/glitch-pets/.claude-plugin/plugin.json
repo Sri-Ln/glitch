@@ -1,7 +1,7 @@
 {
   "name": "glitch-pets",
   "version": "0.3.0",
-  "description": "Glitch pets: pick one of six pixel critters; it sits at the end of the HUD row, shows moods and says a word now and then; leads a crew pane when Claude runs helper agents.",
+  "description": "Glitch pets: pick one of six pixel critters; it sits at the end of the HUD row, shows moods and says a word now and then; leads the crew pane when Claude splits work across a crew of agents.",
   "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
   "license": "MIT",
   "types": "./types/index.d.ts",

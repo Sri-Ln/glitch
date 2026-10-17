@@ -42,8 +42,8 @@ export type CrewView = {
   open: Record<CrewGroup, boolean>
   /** Cells the desktop's sprite column takes: the crew theme's width at MINI_PIXEL. */
   miniColumns: number
-  /** The reward moment's overlay while it plays (desktop); the lead's own sprite steps aside meanwhile. */
-  reward: { svg: string; width: number; height: number; alt: string } | null
+  /** The reward moment's overlay while it plays (desktop), placed at (left, top) CSS px; the lead's own sprite steps aside meanwhile. */
+  reward: { svg: string; width: number; height: number; left: number; top: number; alt: string } | null
 }
 
 export type CrewActions = {
@@ -123,11 +123,18 @@ const layoutOf = (v: Pick<CrewView, 'rows' | 'open'>) =>
   desktopLayout({ rows: v.rows.map(m => m.row.status), open: v.open, steppedUp: v.rows.map(m => !!m.row.steppedUpFrom) })
 
 /**
+ * The lead's slot (cells): a member's padding, its sprite column and the gutter after it. The
+ * lead sits at its right end, so its rod tip (pixel columns 14-15) is over the gutter and the
+ * reward's line drops between the minis and the text.
+ */
+const leadSlotOf = (miniColumns: number) => MEMBER_PAD + Math.max(1, miniColumns) + 1
+
+/**
  * Where the reward moment for row `rowId` is drawn on the desktop, in CSS px from the pane's
  * top-left (rewardOverlay's input): null when the row is not drawn (its group folded).
  */
 export function rewardGeometry(
-  v: Pick<CrewView, 'rows' | 'open' | 'lead'>,
+  v: Pick<CrewView, 'rows' | 'open' | 'lead' | 'miniColumns'>,
   rowId: string,
 ): { receiverIndex: number; rowTop: (i: number) => number; leadBox: PxBox; mini: { left: number; width: number; height: number } } | null {
   const at = v.rows.findIndex(m => m.row.id === rowId)
@@ -140,7 +147,7 @@ export function rewardGeometry(
   return {
     receiverIndex,
     rowTop: i => ((tops[order[i] as number] ?? 0) as number) * DESKTOP_CELL.height,
-    leadBox: { left: 0, top: 0, width: lead.width, height: lead.height },
+    leadBox: { left: Math.max(0, leadSlotOf(v.miniColumns) * CELL_PX - lead.width), top: 0, width: lead.width, height: lead.height },
     mini: { left: MEMBER_PAD * CELL_PX, width: PET_COLUMNS * MINI_PIXEL, height: mini?.height ?? 13 * MINI_PIXEL },
   }
 }
@@ -294,7 +301,11 @@ function terminalTree(v: CrewView, el: El, act: CrewActions): RenderElement {
       </B>
     )
   }
-  const head = `Crew · ${running.length} running · ${done} done${failed ? ` · ${failed} failed` : ''} · ${usd(v.header.cost)}${narrow ? '' : ` · ${k(v.header.tokens)} tok`} · ${clock(v.header.elapsedMs)}`
+  // A tight body counts with the row glyphs, so the cost and the time still fit.
+  const counts = tight
+    ? `Crew ● ${running.length} ✓ ${done}${failed ? ` ✗ ${failed}` : ''}`
+    : `Crew · ${running.length} running · ${done} done${failed ? ` · ${failed} failed` : ''}`
+  const head = `${counts} · ${usd(v.header.cost)}${narrow ? '' : ` · ${k(v.header.tokens)} tok`} · ${clock(v.header.elapsedMs)}`
   return (
     <B flexDirection="column">
       <B key="crew-head">
@@ -306,9 +317,16 @@ function terminalTree(v: CrewView, el: El, act: CrewActions): RenderElement {
       {running.map(line)}
       {finished.length ? (
         <B key="crew-fold" flexDirection="row" columnGap={1}>
-          <T color={failed ? 'error' : 'success'}>{failed ? '✗' : '✓'}</T>
-          <T dimColor>{`${finished.length} finished · ${done} completed · ${failed} failed`}</T>
-          <Btn key="crew-finished" label={v.open.finished ? 'Hide' : 'Show'} onPress={() => act.toggle('finished')} />
+          {/* The glyph and the Button keep their room; the words truncate. */}
+          <B flexShrink={0}>
+            <T color={failed ? 'error' : 'success'}>{failed ? '✗' : '✓'}</T>
+          </B>
+          <B flexShrink={1} minWidth={0}>
+            <T dimColor wrap="truncate-end">{`${finished.length} finished · ${done} completed · ${failed} failed`}</T>
+          </B>
+          <B flexShrink={0}>
+            <Btn key="crew-finished" label={v.open.finished ? 'Hide' : 'Show'} onPress={() => act.toggle('finished')} />
+          </B>
         </B>
       ) : null}
       {v.open.finished ? finished.map(line) : null}
@@ -340,10 +358,13 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
     </B>
   )
 
+  // The details column's cells: what is left beside the padding, the sprite column and its gap.
+  const detailCells = v.bodyColumns - 2 * MEMBER_PAD - miniCols - 1
   const member = (m: CrewMember) => {
     const id = m.row.id
     const scope = scopeOf(id)
-    const from = fromLabel(m.row)
+    const rung = fromLabel(m.row)
+    const from = rung ? (`↑ stepped up from ${rung}`.length <= detailCells ? `↑ stepped up from ${rung}` : `↑ from ${rung}`) : null
     return (
       <B key={`crew-member:${id}`} flexDirection="row" columnGap={1} paddingX={MEMBER_PAD} height={heightOf(m)} overflow="hidden" hover={{ backgroundColor: HOVER_BG, scope }}>
         {/* The sprite column and the details column are two Boxes, so the details keep their width. */}
@@ -369,7 +390,7 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
           <T wrap="truncate-end">{m.row.description}</T>
           {from ? (
             <T dimColor wrap="truncate-end">
-              {`↑ stepped up from ${from}`}
+              {from}
             </T>
           ) : null}
           <B flexDirection="row" columnGap={1} alignItems="center" height={1}>
@@ -381,9 +402,10 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
             </B>
           </B>
           <B key={`crew-chips:${id}`} flexDirection="row" flexWrap="nowrap" columnGap={1} overflow="hidden" height={1}>
+            {/* The cost before the tokens: in a narrow dock the tokens are what gets cut. */}
             {chip(modelEffort(m.row, ' · '))}
-            {chip(`${k(m.row.tokens)} tok`, true)}
             {chip(usd(m.cost), true)}
+            {chip(`${k(m.row.tokens)} tok`, true)}
           </B>
         </B>
       </B>
@@ -448,13 +470,12 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
 
   // While the reward plays its overlay draws the lead; the lead's slot keeps its room.
   const lead = v.lead.sprite
-  const leadCols = lead ? Math.ceil(lead.width / CELL_PX) : 0
   return (
     <B flexDirection="column" rowGap={R.gap}>
       <B key="crew-lead" flexDirection="row" justifyContent="space-between" alignItems="flex-start" columnGap={1} height={R.lead}>
         <B flexDirection="row" columnGap={1} alignItems="flex-start" flexShrink={1} minWidth={0}>
           {lead ? (
-            <B key="crew-lead-sprite" flexShrink={0} width={leadCols}>
+            <B key="crew-lead-sprite" flexShrink={0} width={leadSlotOf(miniCols)} flexDirection="row" justifyContent="flex-end">
               {v.reward ? null : img(lead)}
             </B>
           ) : null}
@@ -475,7 +496,8 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
       {running.length ? group('running', running) : null}
       {finished.length ? group('finished', finished) : null}
       {v.reward && S ? (
-        <B key="crew-reward" position="absolute" top={0} left={0}>
+        // Its px offsets are whole cells (the lead row's top, the mini column's left).
+        <B key="crew-reward" position="absolute" top={Math.round(v.reward.top / DESKTOP_CELL.height)} left={Math.round(v.reward.left / CELL_PX)}>
           <S source={v.reward.svg} alt={v.reward.alt} width={v.reward.width} height={v.reward.height} />
         </B>
       ) : null}

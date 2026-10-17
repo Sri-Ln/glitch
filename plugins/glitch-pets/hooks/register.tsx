@@ -747,7 +747,7 @@ export const register: Register = (on, options) => {
         const receiver = rows.find(x => x.row.id === w.rowId)
         if (geo && overlay && receiver) {
           playing = w.rowId
-          v.reward = { svg: overlay.svg, width: overlay.width, height: overlay.height, alt: `${p.name} lowers a gift to ${crewName(receiver.row)}` }
+          v.reward = { svg: overlay.svg, width: overlay.width, height: overlay.height, left: overlay.left, top: overlay.top, alt: `${p.name} lowers a gift to ${crewName(receiver.row)}` }
           // From the gift's release to the moment's end the receiver is happy (it hops).
           const t = rewardTimeline(geo.receiverIndex)
           const since = now - w.startedAt
