@@ -53,13 +53,15 @@ export type CrewRow = {
   status: 'running' | 'done' | 'failed'
 }
 
-/** The helpers started from one main-loop turn. */
+/** The helpers started together; open until a quiet main turn ends. */
 export type CrewState = {
-  /** The main-loop turn this crew started in; 0 before any crew. */
-  turnNo: number
-  /** The main-loop turn running now. */
-  mainTurn: number
+  /** No crew is open: the next spawn starts a fresh one. True before any crew. */
+  closed: boolean
+  /** The main turn running now had a helper running at its start, or spawned one. */
+  turnBusy: boolean
   startedAt: number | null
+  /** Clock ms of the last refresh while a row runs, so the pane's clocks move. */
+  tickAt: number
   costAtStart: number
   rows: CrewRow[]
   /** The missed-review reminder already went out for this crew. */

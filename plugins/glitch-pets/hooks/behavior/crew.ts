@@ -1,4 +1,7 @@
-// The crew: helpers started from one main-loop turn, as rows for the pane. Pure.
+// The crew: helpers started together, as rows for the pane. Pure.
+// A crew spans main turns (background helpers finish in later turns, the reviewer
+// is spawned after them): it stays open until a quiet main turn ends, one where no
+// helper ran at its start, none was spawned and none runs at its end.
 import type { Role, Tier } from './types'
 
 export type UsageLike = { input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number }
@@ -21,18 +24,20 @@ export type CrewRow = {
 }
 
 export type CrewState = {
-  /** The main-loop turn this crew started in; 0 before any crew. */
-  turnNo: number
-  /** The main-loop turn running now. */
-  mainTurn: number
+  /** No crew is open: the next spawn starts a fresh one. True before any crew. */
+  closed: boolean
+  /** The main turn running now had a helper running at its start, or spawned one. */
+  turnBusy: boolean
   startedAt: number | null
+  /** Clock ms of the last refresh while a row runs, so the pane's clocks move. */
+  tickAt: number
   costAtStart: number
   rows: CrewRow[]
-  /** The stop gate already sent this crew back once. */
+  /** The missed-review reminder already went out for this crew. */
   gateFired: boolean
 }
 
-export const INITIAL_CREW: CrewState = { turnNo: 0, mainTurn: 0, startedAt: null, costAtStart: 0, rows: [], gateFired: false }
+export const INITIAL_CREW: CrewState = { closed: true, turnBusy: false, startedAt: null, tickAt: 0, costAtStart: 0, rows: [], gateFired: false }
 
 const ROLE_NAME = /^(builder|researcher|designer|tester|reviewer)-\d+$/i
 // Stems take any word form (reviews, reviewer, researching, tests, builds…). The reviewer rule stays first.
@@ -64,16 +69,21 @@ export const tokenWeight = (u: UsageLike): number =>
 
 const mapRow = (s: CrewState, id: string, fn: (r: CrewRow) => CrewRow): CrewState => ({ ...s, rows: s.rows.map(r => (r.id === id ? fn(r) : r)) })
 
-export const onMainTurn = (s: CrewState, turnNo: number): CrewState => ({ ...s, mainTurn: turnNo })
+const anyRunning = (s: CrewState): boolean => s.rows.some(r => r.status === 'running')
 
-export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; model: string | null; now: number; turnNo: number; costNow: number }): CrewState {
-  const fresh = s.turnNo !== a.turnNo
-  const base: CrewState = fresh ? { ...INITIAL_CREW, mainTurn: s.mainTurn, turnNo: a.turnNo, startedAt: a.now, costAtStart: a.costNow } : s
+/** A main turn starts: it is busy when a helper of the crew is still running. */
+export const onMainTurnStart = (s: CrewState): CrewState => ({ ...s, turnBusy: anyRunning(s) })
+
+/** A main turn ends: a quiet one (not busy, nothing running) closes the crew. */
+export const onMainTurnEnd = (s: CrewState): CrewState => ({ ...s, closed: s.closed || (!s.turnBusy && !anyRunning(s)), turnBusy: false })
+
+export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; model: string | null; now: number; costNow: number }): CrewState {
+  const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
   const row: CrewRow = {
     id: a.agentId, ...(a.name ? { name: a.name } : {}), description: a.description, role: roleOf(a.name, a.description),
     tier: tierOf(a.model, null), model: a.model, effort: null, tokens: 0, weight: 0, tools: 0, startedAt: a.now, endedAt: null, status: 'running',
   }
-  return { ...base, rows: [...base.rows.filter(r => r.id !== a.agentId), row] }
+  return { ...base, turnBusy: true, rows: [...base.rows.filter(r => r.id !== a.agentId), row] }
 }
 
 export const onStep = (s: CrewState, agentId: string, model: string, effort: string | null): CrewState =>
@@ -113,6 +123,13 @@ export function progressOf(row: CrewRow, rows: readonly CrewRow[]): number {
   if (row.status !== 'running') return 1
   const most = Math.max(0, ...rows.filter(r => r.status === 'done' && r.role !== 'reviewer').map(r => r.tools))
   return most > 0 ? Math.min(0.95, row.tools / most) : 0.5
+}
+
+/** The crew's elapsed time: up to now while a row runs, else up to the last row's end. */
+export function elapsedOf(s: CrewState, now: number): number {
+  if (s.startedAt === null) return 0
+  const end = anyRunning(s) ? now : Math.max(s.startedAt, ...s.rows.map(r => r.endedAt ?? s.startedAt as number))
+  return Math.max(0, end - s.startedAt)
 }
 
 export const helpersRunning = (s: CrewState): number => s.rows.filter(r => r.status === 'running' && r.role !== 'reviewer').length

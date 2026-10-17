@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
-import { INITIAL_CREW, helpersRunning, onAgentTurnEnd, onMainTurn, onSpawn, onStatuses, onStep, onTool, progressOf, reviewerRunning, shares } from './behavior/crew'
+import { INITIAL_CREW, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onTool, progressOf, reviewerRunning, shares } from './behavior/crew'
 import type { CrewState } from './behavior/crew'
 import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
 import { withHat } from './behavior/hats'
@@ -53,12 +53,11 @@ let player = createPlayer()
 let voice: VoiceState = INITIAL_VOICE
 let lastSource: string | null = null
 let ticking = false
-let mainTurn = 0
 let ticks = 0
 /** The reviewer finished while the main turn ran: crewDone waits for the turn's end (no remark mid-turn). */
 let crewDonePending = false
 const minis = new Map<string, Sprite>()
-/** The main turn that just ended ran 2+ helpers and no reviewer: the next prompt.compose carries the reminder. */
+/** The crew's 2+ helpers finished with no reviewer: the next prompt carries the reminder. */
 let reviewMissed = false
 
 // $.state.get needs a literal plugin and key, so these three cannot be merged.
@@ -107,13 +106,17 @@ function miniOf(p: Persona, role: Role, tier: Tier): Sprite {
 }
 
 // Helpers' statuses from the engine's list; the crewDone remark once the reviewer finishes and nothing else runs.
+// While a row runs, each refresh touches the crew so the pane's clocks move.
 async function refreshCrew($: EngineInterface) {
   const list = await $.agent.list().catch(() => null)
   if (!list) return
   const now = await $.clock.now()
   const before = await read($, crew)
   const after = onStatuses(before, list, now)
-  if (after.rows.every((r, i) => r.status === before.rows[i]?.status)) return
+  if (after.rows.every((r, i) => r.status === before.rows[i]?.status)) {
+    if (before.rows.some(r => r.status === 'running')) await update($, crew, c => ({ ...c, tickAt: now }))
+    return
+  }
   await update($, crew, c => onStatuses(c, list, now))
   const c = await read($, crew)
   const reviewerFinished = before.rows.some(r => r.role === 'reviewer' && r.status === 'running' && c.rows.find(x => x.id === r.id)?.status !== 'running')
@@ -203,7 +206,6 @@ export const register: Register = (on, options) => {
   voice = INITIAL_VOICE
   lastSource = null
   ticking = false
-  mainTurn = 0
   ticks = 0
   crewDonePending = false
   reviewMissed = false
@@ -244,14 +246,21 @@ export const register: Register = (on, options) => {
         // The pet just misses this one.
       }
     }
-    return next(e)
+    // The missed-review reminder rides the next prompt that reaches the model (not a
+    // plugin's own, not a slash command's), as context the person never sees.
+    if (!reviewMissed || !config.crewReview || e.origin.kind === 'plugin' || (e as { command?: unknown }).command) return next(e)
+    const r = await next({ ...e, context: [...(e.context ?? []), GATE_TEXT] })
+    if (r.drop === undefined) {
+      reviewMissed = false
+      await update($, crew, c => ({ ...c, gateFired: true })).catch(() => undefined)
+    }
+    return r
   })
 
   on('turn.start', async ($, e, next) => {
     if ((e as { agentId?: string }).agentId === undefined) {
       try {
-        mainTurn += 1
-        await update($, crew, c => onMainTurn(c, mainTurn))
+        await update($, crew, onMainTurnStart)
         const now = await $.clock.now()
         await update($, mood, m => ({ ...m, turnSince: now }))
         const r = advance(asStreak(await $.store.get(STORE_STREAK).catch(() => null)), now)
@@ -279,15 +288,16 @@ export const register: Register = (on, options) => {
         } catch {
           // Leave the mood as it was.
         }
-        // Checked here, while the crew is still this main turn's; the next turn's
-        // turn.start moves mainTurn on, and the reminder goes out with its prompt.
+        // Each main turn's end: is the crew's work unreviewed (the reminder goes out
+        // with the next prompt), then a quiet turn closes the crew.
         try {
+          await refreshCrew($)
           if (config.crewReview) {
-            await refreshCrew($)
             const stats = (await hudStats($)) as { total?: number } | null
             const capReached = isCapReached((await hudBudget($)) as BudgetLike | null, stats?.total ?? 0)
             if (needsReview(await read($, crew), { enabled: true, stopHookActive: false, capReached })) reviewMissed = true
           }
+          await update($, crew, onMainTurnEnd)
         } catch {
           // No reminder this time.
         }
@@ -316,25 +326,14 @@ export const register: Register = (on, options) => {
     return ran
   })
 
-  // The standing rule, sent after the cache boundary so it never disturbs the shared prompt;
-  // and once, after a main turn that left 2+ helpers' work unreviewed, the reminder.
+  // The standing rule, sent after the cache boundary so it never disturbs the shared prompt.
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     if (!config.crewReview) return composed
-    try {
-      const sections = [...composed.sections, { id: 'glitch-pets:crew', text: CREW_RULE, scope: 'session' as const }]
-      if (reviewMissed) {
-        reviewMissed = false
-        await update($, crew, c => ({ ...c, gateFired: true }))
-        sections.push({ id: 'glitch-pets:crew-missed', text: GATE_TEXT, scope: 'session' as const })
-      }
-      return { sections }
-    } catch {
-      return composed
-    }
+    return { sections: [...composed.sections, { id: 'glitch-pets:crew', text: CREW_RULE, scope: 'session' as const }] }
   })
 
-  // A helper joins the crew of the main turn running now; the first of a crew opens the pane (auto).
+  // A helper joins the open crew, or starts a fresh one; a fresh crew opens the pane (auto).
   on('agent.spawn', async ($, e, next) => {
     const r = await next(e)
     if (r.deny !== undefined || !r.agentId) return r
@@ -342,8 +341,12 @@ export const register: Register = (on, options) => {
     try {
       const now = await $.clock.now()
       const costNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? 0
-      const fresh = (await read($, crew)).turnNo !== mainTurn
-      await update($, crew, c => onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, model: r.model, now, turnNo: mainTurn, costNow }))
+      // Decided inside the update, so two spawns at once cannot both start a crew.
+      let fresh = false
+      await update($, crew, c => {
+        fresh = c.closed
+        return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, model: r.model, now, costNow })
+      })
       if (fresh && config.crewPane === 'auto' && !(await $.ui.panes().catch(() => [])).some(x => x.id === PANE)) {
         await $.ui.open({ id: PANE, title: 'Crew' }).catch(() => undefined)
       }
@@ -378,7 +381,7 @@ export const register: Register = (on, options) => {
       const v: CrewView = {
         lead: { name: p?.name ?? 'Lead', mood: m.mood, sprite: p ? player.sprite(p, m.mood, now - m.since, PANE_PIXEL) : null },
         rows: c.rows.map(row => ({ row, mini: p ? miniOf(p, row.role, row.tier) : null, cost: cost[row.id] ?? 0, progress: progressOf(row, c.rows) })),
-        header: { cost: crewCost, tokens: c.rows.reduce((t, r) => t + r.tokens, 0), elapsedMs: now - (c.startedAt ?? now) },
+        header: { cost: crewCost, tokens: c.rows.reduce((t, r) => t + r.tokens, 0), elapsedMs: elapsedOf(c, now) },
         isTerminal: e.surface === 'terminal',
         now,
       }

@@ -150,20 +150,36 @@ test('the first helper opens the crew pane (auto) and the pane lists it', async 
   }
 })
 
-test('a second helper does not open the pane again, and manual never opens it', async ($, on) => {
+test('a second helper of the crew does not open the pane again', async ($, on) => {
   const opened: string[] = []
   on('ui.open', (_$, e) => {
     opened.push(e.id)
     return { value: { isPlaced: true } } as never
   })
-  on('ui.panes', () => ({ value: opened.length ? [{ id: 'glitch-crew', title: 'Crew', isShown: true, isFocused: false, isPlaced: true }] : [] }) as never)
+  // The pane reads as closed, so only the crew decides.
+  on('ui.panes', () => ({ value: [] }) as never)
+  on('agent.spawn', (_$, e) => ({ model: 'claude-opus-5-5', agentId: `ag-${e.description}` }) as never)
+  on('session.usage', usageAt(0))
+  await session($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await Promise.all([spawnHelper($, 'a', 'A', 'builder-1'), spawnHelper($, 'b', 'B', 'builder-2')])
+  await spawnHelper($, 'c', 'C', 'builder-3')
+  expect(opened).toEqual(['glitch-crew'])
+})
+
+test('crewPane manual never opens the pane', { options: { crewPane: 'manual' } }, async ($, on) => {
+  const opened: string[] = []
+  on('ui.open', (_$, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.panes', () => ({ value: [] }) as never)
   on('agent.spawn', (_$, e) => ({ model: 'claude-opus-5-5', agentId: `ag-${e.description}` }) as never)
   on('session.usage', usageAt(0))
   await session($, on)
   await $.turn.start({ turnId: 'm1' } as never)
   await spawnHelper($, 'a', 'A', 'builder-1')
-  await spawnHelper($, 'b', 'B', 'builder-2')
-  expect(opened).toEqual(['glitch-crew'])
+  expect(opened).toEqual([])
 })
 
 test('with no crew yet the pane says so', async ($, on) => {
@@ -205,21 +221,172 @@ test('/glitch crew toggles the pane too', async ($, on) => {
 
 const sectionIds = (r: unknown) => (r as { sections: { id: string }[] }).sections.map(s => s.id)
 const composeOnce = ($: Engine) => $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as never)
-
-// Two helpers spawned and finished in main turn m1, which then ends.
-const crewTurn = async ($: Engine, on: Parameters<typeof session>[1], helpers: [string, string][]) => {
-  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
-  on('agent.spawn', (_$, e) => ({ model: 'claude-opus-5-5', agentId: `ag-${e.description}` }) as never)
-  on('agent.list', () => ({ value: helpers.map(([d]) => ({ id: `ag-${d}`, description: d, type: 'general-purpose', status: 'completed' })) }) as never)
-  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
-  on('ui.panes', () => ({ value: [] }) as never)
-  on('session.usage', usageAt(0))
-  await session($, on)
-  await $.turn.start({ turnId: 'm1' } as never)
-  for (const [d, name] of helpers) await spawnHelper($, d, d, name)
-  for (const [d] of helpers) await $.turn.complete({ turnId: `s-${d}`, agentId: `ag-${d}`, reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
-  await $.turn.complete({ turnId: 'm1', reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
+const submit = ($: Engine, origin: object = { kind: 'composer' }) => $.prompt.submit({ text: 'go on', wait: false, origin } as never)
+const mainStart = ($: Engine, id: string) => $.turn.start({ turnId: id } as never)
+const mainEnd = ($: Engine, id: string) => $.turn.complete({ turnId: id, reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
+const agentEnd = ($: Engine, agentId: string) => $.turn.complete({ turnId: `s-${agentId}`, agentId, reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
+const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
+  const ui = await $.ui.mount({ plugin: 'glitch-pets', surface, component: 'Pane', props: { title: 'Crew', isFocused: false, bodyColumns: 120 } as never, requestId: 'glitch-crew' })
+  const text = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join(' | ')
+  await ui.unmount()
+  return text
 }
+
+// The engine around a crew: agents' statuses, the session's cost, what each prompt carried.
+const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
+  const h = { status: {} as Record<string, string>, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[] }
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
+  on('prompt.submit', (_$, e) => {
+    h.contexts.push(e.context)
+    return { text: e.text } as never
+  })
+  on('agent.spawn', (_$, e) => {
+    h.status[`ag-${e.description}`] = 'running'
+    return { model: 'claude-opus-5-5', agentId: `ag-${e.description}` } as never
+  })
+  on('agent.list', () => ({ value: Object.entries(h.status).map(([id, status]) => ({ id, description: id, type: 'general-purpose', status })) }) as never)
+  on('ui.open', (_$, e) => {
+    h.opened.push(e.id)
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.panes', () => ({ value: [] }) as never)
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd: h.usd } } }) as never)
+  on('tool.call', () => ({ result: 'ok' }) as never)
+  on('turn.step', async function* () {
+    return { turnId: 's', index: 0, answer: '', toolUses: [] } as never
+  })
+  const clock = await session($, on)
+  return { h, clock }
+}
+
+// Background helpers: builder-1 and builder-2 start in m1 and finish in m2 and m3.
+const backgroundCrew = async ($: Engine, on: Parameters<typeof session>[1]) => {
+  const { h, clock } = await crewHarness($, on)
+  h.usd = 1
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'A', 'builder-1')
+  await spawnHelper($, 'B', 'B', 'builder-2')
+  await mainEnd($, 'm1')
+  await clock.advance(1000)
+  await mainStart($, 'm2')
+  h.status['ag-A'] = 'completed'
+  await agentEnd($, 'ag-A')
+  await mainEnd($, 'm2')
+  await clock.advance(1000)
+  await mainStart($, 'm3')
+  h.status['ag-B'] = 'completed'
+  await agentEnd($, 'ag-B')
+  h.usd = 3
+  return { h, clock }
+}
+
+test('a crew spans main turns: the reviewer spawned later joins the same crew', async ($, on) => {
+  const { h } = await backgroundCrew($, on)
+  await spawnHelper($, 'R', 'R', 'reviewer-1')
+  await mainEnd($, 'm3')
+  h.usd = 5
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const text = await paneText($, surface)
+    for (const d of ['A ✓', 'B ✓', 'R']) expect(text).toContain(d)
+    // costAtStart (1) and startedAt (m1) are the crew's own: $4 over 2 s.
+    expect(text).toContain('≈$4.00 · 0 tok · 0:02')
+  }
+  expect(h.opened).toEqual(['glitch-crew'])
+  await submit($)
+  expect(h.contexts).toEqual([undefined])
+})
+
+test('background helpers that finish unreviewed: the reminder rides the next prompt, once', async ($, on) => {
+  const { h } = await backgroundCrew($, on)
+  await mainEnd($, 'm3')
+  // A stray compose or a plugin's own prompt does not take it.
+  expect(sectionIds(await composeOnce($))).toEqual(['intro', 'glitch-pets:crew'])
+  await submit($, { kind: 'plugin', name: 'other' })
+  await submit($)
+  await submit($)
+  expect(h.contexts.length).toBe(3)
+  expect(h.contexts[0]).toBeUndefined()
+  expect(h.contexts[1]?.length).toBe(1)
+  expect(h.contexts[1]?.[0]).toContain('reviewer-1')
+  expect(h.contexts[2]).toBeUndefined()
+  // Later turns do not bring it back.
+  await mainStart($, 'm4')
+  await mainEnd($, 'm4')
+  await submit($)
+  expect(h.contexts[3]).toBeUndefined()
+})
+
+test('no reminder while helpers still run at the turn end', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'A', 'builder-1')
+  await spawnHelper($, 'B', 'B', 'builder-2')
+  await mainEnd($, 'm1')
+  await submit($)
+  expect(h.contexts).toEqual([undefined])
+})
+
+test('one helper is no crew to review', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'A', 'builder-1')
+  h.status['ag-A'] = 'completed'
+  await mainEnd($, 'm1')
+  await submit($)
+  expect(h.contexts).toEqual([undefined])
+})
+
+test('a quiet main turn closes the crew; the next spawn starts a fresh one', async ($, on) => {
+  const { h, clock } = await crewHarness($, on)
+  h.usd = 1
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'A', 'builder-1')
+  h.status['ag-A'] = 'completed'
+  await mainEnd($, 'm1')
+  await mainStart($, 'm2')
+  await mainEnd($, 'm2')
+  await clock.advance(1000)
+  h.usd = 2
+  await mainStart($, 'm3')
+  await spawnHelper($, 'B', 'B', 'builder-1')
+  h.usd = 2.5
+  const text = await paneText($, 'terminal')
+  expect(text).toContain('B')
+  expect(text).not.toContain('A ✓')
+  expect(text).toContain('≈$0.50 · 0 tok · 0:00')
+  expect(h.opened).toEqual(['glitch-crew', 'glitch-crew'])
+})
+
+test('a helper\'s steps set its model, effort and tier; its tool calls drive progress', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'A', 'builder-1')
+  await spawnHelper($, 'B', 'B', 'builder-2')
+  const stream = ($.turn.step as unknown as (e: object) => AsyncGenerator<unknown, unknown>)({ turnId: 's', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 1, agentId: 'ag-B' })
+  while (!(await stream.next()).done) {
+    // Read the stream to its end.
+  }
+  for (let i = 0; i < 4; i++) await $.tool.call({ tool: 'Read', file_path: 'x', agentId: 'ag-A' } as never)
+  await $.tool.call({ tool: 'Read', file_path: 'x', agentId: 'ag-B' } as never)
+  h.status['ag-A'] = 'completed'
+  await agentEnd($, 'ag-A')
+  const text = await paneText($, 'terminal')
+  expect(text).toContain('builder · heavy · Opus 5.5 · high')
+  // B made 1 of the 4 tool calls A took: a quarter of the bar.
+  expect(text).toContain('▰▱▱▱')
+})
+
+test('the crewDone remark when the reviewer finishes and nothing else runs', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'R', 'R', 'reviewer-1')
+  await mainEnd($, 'm1')
+  expect(toasts.filter(t => t.startsWith('Bud: '))).toEqual([])
+  h.status['ag-R'] = 'completed'
+  await agentEnd($, 'ag-R')
+  const crewDone = ['The pack is done! I checked them all!', 'Everyone did great! Review done!', 'All checked! Good pack!'].map(l => `Bud: ${l}`)
+  expect(toasts.filter(t => crewDone.includes(t)).length).toBe(1)
+})
 
 test('the crew rule is added to the system prompt', async ($, on) => {
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
@@ -227,45 +394,10 @@ test('the crew rule is added to the system prompt', async ($, on) => {
   expect(sectionIds(await composeOnce($))).toEqual(['intro', 'glitch-pets:crew'])
 })
 
-test('a main turn whose 2 helpers finished unreviewed sends the reminder on the next compose, once', async ($, on) => {
-  await crewTurn($, on, [['A', 'builder-1'], ['B', 'builder-2']])
-  const first = (await composeOnce($)) as { sections: readonly { id: string; text: string }[] }
-  expect(first.sections.map(s => s.id)).toEqual(['intro', 'glitch-pets:crew', 'glitch-pets:crew-missed'])
-  expect(first.sections[2]?.text).toContain('reviewer')
-  expect(sectionIds(await composeOnce($))).toEqual(['intro', 'glitch-pets:crew'])
-  // The next main turn does not bring it back.
-  await $.turn.start({ turnId: 'm2' } as never)
-  await $.turn.complete({ turnId: 'm2', reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
-  expect(sectionIds(await composeOnce($))).toEqual(['intro', 'glitch-pets:crew'])
-})
-
-test('no reminder while the turn with the crew is still running', async ($, on) => {
-  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
-  on('agent.spawn', (_$, e) => ({ model: 'claude-opus-5-5', agentId: `ag-${e.description}` }) as never)
-  on('agent.list', () => ({ value: [{ id: 'ag-A', status: 'completed' }, { id: 'ag-B', status: 'completed' }] }) as never)
-  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
-  on('ui.panes', () => ({ value: [] }) as never)
-  on('session.usage', usageAt(0))
-  await session($, on)
-  await $.turn.start({ turnId: 'm1' } as never)
-  await spawnHelper($, 'A', 'A', 'builder-1')
-  await spawnHelper($, 'B', 'B', 'builder-2')
-  await $.turn.complete({ turnId: 's-A', agentId: 'ag-A', reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
-  await $.turn.complete({ turnId: 's-B', agentId: 'ag-B', reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
-  expect(sectionIds(await composeOnce($))).toEqual(['intro', 'glitch-pets:crew'])
-})
-
-test('no reminder when a reviewer ran', async ($, on) => {
-  await crewTurn($, on, [['A', 'builder-1'], ['B', 'builder-2'], ['R', 'reviewer-1']])
-  expect(sectionIds(await composeOnce($))).toEqual(['intro', 'glitch-pets:crew'])
-})
-
-test('one helper is no crew to review', async ($, on) => {
-  await crewTurn($, on, [['A', 'builder-1']])
-  expect(sectionIds(await composeOnce($))).toEqual(['intro', 'glitch-pets:crew'])
-})
-
 test('with the crew review off: no rule and no reminder', { options: { crewReview: false } }, async ($, on) => {
-  await crewTurn($, on, [['A', 'builder-1'], ['B', 'builder-2']])
+  const { h } = await backgroundCrew($, on)
+  await mainEnd($, 'm3')
   expect(sectionIds(await composeOnce($))).toEqual(['intro'])
+  await submit($)
+  expect(h.contexts).toEqual([undefined])
 })

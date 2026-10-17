@@ -6,7 +6,7 @@ import { INITIAL_CREW } from './crew'
 
 const row = (id: string, role: CrewRow['role'], status: CrewRow['status']): CrewRow =>
   ({ id, role, status, description: id, tier: 'medium', model: null, effort: null, tokens: 0, weight: 0, tools: 0, startedAt: 0, endedAt: null }) as CrewRow
-const crewOf = (rows: CrewRow[], extra: Partial<CrewState> = {}): CrewState => ({ ...INITIAL_CREW, turnNo: 1, mainTurn: 1, startedAt: 0, rows, ...extra })
+const crewOf = (rows: CrewRow[], extra: Partial<CrewState> = {}): CrewState => ({ ...INITIAL_CREW, closed: false, startedAt: 0, rows, ...extra })
 const o = { enabled: true, stopHookActive: false, capReached: false }
 
 test('two finished helpers and no reviewer → review needed', () => {
@@ -30,6 +30,8 @@ test('never twice, never when off, never at a cap, never when the stop hook is a
   expect(needsReview(s, { ...o, capReached: true })).toBe(false)
   expect(needsReview(s, { ...o, stopHookActive: true })).toBe(false)
 })
-test('a crew from an earlier main turn does not gate this one', () => {
-  expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done')], { mainTurn: 2 }), o)).toBe(false)
+test('a crew that spans main turns is still checked; a closed one is not', () => {
+  const s = crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done')], { turnBusy: false })
+  expect(needsReview(s, o)).toBe(true)
+  expect(needsReview({ ...s, closed: true }, o)).toBe(false)
 })
