@@ -164,3 +164,29 @@ export function elapsedOf(s: CrewState, now: number): number {
 
 export const helpersRunning = (s: CrewState): number => s.rows.filter(r => r.status === 'running' && r.role !== 'reviewer').length
 export const reviewerRunning = (s: CrewState): boolean => s.rows.some(r => r.status === 'running' && r.role === 'reviewer')
+
+/**
+ * A running row's steps (tool calls) against the most a finished non-reviewer row
+ * took; the total is kept above the count, so a running pill never reads full.
+ * Null when no row has finished yet (no yardstick).
+ */
+export function stepsOf(row: CrewRow, rows: readonly CrewRow[]): { n: number; of: number } | null {
+  if (row.status !== 'running') return null
+  const most = Math.max(0, ...rows.filter(r => r.status === 'done' && r.role !== 'reviewer').map(r => r.tools))
+  return most > 0 ? { n: row.tools, of: Math.max(most, row.tools + 1) } : null
+}
+
+/** What glitch-hud's crew pill shows (state key `glitch-pets.crewSummary`). */
+export type CrewSummary = { running: number; done: number; failed: number; cost: number; elapsedMs: number }
+
+/** A closed crew keeps its pill this long after its last member ended. */
+export const RECENT_MS = 120_000
+
+/** The pill's figures while a crew is open, or closed less than RECENT_MS ago; else null. */
+export function crewSummaryOf(s: CrewState, cost: number, now: number): CrewSummary | null {
+  if (s.rows.length === 0) return null
+  const lastEnd = Math.max(0, ...s.rows.map(r => r.endedAt ?? now))
+  if (s.closed && !anyRunning(s) && now - lastEnd >= RECENT_MS) return null
+  const count = (st: CrewRow['status']) => s.rows.filter(r => r.status === st).length
+  return { running: count('running'), done: count('done'), failed: count('failed'), cost: Math.round(Math.max(0, cost) * 1e4) / 1e4, elapsedMs: elapsedOf(s, now) }
+}

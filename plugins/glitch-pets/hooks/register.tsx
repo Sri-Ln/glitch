@@ -3,8 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
-import { INITIAL_CREW, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, progressOf, reviewerRunning, shares } from './behavior/crew'
-import type { CrewState } from './behavior/crew'
+import { INITIAL_CREW, crewSummaryOf, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, shares, stepsOf } from './behavior/crew'
+import type { CrewState, CrewSummary } from './behavior/crew'
 import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
 import { withHat } from './behavior/hats'
 import { isCapReached } from './behavior/moods'
@@ -19,7 +19,7 @@ import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petArgsOf, petList } f
 import { parsePetsConfig } from './config'
 import type { PetsConfig } from './config'
 import { crewTree } from './pane'
-import type { CrewView } from './pane'
+import type { CrewGroup, CrewView } from './pane'
 import { PERSONAS } from './personas/index'
 import { onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
 
@@ -29,10 +29,21 @@ export const sprite = atom({ plugin: 'glitch-pets', key: 'sprite' } as const, nu
 export const mood = atom({ plugin: 'glitch-pets', key: 'mood' } as const, INITIAL_MOOD)
 export const view = atom({ plugin: 'glitch-pets', key: 'view' } as const, { petId: 'bud' } as PetsView)
 export const crew = atom({ plugin: 'glitch-pets', key: 'crew' } as const, INITIAL_CREW as CrewState)
+/** Which crew pane groups are open, keyed `<crew start>:<group>` (the terminal's fold under its own key). */
+export const crewOpen = atom({ plugin: 'glitch-pets', key: 'crewOpen' } as const, {} as Record<string, boolean>)
+/** What glitch-hud's crew pill shows; null while no crew is open or recent. */
+export const crewSummary = atom({ plugin: 'glitch-pets', key: 'crewSummary' } as const, null as CrewSummary | null)
 
 const PANE = 'glitch-crew'
-/** CSS px per pixel in the crew pane: the lead draws 24 × 20, a mini with its hat 24 × 24. */
+/** CSS px per pixel in the crew pane: a mini with its hat draws 24 × 24. */
 const PANE_PIXEL = 1.5
+/** The lead draws at 2×: 32 × 26. */
+const LEAD_PIXEL = 2
+/** The dock the pane asks for (about 300 px on the desktop), and its inline height. */
+const PANE_COLUMNS = 40
+const PANE_ROWS = 10
+/** glitch-hud's crew pill in its band: a press on it opens or closes the pane. */
+const HUD_PILL = 'glitch-crew'
 /** Helpers' statuses are asked every this many ticks (1 s). */
 const STATUS_TICKS = 10
 
@@ -135,9 +146,32 @@ async function toggleCrew($: EngineInterface): Promise<string> {
     await $.ui.close({ id: PANE })
     return 'Crew pane closed.'
   }
-  await $.ui.open({ id: PANE, title: 'Crew' })
+  await $.ui.open({ id: PANE, title: 'Crew', columns: PANE_COLUMNS, rows: PANE_ROWS })
   return 'Crew pane opened.'
 }
+
+// The figures glitch-hud's crew pill shows, written only when they change.
+async function publishSummary($: EngineInterface, total: number) {
+  const now = await $.clock.now()
+  const c = await read($, crew)
+  const next = crewSummaryOf(c, total - c.costAtStart, now)
+  const before = await read($, crewSummary)
+  if (JSON.stringify(before) !== JSON.stringify(next)) await update($, crewSummary, () => next)
+}
+
+/** The lead's line in the pane. A placeholder until the lead's own wording lands. */
+function leadStatus(c: CrewState): string {
+  const at = c.rows.filter(r => r.status === 'running').length
+  const failed = c.rows.filter(r => r.status === 'failed')
+  if (at > 0) return `keeping an eye on the crew (${at} at work)`
+  if (failed.length > 0) return `${failed.length} of the crew failed`
+  return 'job done, the whole crew is back'
+}
+
+const openKey = (c: CrewState, group: CrewGroup, isTerminal: boolean) => `${c.startedAt ?? 0}:${group}${isTerminal && group === 'finished' ? ':terminal' : ''}`
+// Desktop groups start open; the terminal's finished members start folded.
+const isOpenIn = (o: Record<string, boolean>, c: CrewState, group: CrewGroup, isTerminal: boolean) =>
+  o[openKey(c, group, isTerminal)] ?? !(isTerminal && group === 'finished')
 
 async function say($: EngineInterface, moment: VoiceMoment) {
   const p = personaFor((await read($, view)).petId)
@@ -153,7 +187,11 @@ async function tick($: EngineInterface) {
   const now = await $.clock.now()
   // The crew pane needs the statuses with the pet off too.
   ticks += 1
-  if (ticks % STATUS_TICKS === 0) await refreshCrew($)
+  if (ticks % STATUS_TICKS === 0) {
+    await refreshCrew($)
+    const total = ((await hudStats($)) as { total?: number } | null)?.total
+    await publishSummary($, typeof total === 'number' ? total : (await read($, crew)).costAtStart)
+  }
   const p = personaFor((await read($, view)).petId)
   if (!p) {
     if (lastSource !== null) {
@@ -374,7 +412,7 @@ export const register: Register = (on, options) => {
         return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, model: r.model, now, costNow })
       })
       if (fresh && config.crewPane === 'auto' && !(await $.ui.panes().catch(() => [])).some(x => x.id === PANE)) {
-        await $.ui.open({ id: PANE, title: 'Crew' }).catch(() => undefined)
+        await $.ui.open({ id: PANE, title: 'Crew', columns: PANE_COLUMNS, rows: PANE_ROWS }).catch(() => undefined)
       }
     } catch {
       // The pane misses this helper.
@@ -398,26 +436,50 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     try {
       const ui = $.ui.resolve(e)
-      const { Box, Text } = ui
+      const { Box, Button, Text } = ui
       const c = await read($, crew)
-      if (c.rows.length === 0) return <Text dimColor>No crew yet. Helpers appear here when Claude splits work.</Text>
+      if (c.rows.length === 0) return <Text dimColor>No crew yet. Crew members appear here when Claude splits work.</Text>
       const now = await $.clock.now()
       const p = personaFor((await read($, view)).petId)
       const m = await read($, mood)
       const usdNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? c.costAtStart
       const crewCost = Math.max(0, usdNow - c.costAtStart)
       const cost = shares(c.rows, crewCost)
+      const isTerminal = e.surface === 'terminal'
+      const o = await read($, crewOpen)
       const v: CrewView = {
-        lead: { name: p?.name ?? 'Lead', mood: m.mood, sprite: p ? player.sprite(p, m.mood, now - m.since, PANE_PIXEL) : null },
-        rows: c.rows.map(row => ({ row, mini: p ? miniOf(p, row.role, row.tier) : null, cost: cost[row.id] ?? 0, progress: progressOf(row, c.rows) })),
+        lead: { name: p?.name ?? 'Lead', status: leadStatus(c), sprite: p ? player.sprite(p, m.mood, now - m.since, LEAD_PIXEL) : null },
+        rows: c.rows.map(row => ({ row, mini: p ? miniOf(p, row.role, row.tier) : null, cost: cost[row.id] ?? 0, steps: stepsOf(row, c.rows) })),
         header: { cost: crewCost, tokens: c.rows.reduce((t, r) => t + r.tokens, 0), elapsedMs: elapsedOf(c, now) },
-        isTerminal: e.surface === 'terminal',
+        isTerminal,
         now,
+        bodyColumns: e.props.bodyColumns,
+        open: { running: isOpenIn(o, c, 'running', isTerminal), finished: isOpenIn(o, c, 'finished', isTerminal) },
       }
-      return crewTree(v, { Box, Text, Svg: 'Svg' in ui ? ui.Svg : null } as never)
+      // A group's open state is kept per crew: a new crew starts from the defaults.
+      const toggle = async (group: CrewGroup) => {
+        const now2 = await read($, crew)
+        const key = openKey(now2, group, isTerminal)
+        const prefix = `${now2.startedAt ?? 0}:`
+        await update($, crewOpen, x => ({ ...Object.fromEntries(Object.entries(x).filter(([kk]) => kk.startsWith(prefix))), [key]: !isOpenIn(x, now2, group, isTerminal) }))
+      }
+      // Shows that member's transcript in the main view (only from the person's press).
+      const show = async (agentId: string) => {
+        const r = await $.ui.view({ agentId }).catch(() => null)
+        if (r?.deny) $.ui.toast(`Glitch pets: ${r.deny}`, { timeoutMs: 6000 })
+      }
+      return crewTree(v, { Box, Text, Button, Svg: 'Svg' in ui ? ui.Svg : null } as never, { toggle, view: show })
     } catch {
       return next(e)
     }
+  })
+
+  // A press on glitch-hud's crew pill (it draws the pill from crewSummary): the pane
+  // opens or closes here, behind the person's press.
+  on('ui.press', async ($, e, next) => {
+    const r = await next(e)
+    if (e.plugin === 'glitch-hud' && e.element === HUD_PILL) await toggleCrew($).catch(() => undefined)
+    return r
   })
 
   on('command.run', { command: 'glitch-pets' }, async ($, e) =>

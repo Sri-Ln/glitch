@@ -75,8 +75,11 @@ export type CrewState = {
   gateFired: boolean
 }
 
+/** What glitch-hud's crew pill shows; null while no crew is open or recent. */
+export type CrewSummary = { running: number; done: number; failed: number; cost: number; elapsedMs: number }
+
 declare module 'claude-code' {
   interface PluginState {
-    'glitch-pets': { sprite: Sprite | null; mood: MoodState; view: PetsView; crew: CrewState }
+    'glitch-pets': { sprite: Sprite | null; mood: MoodState; view: PetsView; crew: CrewState; crewOpen: Record<string, boolean>; crewSummary: CrewSummary | null }
   }
 }
