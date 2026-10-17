@@ -15,9 +15,10 @@ test('two finished helpers and no reviewer → review needed', () => {
 test('one helper is not multi-part', () => {
   expect(needsReview(crewOf([row('a', 'builder', 'done')]), o)).toBe(false)
 })
-test('a failed helper still counts as a part; fewer than 2 finished does not', () => {
+test('a failed helper still counts as a part; every helper must be finished', () => {
   expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'tester', 'failed')]), o)).toBe(true)
   expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'tester', 'running')]), o)).toBe(false)
+  expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done'), row('c', 'tester', 'running')]), o)).toBe(false)
 })
 test('a reviewer in the crew satisfies it', () => {
   expect(needsReview(crewOf([row('a', 'builder', 'done'), row('b', 'builder', 'done'), row('r', 'reviewer', 'done')]), o)).toBe(false)

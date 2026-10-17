@@ -79,6 +79,26 @@ test('progress is tools against the most any finished helper took; done is full'
   expect(progressOf({ id: 'c', tools: 3, status: 'running' } as never, [{ id: 'c', tools: 3, status: 'running' }] as never)).toBe(0.5)
 })
 
+test('the progress yardstick ignores a finished reviewer', () => {
+  const rows = [{ id: 'r', role: 'reviewer', tools: 20, status: 'done' }, { id: 'a', role: 'builder', tools: 4, status: 'done' }, { id: 'b', role: 'builder', tools: 2, status: 'running' }] as never
+  expect(progressOf((rows as never[])[2] as never, rows)).toBe(0.5)
+  const onlyReviewer = [{ id: 'r', role: 'reviewer', tools: 20, status: 'done' }, { id: 'b', role: 'builder', tools: 2, status: 'running' }] as never
+  expect(progressOf((onlyReviewer as never[])[1] as never, onlyReviewer)).toBe(0.5)
+})
+
+test('roleOf takes word forms of the role words', () => {
+  expect(roleOf(undefined, 'Reviews the combined work')).toBe('reviewer')
+  expect(roleOf(undefined, 'Code reviewer for the kit')).toBe('reviewer')
+  expect(roleOf(undefined, 'Run the tests')).toBe('tester')
+  expect(roleOf(undefined, 'Builds the page')).toBe('builder')
+  expect(roleOf(undefined, 'Researching pricing')).toBe('researcher')
+})
+
+test('roleOf reads role names in any case', () => {
+  expect(roleOf('Builder-1', 'x')).toBe('builder')
+  expect(roleOf('REVIEWER-2', 'x')).toBe('reviewer')
+})
+
 test('onMainTurn only records the turn number', () => {
   expect(onMainTurn(spawn(), 7).turnNo).toBe(1)
   expect(onMainTurn(spawn(), 7).mainTurn).toBe(7)
