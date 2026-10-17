@@ -821,3 +821,106 @@ test('no pet, no press target', async ($, on) => {
   expect(await ui.find({ key: 'glitch-pet-poke' })).toBeFalsy()
   await ui.unmount()
 })
+
+// ---- The crew pill (#38): glitch-pets publishes crewSummary; the band shows it on rich surfaces. ----
+
+const crewSummary = { running: 2, done: 2, failed: 0, cost: 0.31, elapsedMs: 72_000 }
+const PILL = 'Crew · 2 at work · 2 done · ≈$0.31 · 1:12'
+
+// One state.get hook per test: glitch-pets' keys from `pets`, read at each call.
+const withPets = (on: On, pets: Record<string, unknown>) =>
+  on('state.get', (_$, e, next) => {
+    const key = (e as { key?: string }).key ?? ''
+    return (e.plugin as string) === 'glitch-pets' && key in pets ? ({ value: { value: pets[key], version: 1 } } as never) : next(e)
+  })
+const withCrew = (on: On, value: unknown) => withPets(on, { crewSummary: value })
+
+test('the band shows the crew pill on the desktop while a crew is open or recent, not in the terminal', async ($, on) => {
+  withCrew(on, crewSummary)
+  await session($, on)
+  await turn($, 0.1)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(160) })
+    const pill = await ui.find({ key: 'glitch-crew' })
+    if (surface === 'desktop') {
+      expect(pill?.type).toBe('Button')
+      expect(pill?.text).toBe(PILL)
+    } else expect(pill).toBeFalsy()
+    await ui.unmount()
+  }
+})
+
+test('no crew summary (or a malformed one), no pill', async ($, on) => {
+  const pets: Record<string, unknown> = { crewSummary: null }
+  withPets(on, pets)
+  await session($, on)
+  await turn($, 0.1)
+  for (const v of [null, { running: 'two' }]) {
+    pets.crewSummary = v
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(160) })
+      expect(await ui.find({ key: 'glitch-crew' })).toBeFalsy()
+      await ui.unmount()
+    }
+  }
+})
+
+test('the crew pill sits before the pet and ✕', async ($, on) => {
+  withPets(on, { crewSummary, sprite: petSprite })
+  await session($, on)
+  await turn($, 0.1)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const keys = (await keyOrder($, surface)).filter(k => ['context', 'glitch-crew', 'glitch-pet', 'glitch-hide'].includes(k))
+    expect(keys).toEqual(surface === 'desktop' ? ['context', 'glitch-crew', 'glitch-pet', 'glitch-hide'] : ['context', 'glitch-hide'])
+  }
+})
+
+test('fit reserves the crew pill: at a tight width parts drop before the pill goes', { options: { showSpeed: 'on' } }, async ($, on) => {
+  const pets: Record<string, unknown> = { crewSummary: null, sprite: petSprite }
+  withPets(on, pets)
+  await session($, on)
+  await turn($, 0.1)
+  const partsAt = async (surface: 'terminal' | 'desktop', columns: number) => {
+    const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(columns) })
+    const keys = (await ui.findAll({})).map(x => String(x.key))
+    await ui.unmount()
+    return { hasSpeed: keys.includes('speed'), hasPill: keys.includes('glitch-crew') }
+  }
+  for (const surface of ['terminal', 'desktop'] as const) {
+    let gaveWay = false
+    for (let columns = 80; columns <= 200; columns += 10) {
+      pets.crewSummary = null
+      const without = await partsAt(surface, columns)
+      pets.crewSummary = crewSummary
+      const withPill = await partsAt(surface, columns)
+      expect(withPill.hasPill).toBe(surface === 'desktop')
+      if (surface === 'terminal') expect(withPill.hasSpeed).toBe(without.hasSpeed)
+      else if (without.hasSpeed && !withPill.hasSpeed) gaveWay = true
+    }
+    // The pill's cells are reserved: at some width tok/s gave way for it.
+    expect(gaveWay).toBe(surface === 'desktop')
+  }
+})
+
+test('a press on the crew pill is taken quietly (glitch-pets opens its pane)', async ($, on) => {
+  withCrew(on, crewSummary)
+  await session($, on)
+  await turn($, 0.1)
+  const ui = await $.ui.mount({ plugin: 'glitch-hud', surface: 'desktop', ...BAND(160) })
+  expect(await ui.press({ key: 'glitch-crew' })).toEqual({ element: 'glitch-crew' })
+  expect(toasts).toEqual([])
+  await ui.unmount()
+})
+
+test('the crew pill names failed crew members', async ($, on) => {
+  withCrew(on, { running: 1, done: 2, failed: 1, cost: 0.4, elapsedMs: 65_000 })
+  await session($, on)
+  await turn($, 0.1)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'glitch-hud', surface, ...BAND(200) })
+    const pill = await ui.find({ key: 'glitch-crew' })
+    if (surface === 'desktop') expect(pill?.text).toBe('Crew · 1 at work · 2 done · 1 failed · ≈$0.40 · 1:05')
+    else expect(pill).toBeFalsy()
+    await ui.unmount()
+  }
+})

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, progressOf, reviewerRunning, roleOf, shares, tierOf, tokenWeight } from './crew'
+import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, roleOf, shares, stepsOf, tierOf, tokenWeight } from './crew'
 
 test('roleOf reads <role>-<n> names first, then the description', () => {
   expect(roleOf('builder-2', 'whatever')).toBe('builder')
@@ -106,18 +106,20 @@ test('shares split the crew cost by weight; no weight → equal parts', () => {
   expect(shares([{ id: 'a', weight: 0 }, { id: 'b', weight: 0 }] as never, 0.4)).toEqual({ a: 0.2, b: 0.2 })
 })
 
-test('progress is tools against the most any finished helper took; done is full', () => {
+test('steps are tools against the most any finished crew member took; none while finished or with no yardstick', () => {
   const rows = [{ id: 'a', tools: 8, status: 'done' }, { id: 'b', tools: 2, status: 'running' }] as never
-  expect(progressOf((rows as never[])[1] as never, rows)).toBe(0.25)
-  expect(progressOf((rows as never[])[0] as never, rows)).toBe(1)
-  expect(progressOf({ id: 'c', tools: 3, status: 'running' } as never, [{ id: 'c', tools: 3, status: 'running' }] as never)).toBe(0.5)
+  expect(stepsOf((rows as never[])[1] as never, rows)).toEqual({ n: 2, of: 8 })
+  expect(stepsOf((rows as never[])[0] as never, rows)).toBe(null)
+  expect(stepsOf({ id: 'c', tools: 3, status: 'running' } as never, [{ id: 'c', tools: 3, status: 'running' }] as never)).toBe(null)
+  // Past the yardstick the total stays one above the count: never full while running.
+  expect(stepsOf({ id: 'd', tools: 9, status: 'running' } as never, rows)).toEqual({ n: 9, of: 10 })
 })
 
-test('the progress yardstick ignores a finished reviewer', () => {
+test('the steps yardstick ignores a finished reviewer', () => {
   const rows = [{ id: 'r', role: 'reviewer', tools: 20, status: 'done' }, { id: 'a', role: 'builder', tools: 4, status: 'done' }, { id: 'b', role: 'builder', tools: 2, status: 'running' }] as never
-  expect(progressOf((rows as never[])[2] as never, rows)).toBe(0.5)
+  expect(stepsOf((rows as never[])[2] as never, rows)).toEqual({ n: 2, of: 4 })
   const onlyReviewer = [{ id: 'r', role: 'reviewer', tools: 20, status: 'done' }, { id: 'b', role: 'builder', tools: 2, status: 'running' }] as never
-  expect(progressOf((onlyReviewer as never[])[1] as never, onlyReviewer)).toBe(0.5)
+  expect(stepsOf((onlyReviewer as never[])[1] as never, onlyReviewer)).toBe(null)
 })
 
 test('roleOf takes word forms of the role words', () => {
