@@ -1,6 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { statusText } from './behavior/lead-status'
+import { DESKTOP_CELL, desktopLayout } from './pane'
+import { PERSONAS } from './personas/index'
 
 let toasts: string[] = []
 const START = Date.parse('2026-10-14T10:00:00Z')
@@ -241,7 +244,7 @@ const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
 
 // The engine around a crew: agents' statuses, the session's cost, what each prompt carried.
 const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
-  const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[], contextOut: 'none' as 'none' | 'echo' | 'strip', spawned: [] as { type: string; model?: string; name?: string }[], toolInputs: [] as Record<string, unknown>[] }
+  const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[], contextOut: 'none' as 'none' | 'echo' | 'strip', spawned: [] as { type: string; model?: string; name?: string }[], toolInputs: [] as Record<string, unknown>[], usageCalls: 0, panes: [] as object[] }
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
   on('prompt.submit', async (_$, e) => {
     h.contexts.push(e.context)
@@ -264,8 +267,12 @@ const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
     h.opened.push(e.id)
     return { value: { isPlaced: true } } as never
   })
-  on('ui.panes', () => ({ value: [] }) as never)
-  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd: h.usd } } }) as never)
+  on('ui.panes', () => ({ value: h.panes }) as never)
+  on('ui.close', () => ({ value: undefined }) as never)
+  on('session.usage', () => {
+    h.usageCalls += 1
+    return { value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd: h.usd } } } as never
+  })
   on('tool.call', (_$, e) => {
     h.toolInputs.push(e as never)
     return { result: 'ok' } as never
@@ -598,7 +605,8 @@ test('once nothing runs the finished crew folds to one line on the terminal', as
   await mainEnd($, 'm3')
   const text = await paneText($, 'terminal')
   expect(text).toContain('2 finished · 2 completed · 0 failed')
-  expect(text).not.toContain('builder-1')
+  // No member line: the lead's line may name them, the rows are folded.
+  expect(text).not.toContain('| builder-1 |')
 })
 
 // ---- The crew pane's layout (#38, #39, #42) ----
@@ -656,16 +664,19 @@ test('pane: one header line on the terminal, a lead row with total time on the d
     const all = (await textsOf(ui)).join(' | ')
     if (surface === 'terminal') {
       expect(all).toContain('Crew · 1 running · 1 done · 1 failed · ≈$0.50 · 0 tok · 0:01')
-      expect(all).toContain('Bud · keeping an eye on the crew (1 at work)')
+      // The lead's line: builder-1 just failed.
+      expect(all).toContain(`Bud · ${statusText(PERSONAS.bud ?? null, 'worry', { who: 'builder-1', n: 1, d: 1, f: 1 })}`)
     } else {
       expect(all).toContain('Bud')
-      expect(all).toContain('keeping an eye on the crew (1 at work)')
+      expect(all).toContain(statusText(PERSONAS.bud ?? null, 'worry', { who: 'builder-1', n: 1, d: 1, f: 1 }))
       expect(all).toContain('0:01')
       expect(all).toContain('so far')
       expect(await ui.find({ key: 'crew-totals' })).toBeTruthy()
-      // The lead is drawn at 2×: 32 px wide.
-      const lead = (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('Bud'))
-      expect(lead?.props.width).toBe(32)
+      // The lead is drawn at 2×: 32 px wide (its slot keeps that room while tester-1's reward draws it).
+      expect(drawnByKey(await ui.drawn(), 'crew-lead-sprite')?.props?.width).toBe(Math.ceil(32 / 7))
+      const lead = (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('Bud the dog'))
+      if (lead) expect(lead.props.width).toBe(32)
+      else expect(await rewardBox(ui)).toBeTruthy()
     }
     expect(all).not.toMatch(/helper/i)
     await ui.unmount()
@@ -1279,7 +1290,7 @@ test('pane (desktop): the progress pill is drawn for light and dark: a transluce
   }
 })
 
-test('pane (desktop): an accordion header has a border, a live dot on Running and its chevron on the right', async ($, on) => {
+test('pane (desktop): an accordion header has a border, a live dot on Running and its chevron in the toggle', async ($, on) => {
   await mixedCrew($, on)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
@@ -1287,14 +1298,12 @@ test('pane (desktop): an accordion header has a border, a live dot on Running an
       for (const kind of ['running', 'finished']) {
         const box = drawnByKey(await ui.drawn(), `crew-acc-box:${kind}`)
         expect(box?.props?.borderStyle).toBeTruthy()
-        const kids = ((box?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
-        expect(kids[kids.length - 1]?.props?.key).toBe(`crew-acc-chev:${kind}`)
       }
-      expect((await ui.find({ key: 'crew-acc-chev:running' }))?.text).toBe('▾')
-      await ui.press({ key: 'crew-acc-chev:running' })
-      expect((await ui.find({ key: 'crew-acc-chev:running' }))?.text).toBe('▸')
+      expect((await ui.find({ key: 'crew-acc:running' }))?.text).toMatch(/▾$/)
+      await ui.press({ key: 'crew-acc:running' })
+      expect((await ui.find({ key: 'crew-acc:running' }))?.text).toMatch(/▸$/)
       expect(stringOf(textIn(drawnByKey(await ui.drawn(), 'crew-live')))).toBe('●')
-    } else expect(await ui.find({ key: 'crew-acc-chev:running' })).toBeFalsy()
+    } else expect(await ui.find({ key: 'crew-acc:running' })).toBeFalsy()
     await ui.unmount()
   }
 })
@@ -1422,4 +1431,268 @@ test('a note not acted on by the turn end stops holding the review, yet a later 
   await agentEnd($, 'ag-A2')
   await submit($)
   expect(stepNotes(h)[1]).toContain('glitch-pets:crew-medium:')
+})
+
+// ── Integration (crew UX round 2): minis, the frame clock, the lead line, the reward, step-ups ──
+
+const svgs = async (ui: Finder) => (await ui.findAll({ type: 'Svg' })).map(s => ({ alt: String(s.props.alt), source: String(s.props.source), width: Number(s.props.width), height: Number(s.props.height) }))
+const miniOf = async (ui: Finder, alt: string) => (await svgs(ui)).find(s => s.alt === alt)
+const B_MINI = 'Bud, researcher, claude-opus-5-5, running'
+
+test('pane: each member\'s mini comes from the crew theme at 2 px; the sprite column is sized from it (busy-hands 48 × 26, hats 32 × 32)', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      const mini = await miniOf(ui, B_MINI)
+      expect([mini?.width, mini?.height]).toEqual([48, 26])
+      expect(drawnByKey(await ui.drawn(), `crew-mini:${B_ID}`)?.props?.width).toBe(Math.ceil(48 / 7))
+      // No hat art and no tier words: the theme draws the member.
+      expect((await svgs(ui)).map(s => s.alt).join(' ')).not.toMatch(/light|medium|heavy/)
+    } else expect(await svgs(ui)).toEqual([])
+    await ui.unmount()
+  }
+  await $.command.run({ command: 'glitch', args: 'crew theme hats' } as never)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      const mini = await miniOf(ui, B_MINI)
+      expect([mini?.width, mini?.height]).toEqual([32, 32])
+      expect(drawnByKey(await ui.drawn(), `crew-mini:${B_ID}`)?.props?.width).toBe(Math.ceil(32 / 7))
+    } else expect(await svgs(ui)).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('pane: a running mini redraws at its next change from the 100 ms tick, only while the pane is open; frame-only redraws read no usage', async ($, on) => {
+  const frames: unknown[] = []
+  on('state.set', (_$, e, next) => {
+    if ((e as { key?: string }).key === 'paneFrame') frames.push((e as { value?: unknown }).value)
+    return next(e)
+  })
+  const { h, clock } = await mixedCrew($, on)
+  // Past tester-1's reward, 900 ms before the next 1 s status tick.
+  await clock.advance(4100)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      const before = (await miniOf(ui, B_MINI))?.source
+      const calls = h.usageCalls
+      frames.length = 0
+      // Opus loops at 3 fps: a new beat within 334 ms, well before the status tick.
+      await clock.advance(400)
+      expect(frames.length).toBeGreaterThan(0)
+      expect((await miniOf(ui, B_MINI))?.source).not.toBe(before)
+      expect(h.usageCalls).toBe(calls)
+    } else {
+      // The terminal draws no minis: nothing to time.
+      frames.length = 0
+      await clock.advance(400)
+      expect(frames).toEqual([])
+    }
+    await ui.unmount()
+  }
+  // The pane is closed (here by /glitch crew while it reads as open): the frame clock stops.
+  h.panes = [{ id: 'glitch-crew', title: 'Crew', isShown: true, isFocused: false, isPlaced: true }]
+  expect(((await $.command.run({ command: 'glitch', args: 'crew' } as never)) as { text: string }).text).toBe('Crew pane closed.')
+  frames.length = 0
+  await clock.advance(1000)
+  expect(frames).toEqual([])
+})
+
+test('pane: the lead row reads the lead\'s line: a fresh failure, then looking into it while the crew works', async ($, on) => {
+  const { clock } = await mixedCrew($, on)
+  const bud = PERSONAS.bud ?? null
+  const worry = statusText(bud, 'worry', { who: 'builder-1', n: 1, d: 1, f: 1 })
+  const looking = statusText(bud, 'investigating', { who: 'builder-1', n: 1, d: 1, f: 1 })
+  for (const [at, want] of [[0, worry], [5000, looking]] as const) {
+    await clock.advance(at)
+    for (const surface of SURFACES) {
+      const ui = await mountPane($, surface, 100)
+      const all = (await textsOf(ui)).join(' | ')
+      expect(all).toContain(surface === 'terminal' ? `Bud · ${want}` : want)
+      expect(all).not.toContain('keeping an eye on the crew (1 at work)')
+      await ui.unmount()
+    }
+  }
+})
+
+const rewardBox = async (ui: { drawn: () => Promise<unknown> }) => drawnByKey(await ui.drawn(), 'crew-reward')
+// The lead's own sprite in the lead row (its alt names the mood; a happy receiver is not it).
+const leadSprite = async (ui: Finder) => (await svgs(ui)).find(s => s.alt.startsWith('Bud the dog') && !s.alt.endsWith('happy'))
+
+test('pane: a finish casts the reward from the lead to the receiver\'s row; the lead sprite steps aside; then the gift stays as a badge', async ($, on) => {
+  const { clock } = await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      const box = await rewardBox(ui)
+      expect(box?.props?.position).toBe('absolute')
+      expect([box?.props?.top, box?.props?.left]).toEqual([0, 0])
+      const overlay = (await svgs(ui)).find(s => s.source.includes('data-moment'))
+      expect(overlay?.source).toContain(`data-moment="${START + 1000}"`)
+      // The overlay draws the lead: the pane's own sprite steps aside, its slot kept.
+      expect(await leadSprite(ui)).toBeUndefined()
+      expect(drawnByKey(await ui.drawn(), 'crew-lead-sprite')?.props?.width).toBeGreaterThan(0)
+      // Rows have fixed heights, so the receiver's top is exact: the overlay ends just under its mini.
+      const tree = await ui.drawn()
+      const layout = desktopLayout({ rows: ['running', 'failed', 'done'], open: { running: true, finished: true }, steppedUp: [false, false, false] })
+      expect(drawnByKey(tree, `crew-member:${C_ID}`)?.props?.height).toBe(layout.heights[2])
+      expect(overlay?.height).toBe((layout.tops[2] as number) * DESKTOP_CELL.height + 26 + 2)
+      expect(await ui.find({ key: `crew-badge:${C_ID}` })).toBeFalsy()
+    } else {
+      expect(await rewardBox(ui)).toBeUndefined()
+      expect(await svgs(ui)).toEqual([])
+    }
+    await ui.unmount()
+  }
+  // The gift reaches the receiver: its mini is happy for the rest of the moment.
+  await clock.advance(2900)
+  let ui = await mountPane($, 'desktop')
+  expect((await svgs(ui)).some(s => s.alt === 'Bud the dog, happy')).toBe(true)
+  await ui.unmount()
+  // The moment is over: no overlay, the lead is back, the gift is a badge on the row.
+  await clock.advance(1200)
+  for (const surface of SURFACES) {
+    ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      expect(await rewardBox(ui)).toBeUndefined()
+      expect(await leadSprite(ui)).toBeTruthy()
+      expect(await ui.find({ key: `crew-badge:${C_ID}` })).toBeTruthy()
+      expect((await svgs(ui)).some(s => s.alt === 'a gift from Bud')).toBe(true)
+    } else expect(await svgs(ui)).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('pane: a reward first drawn late (past ~300 ms) shows only the badge', async ($, on) => {
+  const { clock } = await mixedCrew($, on)
+  await clock.advance(500)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    expect(await rewardBox(ui)).toBeUndefined()
+    if (surface === 'desktop') {
+      expect(await ui.find({ key: `crew-badge:${C_ID}` })).toBeTruthy()
+      expect(await leadSprite(ui)).toBeTruthy()
+    } else expect(await svgs(ui)).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('pane: with Finished folded the reward is skipped; unfolded, the receiver shows its badge', async ($, on) => {
+  const { h, clock } = await mixedCrew($, on)
+  await clock.advance(4100)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      await ui.press({ key: 'crew-acc:finished' })
+      h.status[B_ID] = 'completed'
+      await agentEnd($, B_ID)
+      expect(await rewardBox(ui)).toBeUndefined()
+      await ui.press({ key: 'crew-acc:finished' })
+      expect(await rewardBox(ui)).toBeUndefined()
+      expect(await ui.find({ key: `crew-badge:${B_ID}` })).toBeTruthy()
+    } else {
+      expect(await rewardBox(ui)).toBeUndefined()
+      expect(await svgs(ui)).toEqual([])
+    }
+    await ui.unmount()
+  }
+})
+
+test('pane: a stepped-up member says what it stepped up from (compact on the terminal)', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  h.status['ag-A'] = 'failed'
+  await agentEnd($, 'ag-A')
+  await submit($)
+  await spawnCrew($, 'A2', 'crew-light', 'builder-1')
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, 100)
+    if (surface === 'terminal') await ui.press({ key: 'crew-finished' })
+    const all = (await textsOf(ui)).join(' | ')
+    if (surface === 'desktop') {
+      expect(all).toContain('stepped up from Haiku · low')
+      expect(drawnByKey(await ui.drawn(), 'crew-member:ag-A2')?.props?.height).toBe(5)
+      expect(drawnByKey(await ui.drawn(), 'crew-member:ag-A')?.props?.height).toBe(4)
+    } else {
+      expect(all).toContain('↑ Haiku · low')
+      expect(all).not.toContain('stepped up from')
+    }
+    // The first try has no such line (the terminal's line nests the note in the task's Text).
+    expect(all.match(/Haiku · low/g)?.length).toBe(surface === 'desktop' ? 1 : 2)
+    expect(await ui.find({ key: surface === 'desktop' ? 'crew-member:ag-A' : 'crew-line:ag-A' })).toBeTruthy()
+    await ui.unmount()
+  }
+})
+
+test('pane (desktop): one toggle Button per accordion header, its chevron inside', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      for (const kind of ['running', 'finished']) {
+        const box = drawnByKey(await ui.drawn(), `crew-acc-box:${kind}`)
+        const buttons = JSON.stringify(box).match(/"type":"Button"/g) ?? []
+        expect(buttons.length).toBe(1)
+      }
+      expect((await ui.find({ key: 'crew-acc:running' }))?.text).toContain('▾')
+      await ui.press({ key: 'crew-acc:running' })
+      expect((await ui.find({ key: 'crew-acc:running' }))?.text).toContain('▸')
+    } else expect(await ui.find({ key: 'crew-acc:running' })).toBeFalsy()
+    await ui.unmount()
+  }
+})
+
+const runCrew = ($: Engine, origin: object, presentation: object) => $.command.run({ command: 'glitch', args: 'crew', origin, presentation } as never)
+
+test('a command typed at the terminal gets the terminal dock, sized from its columns; the fullscreen path too', async ($, on) => {
+  const asked: { columns?: number; rows?: number }[] = []
+  let open = false
+  on('ui.open', (_$, e) => {
+    asked.push({ columns: e.columns, rows: e.rows })
+    open = true
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.close', () => {
+    open = false
+    return { value: undefined } as never
+  })
+  on('ui.panes', () => ({ value: open ? [{ id: 'glitch-crew', title: 'Crew', isShown: true, isFocused: false, isPlaced: true }] : [] }) as never)
+  // A session the terminal and the desktop both draw.
+  await session($, on, {}, ['terminal', 'desktop'])
+  await runCrew($, { kind: 'composer' }, { isFullscreen: false, columns: 200 })
+  await runCrew($, { kind: 'composer' }, { isFullscreen: false, columns: 200 })
+  // From the desktop's side (not the terminal's composer): the narrow rich dock.
+  await runCrew($, { kind: 'bridge' }, { isFullscreen: false, columns: 80 })
+  await runCrew($, { kind: 'bridge' }, { isFullscreen: false, columns: 80 })
+  // Fullscreen at 120 columns: the dock leaves the transcript room.
+  await runCrew($, { kind: 'composer' }, { isFullscreen: true, columns: 120 })
+  expect(asked.length).toBe(3)
+  expect(asked[0]?.columns).toBe(90)
+  expect(Number(asked[1]?.columns)).toBeLessThanOrEqual(44)
+  expect(asked[2]?.columns).toBe(60)
+  for (const a of asked) expect(Number(a.rows)).toBeGreaterThan(0)
+})
+
+test('a fullscreen command in a desktop-only session still docks for the terminal', async ($, on) => {
+  const asked: { columns?: number }[] = []
+  on('ui.open', (_$, e) => {
+    asked.push({ columns: e.columns })
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.panes', () => ({ value: [] }) as never)
+  await session($, on, {}, ['desktop'])
+  await runCrew($, { kind: 'composer' }, { isFullscreen: true, columns: 240 })
+  expect(asked).toEqual([{ columns: 90 }])
+})
+
+test('pane (terminal): the progress column is at most 40 cells', async ($, on) => {
+  await mixedCrew($, on)
+  const ui = await mountPane($, 'terminal', 200)
+  const line = drawnByKey(await ui.drawn(), `crew-line:${B_ID}`)
+  const cols = ((line?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
+  expect(Number(cols[cols.length - 1]?.props?.width)).toBeLessThanOrEqual(40)
+  await ui.unmount()
 })

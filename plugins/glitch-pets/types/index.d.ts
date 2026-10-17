@@ -105,6 +105,6 @@ export type CrewSummary = { running: number; done: number; failed: number; cost:
 
 declare module 'claude-code' {
   interface PluginState {
-    'glitch-pets': { sprite: Sprite | null; mood: MoodState; view: PetsView; crew: CrewState; crewOpen: Record<string, boolean>; crewSummary: CrewSummary | null }
+    'glitch-pets': { sprite: Sprite | null; mood: MoodState; view: PetsView; crew: CrewState; crewOpen: Record<string, boolean>; crewSummary: CrewSummary | null; paneFrame: number }
   }
 }
