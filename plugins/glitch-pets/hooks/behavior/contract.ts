@@ -1,19 +1,18 @@
 // The rules every persona file must keep. The persona tests run it on each pet,
 // and register.tsx skips a pet that breaks it.
 import type { Persona } from './types'
-import { GRID, MOOD_IDS, VOICE_MOMENTS } from './types'
+import { GRID, LAPTOP_KEYS, MOOD_IDS, PET_KEY, VOICE_MOMENTS } from './types'
 
 const HEX = /^#[0-9a-f]{6}$/i
-const RESERVED = ['1', '2', '3']
-const LAPTOP_KEYS = ['4', '6', '7']
 
 /** `composed`: the persona already went through withLaptop, so it holds the laptop's keys by design. */
 export function personaProblems(p: Persona, opts: { composed?: boolean } = {}): string[] {
   const out: string[] = []
   for (const [key, color] of Object.entries(p.palette)) {
-    if (RESERVED.includes(key)) out.push(`palette key "${key}" is reserved for hats`)
-    if (!opts.composed && LAPTOP_KEYS.includes(key)) out.push(`palette key "${key}" is reserved for the laptop`)
     if (key === '.' || key.length !== 1) out.push(`palette key "${key}" must be one char other than "."`)
+    else if (LAPTOP_KEYS.includes(key)) {
+      if (!opts.composed) out.push(`palette key "${key}" is reserved for the laptop`)
+    } else if (!PET_KEY.test(key)) out.push(`palette key "${key}" is reserved for crew themes (a pet's keys are letters)`)
     if (!HEX.test(color)) out.push(`palette "${key}" must be #rrggbb, got ${color}`)
   }
   for (const mood of MOOD_IDS) {

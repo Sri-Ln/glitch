@@ -40,6 +40,13 @@ test('frameSvg rounds fractional pixel sizes to whole CSS px', () => {
   expect(svg).toContain('viewBox="0 0 16 13"')
 })
 
+test('frameSvg sizes a wider frame (a crew mini) by its own rows', () => {
+  const wide: Frame = Array.from({ length: 13 }, () => 'a'.repeat(23))
+  const svg = frameSvg(persona.palette, wide, 2)
+  expect(svg).toContain('viewBox="0 0 23 13"')
+  expect(svg).toContain('width="46" height="26"')
+})
+
 test('the player returns the same string object for the same frame (cached)', () => {
   const player = createPlayer()
   const one = player.sprite(persona, 'working', 0)
