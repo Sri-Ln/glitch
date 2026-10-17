@@ -5,9 +5,28 @@
 /** What glitch-hud draws: one frame as an image. */
 export type Sprite = { source: string; alt: string; width: number; height: number }
 
-export type MoodId = 'idle' | 'working' | 'happy' | 'tired' | 'sleepy' | 'worried' | 'oops' | 'cheering' | 'leading' | 'reviewing' | 'crying'
+export type MoodId = 'idle' | 'working' | 'happy' | 'tired' | 'sleepy' | 'worried' | 'oops' | 'cheering' | 'leading' | 'reviewing' | 'crying' | 'investigating' | 'pleased'
 
 export type PetId = 'screenhead' | 'blob' | 'pixel' | 'dot' | 'fork' | 'bud'
+
+/** One brief lead reaction to the crew: joy when a member finishes, worry when one fails. */
+export type Reaction = { kind: 'joy' | 'worry'; who: string[]; startedAt: number; until: number }
+
+/** The lead's reactions to crew news (hooks/behavior/reactions.ts). One plays, one waits; the latest wins. */
+export type Reactions = {
+  current: Reaction | null
+  /** Arrived while `current` was in its first second; it takes over when that second is up. */
+  pending: { kind: 'joy' | 'worry'; who: string[]; at: number } | null
+  /** The latest failure (clock ms, 0 for none), its row and name: investigating reads them. */
+  lastFailAt: number
+  failId: string | null
+  failWho: string | null
+  /** The fishing-rod reward playing now (one at a time), and the next one waiting (the latest finish wins). */
+  reward: { rowId: string; startedAt: number } | null
+  rewardNext: { rowId: string; at: number } | null
+  /** Rows that finished (id → clock ms): each keeps a gift badge once its reward has played. */
+  gifts: Record<string, number>
+}
 
 export type MoodState = {
   /** The mood shown now and when it began (clock ms): the player times frames from it. */
@@ -28,6 +47,8 @@ export type MoodState = {
   pokedUntil: number
   /** The last glitch-hud press (its `poke.at`) already answered. */
   pokeSeen: number
+  /** The lead's reactions to crew members finishing or failing; missing reads as none. */
+  reactions?: Reactions
 }
 
 export type PetsView = { petId: PetId | 'off' }
