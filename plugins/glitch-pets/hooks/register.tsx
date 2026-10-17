@@ -3,8 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
-import { INITIAL_CREW, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, progressOf, reviewerRunning, shares } from './behavior/crew'
-import type { CrewState } from './behavior/crew'
+import { INITIAL_CREW, crewSummaryOf, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, shares, stepsOf } from './behavior/crew'
+import type { CrewState, CrewSummary } from './behavior/crew'
 import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
 import { withHat } from './behavior/hats'
 import { isCapReached } from './behavior/moods'
@@ -21,7 +21,7 @@ import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petArgsOf, petList } f
 import { parsePetsConfig } from './config'
 import type { PetsConfig } from './config'
 import { crewTree } from './pane'
-import type { CrewView } from './pane'
+import type { CrewGroup, CrewView } from './pane'
 import { PERSONAS } from './personas/index'
 import { onCrewChange, onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
 import { INITIAL_REACTIONS } from './behavior/reactions'
@@ -35,10 +35,25 @@ export const sprite = atom({ plugin: 'glitch-pets', key: 'sprite' } as const, nu
 export const mood = atom({ plugin: 'glitch-pets', key: 'mood' } as const, INITIAL_MOOD)
 export const view = atom({ plugin: 'glitch-pets', key: 'view' } as const, { petId: 'bud' } as PetsView)
 export const crew = atom({ plugin: 'glitch-pets', key: 'crew' } as const, INITIAL_CREW as CrewState)
+/** Which crew pane groups are open, keyed `<crew start>:<group>` (the terminal's fold under its own key). */
+export const crewOpen = atom({ plugin: 'glitch-pets', key: 'crewOpen' } as const, {} as Record<string, boolean>)
+/** What glitch-hud's crew pill shows; null while no crew is open or recent. */
+export const crewSummary = atom({ plugin: 'glitch-pets', key: 'crewSummary' } as const, null as CrewSummary | null)
 
 const PANE = 'glitch-crew'
-/** CSS px per pixel in the crew pane: the lead draws 24 × 20, a mini with its hat 24 × 24. */
+/** CSS px per pixel in the crew pane: a mini with its hat draws 24 × 24. */
 const PANE_PIXEL = 1.5
+/** The lead draws at 2×: 32 × 26. */
+const LEAD_PIXEL = 2
+/**
+ * The room the pane asks for, by where it will show: a narrow dock (about 300 px) and
+ * room inline for the lead and about three members on the rich surfaces; a dock wide
+ * enough for the aligned rows and a few lines inline on the terminal.
+ */
+const PANE_SIZE = { rich: { columns: 40, rows: 24 }, terminal: { columns: 90, rows: 10 } } as const
+type PaneSize = (typeof PANE_SIZE)[keyof typeof PANE_SIZE]
+/** glitch-hud's crew pill in its band: a press on it opens or closes the pane. */
+const HUD_PILL = 'glitch-crew'
 /** Helpers' statuses are asked every this many ticks (1 s). */
 const STATUS_TICKS = 10
 
@@ -138,15 +153,57 @@ async function refreshCrew($: EngineInterface) {
   else await say($, 'crewDone')
 }
 
-async function toggleCrew($: EngineInterface): Promise<string> {
+// With no surface named (auto-open), a session the desktop or a phone draws gets the
+// narrow dock; a terminal-only one the wide dock.
+async function sessionSize($: EngineInterface): Promise<PaneSize> {
+  const surfaces = await $.session.surfaces().catch(() => [] as const)
+  return surfaces.some(s => s !== 'terminal') ? PANE_SIZE.rich : PANE_SIZE.terminal
+}
+
+async function toggleCrew($: EngineInterface, size: PaneSize): Promise<string> {
   const isOpen = (await $.ui.panes().catch(() => [])).some(x => x.id === PANE)
   if (isOpen) {
     await $.ui.close({ id: PANE })
     return 'Crew pane closed.'
   }
-  await $.ui.open({ id: PANE, title: 'Crew' })
+  await $.ui.open({ id: PANE, title: 'Crew', columns: size.columns, rows: size.rows })
   return 'Crew pane opened.'
 }
+
+// A command typed in a fullscreen terminal docks beside its transcript there; else as the session.
+async function commandSize($: EngineInterface, e: { origin: { kind: string }; presentation?: { isFullscreen?: boolean } }): Promise<PaneSize> {
+  return e.presentation?.isFullscreen === true && e.origin.kind === 'composer' ? PANE_SIZE.terminal : await sessionSize($)
+}
+
+// The crew's share of the session cost: one source for the pane and the HUD pill.
+async function crewCostOf($: EngineInterface, c: CrewState): Promise<number> {
+  const usdNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? c.costAtStart
+  return Math.max(0, usdNow - c.costAtStart)
+}
+
+// The figures glitch-hud's crew pill shows, written only when they change. No crew, no reads.
+async function publishSummary($: EngineInterface) {
+  const c = await read($, crew)
+  const before = await read($, crewSummary)
+  if (c.rows.length === 0 && before === null) return
+  const now = await $.clock.now()
+  const next = crewSummaryOf(c, c.rows.length ? await crewCostOf($, c) : 0, now)
+  if (JSON.stringify(before) !== JSON.stringify(next)) await update($, crewSummary, () => next)
+}
+
+/** The lead's line in the pane. A placeholder until the lead's own wording lands. */
+function leadStatus(c: CrewState): string {
+  const at = c.rows.filter(r => r.status === 'running').length
+  const failed = c.rows.filter(r => r.status === 'failed')
+  if (at > 0) return `keeping an eye on the crew (${at} at work)`
+  if (failed.length > 0) return `${failed.length} of the crew failed`
+  return 'job done, the whole crew is back'
+}
+
+const openKey = (c: CrewState, group: CrewGroup, isTerminal: boolean) => `${c.startedAt ?? 0}:${group}${isTerminal && group === 'finished' ? ':terminal' : ''}`
+// Desktop groups start open; the terminal's finished members start folded.
+const isOpenIn = (o: Record<string, boolean>, c: CrewState, group: CrewGroup, isTerminal: boolean) =>
+  o[openKey(c, group, isTerminal)] ?? !(isTerminal && group === 'finished')
 
 async function say($: EngineInterface, moment: VoiceMoment) {
   const p = personaFor((await read($, view)).petId)
@@ -162,7 +219,10 @@ async function tick($: EngineInterface) {
   const now = await $.clock.now()
   // The crew pane needs the statuses with the pet off too.
   ticks += 1
-  if (ticks % STATUS_TICKS === 0) await refreshCrew($)
+  if (ticks % STATUS_TICKS === 0) {
+    await refreshCrew($)
+    await publishSummary($)
+  }
   const p = personaFor((await read($, view)).petId)
   if (!p) {
     if (lastSource !== null) {
@@ -540,7 +600,8 @@ export const register: Register = (on, options) => {
         return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, model: r.model, now, costNow, ...pre.step })
       })
       if (fresh && config.crewPane === 'auto' && !(await $.ui.panes().catch(() => [])).some(x => x.id === PANE)) {
-        await $.ui.open({ id: PANE, title: 'Crew' }).catch(() => undefined)
+        const size = await sessionSize($)
+        await $.ui.open({ id: PANE, title: 'Crew', columns: size.columns, rows: size.rows }).catch(() => undefined)
       }
     } catch {
       // The pane misses this helper.
@@ -564,39 +625,67 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     try {
       const ui = $.ui.resolve(e)
-      const { Box, Text } = ui
+      const { Box, Button, Text } = ui
       const c = await read($, crew)
-      if (c.rows.length === 0) return <Text dimColor>No crew yet. Helpers appear here when Claude splits work.</Text>
+      if (c.rows.length === 0) return <Text dimColor>No crew yet. Crew members appear here when Claude splits work.</Text>
       const now = await $.clock.now()
       const p = personaFor((await read($, view)).petId)
       const m = await read($, mood)
-      const usdNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? c.costAtStart
-      const crewCost = Math.max(0, usdNow - c.costAtStart)
+      const crewCost = await crewCostOf($, c)
       const cost = shares(c.rows, crewCost)
+      const isTerminal = e.surface === 'terminal'
+      const o = await read($, crewOpen)
       const v: CrewView = {
-        lead: { name: p?.name ?? 'Lead', mood: m.mood, sprite: p ? player.sprite(p, m.mood, now - m.since, PANE_PIXEL) : null },
-        rows: c.rows.map(row => ({ row, mini: p ? miniOf(p, row.role, row.tier) : null, cost: cost[row.id] ?? 0, progress: progressOf(row, c.rows) })),
+        lead: { name: p?.name ?? 'Lead', status: leadStatus(c), sprite: p ? player.sprite(p, m.mood, now - m.since, LEAD_PIXEL) : null },
+        rows: c.rows.map(row => ({ row, mini: p ? miniOf(p, row.role, row.tier) : null, cost: cost[row.id] ?? 0, steps: stepsOf(row, c.rows) })),
         header: { cost: crewCost, tokens: c.rows.reduce((t, r) => t + r.tokens, 0), elapsedMs: elapsedOf(c, now) },
-        isTerminal: e.surface === 'terminal',
+        isTerminal,
         now,
+        bodyColumns: e.props.bodyColumns,
+        open: { running: isOpenIn(o, c, 'running', isTerminal), finished: isOpenIn(o, c, 'finished', isTerminal) },
       }
-      return crewTree(v, { Box, Text, Svg: 'Svg' in ui ? ui.Svg : null } as never)
+      // A group's open state is kept per crew: a new crew starts from the defaults.
+      const toggle = async (group: CrewGroup) => {
+        const now2 = await read($, crew)
+        const key = openKey(now2, group, isTerminal)
+        const prefix = `${now2.startedAt ?? 0}:`
+        await update($, crewOpen, x => ({ ...Object.fromEntries(Object.entries(x).filter(([kk]) => kk.startsWith(prefix))), [key]: !isOpenIn(x, now2, group, isTerminal) }))
+      }
+      // Shows that member's transcript in the main view (only from the person's press).
+      const show = async (agentId: string) => {
+        let why: string | null = null
+        try {
+          why = (await $.ui.view({ agentId })).deny ?? null
+        } catch (err) {
+          why = `could not show that crew member (${err instanceof Error ? err.message : String(err)})`
+        }
+        if (why) $.ui.toast(`Glitch pets: ${why}`, { timeoutMs: 6000 })
+      }
+      return crewTree(v, { Box, Text, Button, Svg: 'Svg' in ui ? ui.Svg : null } as never, { toggle, view: show })
     } catch {
       return next(e)
     }
   })
 
+  // A press on glitch-hud's crew pill (it draws the pill from crewSummary): the pane
+  // opens or closes here, behind the person's press.
+  on('ui.press', { plugin: 'glitch-hud', element: HUD_PILL }, async ($, e, next) => {
+    const r = await next(e)
+    await toggleCrew($, e.surface === 'terminal' ? PANE_SIZE.terminal : PANE_SIZE.rich).catch(() => undefined)
+    return r
+  })
+
   on('command.run', { command: 'glitch-pets' }, async ($, e) => {
     const themeArg = crewThemeArgOf(e.args) // crew themes (#41)
     if (themeArg !== null) return { text: await answerCrewTheme($, themeArg) }
-    return { text: firstWord(e.args) === 'crew' ? await toggleCrew($) : await answerPets($, petArgsOf('glitch-pets', e.args)) }
+    return { text: firstWord(e.args) === 'crew' ? await toggleCrew($, await commandSize($, e)) : await answerPets($, petArgsOf('glitch-pets', e.args)) }
   })
   on('command.run', { command: 'glitch' }, async ($, e, next) => {
     const word = firstWord(e.args)
     if (!ROUTED_PETS.includes(word)) return next(e)
     const themeArg = crewThemeArgOf(e.args) // crew themes (#41)
     if (themeArg !== null) return { text: await answerCrewTheme($, themeArg) }
-    return { text: word === 'crew' ? await toggleCrew($) : await answerPets($, petArgsOf('glitch', e.args)) }
+    return { text: word === 'crew' ? await toggleCrew($, await commandSize($, e)) : await answerPets($, petArgsOf('glitch', e.args)) }
   })
 
   // ── Crew tiers (#43): hooks ──

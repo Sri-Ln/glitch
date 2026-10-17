@@ -5,7 +5,7 @@ import type { On } from 'claude-code'
 let toasts: string[] = []
 const START = Date.parse('2026-10-14T10:00:00Z')
 
-const session = async ($: Engine, on: On, store: Record<string, unknown> = {}) => {
+const session = async ($: Engine, on: On, store: Record<string, unknown> = {}, surfaces: readonly string[] = ['desktop']) => {
   toasts = []
   on('ui.toast', (_$, e) => {
     toasts.push(e.text)
@@ -22,7 +22,7 @@ const session = async ($: Engine, on: On, store: Record<string, unknown> = {}) =
     return { value: undefined } as never
   })
   on('store.keys', () => ({ value: Object.keys(store) }) as never)
-  on('session.surfaces', () => ({ value: ['desktop'] }) as never)
+  on('session.surfaces', () => ({ value: surfaces }) as never)
   on('command.register', () => ({ value: { command: 'glitch-pets' } }) as never)
   on('turn.start', () => ({ turnId: 't' }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
@@ -142,10 +142,17 @@ test('the first helper opens the crew pane (auto) and the pane lists it', async 
   expect(opened).toEqual(['glitch-crew'])
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'glitch-pets', surface, component: 'Pane', props: { title: 'Crew', isFocused: false, bodyColumns: 120 } as never, requestId: 'glitch-crew' })
-    const text = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join(' ')
+    const text = (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button').map(t => String(t.text ?? '')).join(' ')
     expect(text).toContain('Build the landing page')
-    expect(text).toContain(surface === 'terminal' ? 'builder' : 'Opus')
-    expect((await ui.findAll({ type: 'Svg' })).length).toBe(surface === 'terminal' ? 0 : 2)
+    expect(text).toContain('builder-1')
+    expect(text).toContain('Opus 5.5')
+    // Desktop: the lead, the member's mini, its progress pill and the Running bar; none on the terminal.
+    const alts = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt))
+    if (surface === 'terminal') expect(alts).toEqual([])
+    else {
+      expect(alts.some(a => a.startsWith('Bud'))).toBe(true)
+      expect(alts).toContain('0 steps')
+    }
     await ui.unmount()
   }
 })
@@ -227,7 +234,7 @@ const mainEnd = ($: Engine, id: string) => $.turn.complete({ turnId: id, reason:
 const agentEnd = ($: Engine, agentId: string) => $.turn.complete({ turnId: `s-${agentId}`, agentId, reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
 const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
   const ui = await $.ui.mount({ plugin: 'glitch-pets', surface, component: 'Pane', props: { title: 'Crew', isFocused: false, bodyColumns: 120 } as never, requestId: 'glitch-crew' })
-  const text = (await ui.findAll({ type: 'Text' })).map(t => String(t.text ?? '')).join(' | ')
+  const text = (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button').map(t => String(t.text ?? '')).join(' | ')
   await ui.unmount()
   return text
 }
@@ -295,9 +302,15 @@ test('a crew spans main turns: the reviewer spawned later joins the same crew', 
   h.usd = 5
   for (const surface of ['terminal', 'desktop'] as const) {
     const text = await paneText($, surface)
-    for (const d of ['A ✓', 'B ✓', 'R']) expect(text).toContain(d)
     // costAtStart (1) and startedAt (m1) are the crew's own: $4 over 2 s.
-    expect(text).toContain('≈$4.00 · 0 tok · 0:02')
+    if (surface === 'terminal') {
+      expect(text).toContain('reviewer-1')
+      expect(text).toContain('2 finished · 2 completed · 0 failed')
+      expect(text).toContain('Crew · 1 running · 2 done · ≈$4.00 · 0 tok · 0:02')
+    } else {
+      for (const d of ['builder-1', 'builder-2', 'reviewer-1', '≈$4.00', '0:02']) expect(text).toContain(d)
+      expect(text).toContain('2 completed')
+    }
   }
   expect(h.opened).toEqual(['glitch-crew'])
   await submit($)
@@ -359,9 +372,8 @@ test('a quiet main turn closes the crew; the next spawn starts a fresh one', asy
   await spawnHelper($, 'B', 'B', 'builder-1')
   h.usd = 2.5
   const text = await paneText($, 'terminal')
-  expect(text).toContain('B')
-  expect(text).not.toContain('A ✓')
-  expect(text).toContain('≈$0.50 · 0 tok · 0:00')
+  expect(text).toContain('Crew · 1 running · 0 done · ≈$0.50 · 0 tok · 0:00')
+  expect(text).not.toContain('finished')
   expect(h.opened).toEqual(['glitch-crew', 'glitch-crew'])
 })
 
@@ -379,9 +391,9 @@ test('a helper\'s steps set its model, effort and tier; its tool calls drive pro
   h.status['ag-A'] = 'completed'
   await agentEnd($, 'ag-A')
   const text = await paneText($, 'terminal')
-  expect(text).toContain('builder · heavy · Opus 5.5 · high')
-  // B made 1 of the 4 tool calls A took: a quarter of the bar.
-  expect(text).toContain('▰▱▱▱')
+  expect(text).toContain('Opus 5.5 | high')
+  // B made 1 of the 4 tool calls A took: 1 of 4 steps, a quarter of the bar.
+  expect(text).toContain('██░░░░░░ 1/4')
 })
 
 test('the crewDone remark when the reviewer finishes and nothing else runs', async ($, on) => {
@@ -424,10 +436,10 @@ test('a helper that leaves the list ends after the grace; a failed list call end
   delete h.status['ag-A']
   h.listFails = true
   await clock.advance(5000)
-  expect(await paneText($, 'terminal')).not.toContain('A ✓')
+  expect(await paneText($, 'terminal')).toContain('Crew · 1 running')
   h.listFails = false
   await clock.advance(1000)
-  expect(await paneText($, 'terminal')).toContain('1 done, 0 failed')
+  expect(await paneText($, 'terminal')).toContain('1 finished · 1 completed · 0 failed')
   // Ended: the next quiet turn closes the crew and the 1 s crew writes stop.
   await mainStart($, 'm2')
   await mainEnd($, 'm2')
@@ -439,7 +451,7 @@ test('a helper that leaves the list ends after the grace; a failed list call end
   expect(h.listCalls).toBe(0)
   await mainStart($, 'm3')
   await spawnHelper($, 'B', 'B', 'builder-1')
-  expect(await paneText($, 'terminal')).not.toContain('A ✓')
+  expect(await paneText($, 'terminal')).not.toContain('finished')
   expect(h.opened).toEqual(['glitch-crew', 'glitch-crew'])
 })
 
@@ -537,9 +549,8 @@ test('a resumed helper is running again in its own row', async ($, on) => {
   h.status['ag-A'] = 'running'
   await $.agent.spawn({ tool_use_id: 'tu-r', prompt: 'fix it', description: 'A', subagentType: 'general-purpose', resume: { agentId: 'ag-A' } } as never)
   const text = await paneText($, 'terminal')
-  expect(text).toContain('Running · 2')
-  expect(text).not.toContain('A ✓')
-  expect(text).not.toContain('Finished')
+  expect(text).toContain('Crew · 2 running · 0 done')
+  expect(text).not.toContain('finished')
 })
 
 test('a running helper shows its tokens from its steps, counted once at its end', async ($, on) => {
@@ -567,7 +578,7 @@ test('unnamed helpers (an ad-hoc fan-out) show in the pane but get no reminder',
   await mainEnd($, 'm1')
   await submit($)
   expect(h.contexts).toEqual([undefined])
-  expect(await paneText($, 'terminal')).toContain('2 done, 0 failed')
+  expect(await paneText($, 'terminal')).toContain('2 finished · 2 completed · 0 failed')
 })
 
 test('a reviewer that joins before the reminder goes out drops it', async ($, on) => {
@@ -579,12 +590,342 @@ test('a reviewer that joins before the reminder goes out drops it', async ($, on
   expect(h.contexts).toEqual([undefined, undefined])
 })
 
-test('once nothing runs the finished helpers fold to one line', async ($, on) => {
+test('once nothing runs the finished crew folds to one line on the terminal', async ($, on) => {
   await backgroundCrew($, on)
   await mainEnd($, 'm3')
   const text = await paneText($, 'terminal')
-  expect(text).toContain('2 done, 0 failed')
-  expect(text).not.toContain('A ✓')
+  expect(text).toContain('2 finished · 2 completed · 0 failed')
+  expect(text).not.toContain('builder-1')
+})
+
+// ---- The crew pane's layout (#38, #39, #42) ----
+
+const SURFACES = ['terminal', 'desktop'] as const
+const PANE_PROPS = (bodyColumns: number) => ({ title: 'Crew', isFocused: false, bodyColumns, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} })
+const mountPane = ($: Engine, surface: 'terminal' | 'desktop', bodyColumns = 40) =>
+  $.ui.mount({ plugin: 'glitch-pets', surface, component: 'Pane', props: PANE_PROPS(bodyColumns) as never, requestId: 'glitch-crew' })
+type Found = { type: string; key: string | undefined; props: Record<string, unknown>; text: string; children: unknown[] }
+type Finder = { findAll: (q: { type?: string; key?: string }) => Promise<Found[]> }
+const textsOf = async (ui: Finder) => (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button').map(t => String(t.text ?? ''))
+type Drawn = { props?: Record<string, unknown>; hover?: Record<string, unknown>; children?: unknown[] }
+const drawnByKey = (node: unknown, key: string): Drawn | undefined => {
+  if (!node || typeof node !== 'object') return undefined
+  const n = node as Drawn
+  if (n.props?.key === key) return n
+  for (const c of n.children ?? []) {
+    const hit = drawnByKey(c, key)
+    if (hit) return hit
+  }
+  return undefined
+}
+const keysOf = async (ui: Finder) => (await ui.findAll({})).map(x => x.key).filter((k): k is string => typeof k === 'string')
+
+// Three crew members: C (tester-1) finished after 4 tool calls, A (builder-1) failed,
+// B (researcher-1, Opus high) still runs with 1 tool call: 1 of 4 steps.
+const B_ID = 'ag-Research date formats'
+const C_ID = 'ag-Write the tests'
+const mixedCrew = async ($: Engine, on: Parameters<typeof session>[1]) => {
+  const { h, clock } = await crewHarness($, on)
+  h.usd = 1
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'Build the date utils', 'builder-1')
+  await spawnHelper($, 'B', 'Research date formats', 'researcher-1')
+  await spawnHelper($, 'C', 'Write the tests', 'tester-1')
+  const stream = ($.turn.step as unknown as (e: object) => AsyncGenerator<unknown, unknown>)({ turnId: 's', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 1, agentId: B_ID })
+  while (!(await stream.next()).done) {
+    // Read the stream to its end.
+  }
+  for (let i = 0; i < 4; i++) await $.tool.call({ tool: 'Read', file_path: 'x', agentId: C_ID } as never)
+  await $.tool.call({ tool: 'Read', file_path: 'x', agentId: B_ID } as never)
+  await clock.advance(1000)
+  h.status[C_ID] = 'completed'
+  h.status['ag-Build the date utils'] = 'failed'
+  await agentEnd($, C_ID)
+  await agentEnd($, 'ag-Build the date utils')
+  h.usd = 1.5
+  return { h, clock }
+}
+
+test('pane: one header line on the terminal, a lead row with total time on the desktop', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, surface === 'terminal' ? 100 : 40)
+    const all = (await textsOf(ui)).join(' | ')
+    if (surface === 'terminal') {
+      expect(all).toContain('Crew · 1 running · 1 done · 1 failed · ≈$0.50 · 0 tok · 0:01')
+      expect(all).toContain('Bud · keeping an eye on the crew (1 at work)')
+    } else {
+      expect(all).toContain('Bud')
+      expect(all).toContain('keeping an eye on the crew (1 at work)')
+      expect(all).toContain('0:01')
+      expect(all).toContain('so far')
+      expect(await ui.find({ key: 'crew-totals' })).toBeTruthy()
+      // The lead is drawn at 2×: 32 px wide.
+      const lead = (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('Bud'))
+      expect(lead?.props.width).toBe(32)
+    }
+    expect(all).not.toMatch(/helper/i)
+    await ui.unmount()
+  }
+})
+
+test('pane: once the crew is done the lead row says total', async ($, on) => {
+  const { h } = await mixedCrew($, on)
+  h.status[B_ID] = 'completed'
+  await agentEnd($, B_ID)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const all = (await textsOf(ui)).join(' | ')
+    if (surface === 'desktop') expect(all).toContain('total')
+    expect(all).not.toContain('so far')
+    expect(all).not.toContain('Running')
+    await ui.unmount()
+  }
+})
+
+test('pane: Running and Finished accordions start open and toggle on press (desktop); the finished line folds and expands (terminal)', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      expect(await ui.find({ key: 'crew-acc:running' })).toBeTruthy()
+      expect(await ui.find({ key: `crew-member:${C_ID}` })).toBeTruthy()
+      expect(await ui.find({ key: `crew-member:${B_ID}` })).toBeTruthy()
+      const header = await ui.find({ key: 'crew-acc-box:finished' })
+      expect(Number(header?.props.paddingX)).toBeGreaterThan(0)
+      await ui.press({ key: 'crew-acc:finished' })
+      expect(await ui.find({ key: `crew-member:${C_ID}` })).toBeFalsy()
+      expect(await ui.find({ key: `crew-member:${B_ID}` })).toBeTruthy()
+      // The tally stays on the closed header.
+      expect(await ui.find({ key: 'crew-tally' })).toBeTruthy()
+      await ui.press({ key: 'crew-acc:running' })
+      expect(await ui.find({ key: `crew-member:${B_ID}` })).toBeFalsy()
+      await ui.press({ key: 'crew-acc:finished' })
+      expect(await ui.find({ key: `crew-member:${C_ID}` })).toBeTruthy()
+    } else {
+      expect(await ui.find({ key: `crew-line:${C_ID}` })).toBeFalsy()
+      const fold = await ui.find({ key: 'crew-finished' })
+      expect(fold?.type).toBe('Button')
+      expect(fold?.text).toContain('Show')
+      await ui.press({ key: 'crew-finished' })
+      expect(await ui.find({ key: `crew-line:${C_ID}` })).toBeTruthy()
+      expect((await ui.find({ key: 'crew-finished' }))?.text).toContain('Hide')
+    }
+    await ui.unmount()
+  }
+})
+
+test('pane: the finished tally reads N tasks · N completed · N failed', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      const tally = await ui.find({ key: 'crew-tally' })
+      expect(tally?.props.flexDirection).toBe('row')
+      // Three equal cells across the line.
+      const cells = (tally?.children ?? []) as { props: Record<string, unknown> }[]
+      expect(cells.length).toBe(3)
+      for (const c of cells) expect(c.props.flexGrow).toBe(1)
+      expect(await textsOf(ui)).toEqual(expect.arrayContaining(['3 tasks', '1 completed', '1 failed']))
+    } else {
+      expect((await textsOf(ui)).join(' | ')).toContain('2 finished · 1 completed · 1 failed')
+    }
+    await ui.unmount()
+  }
+})
+
+test('pane: pressing a crew member opens its transcript with ui.view', async ($, on) => {
+  const viewed: (string | undefined)[] = []
+  on('ui.view', (_$, e) => {
+    viewed.push((e as { agentId?: string }).agentId)
+    return { value: {} } as never
+  })
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    viewed.length = 0
+    const ui = await mountPane($, surface)
+    await ui.press({ key: `crew-open:${B_ID}` })
+    expect(viewed).toEqual([B_ID])
+    await ui.unmount()
+  }
+})
+
+test('pane: each crew member block has a hover style and an Open ↗ hint 1 cell after the name (desktop)', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      // A hover sits on the drawn element, beside its props.
+      const tree = await ui.drawn()
+      const block = drawnByKey(tree, `crew-member:${B_ID}`)
+      expect(block?.hover?.backgroundColor).toBeTruthy()
+      const hint = drawnByKey(tree, `crew-hint-box:${B_ID}`)
+      expect(hint?.props?.marginLeft).toBe(1)
+      expect(hint?.props?.display).toBe('none')
+      expect(hint?.hover?.display).toBe('flex')
+      // The hint lights with its member's block: one hover group.
+      expect(hint?.hover?.scope).toBe(block?.hover?.scope)
+      expect((await ui.find({ key: `crew-hint:${B_ID}` }))?.text).toBe('Open ↗')
+      // A little more space between members.
+      expect((await ui.find({ key: 'crew-members:finished' }))?.props.rowGap).toBeTruthy()
+    } else {
+      expect(await ui.find({ key: `crew-member:${B_ID}` })).toBeFalsy()
+    }
+    await ui.unmount()
+  }
+})
+
+test('pane: model · effort, tokens and ≈cost sit on one line; the progress pill says n/m steps, Done or Failed in blue, green, red', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      const chips = await ui.find({ key: `crew-chips:${B_ID}` })
+      expect(chips?.props.flexDirection).toBe('row')
+      expect(chips?.props.flexWrap).toBe('nowrap')
+      const t = (await textsOf(ui)).join(' | ')
+      expect(t).toContain('Opus 5.5 · high')
+      expect(t).toContain('0 tok')
+      const svgs = await ui.findAll({ type: 'Svg' })
+      const pills = svgs.filter(s => ['1/4 steps', 'Done', 'Failed'].includes(String(s.props.alt)))
+      expect(pills.map(s => String(s.props.alt)).sort()).toEqual(['1/4 steps', 'Done', 'Failed'])
+      const color = (alt: string) => String(pills.find(s => s.props.alt === alt)?.props.source)
+      expect(color('1/4 steps')).toContain('#2f7cf6')
+      expect(color('Done')).toContain('#1f9d55')
+      expect(color('Failed')).toContain('#d64040')
+    } else {
+      expect((await ui.findAll({ type: 'Svg' })).length).toBe(0)
+    }
+    await ui.unmount()
+  }
+})
+
+test('pane (terminal): one aligned line per member: glyph, name, task, model + effort, tokens, ≈cost, time, progress', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, 100)
+    if (surface === 'terminal') {
+      const line = await ui.find({ key: `crew-line:${B_ID}` })
+      expect(line?.props.flexDirection).toBe('row')
+      const joined = (await textsOf(ui)).join(' | ')
+      for (const p of ['●', 'researcher-1', 'Research date formats', 'Opus 5.5', 'high', '0 tok', '≈$', '0:01', '1/4']) expect(joined).toContain(p)
+      // The tier is gone: model and effort say it.
+      expect(joined).not.toContain('heavy')
+      // Header, lead, one running line, the folded finished line: four rows.
+      const rows = (await keysOf(ui)).filter(k => k === 'crew-head' || k === 'crew-lead' || k.startsWith('crew-line:') || k === 'crew-fold')
+      expect(rows.length).toBe(4)
+    } else {
+      expect(await ui.find({ key: `crew-line:${B_ID}` })).toBeFalsy()
+    }
+    await ui.unmount()
+  }
+})
+
+test('the pane asks for a narrow dock where the desktop draws it, and inline room for the lead and ~3 members', async ($, on) => {
+  const asked: { columns?: number; rows?: number }[] = []
+  on('ui.open', (_$, e) => {
+    asked.push({ columns: e.columns, rows: e.rows })
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.panes', () => ({ value: [] }) as never)
+  on('agent.spawn', (_$, e) => ({ model: 'claude-opus-5-5', agentId: `ag-${e.description}` }) as never)
+  on('session.usage', usageAt(0))
+  await session($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawnHelper($, 'a', 'A', 'builder-1')
+  await $.command.run({ command: 'glitch-pets', args: 'crew' } as never)
+  expect(asked.length).toBe(2)
+  for (const a of asked) {
+    expect(Number(a.columns)).toBeGreaterThanOrEqual(36)
+    expect(Number(a.columns)).toBeLessThanOrEqual(44)
+    // A rich inline pane (the phone) shows the lead and about three members.
+    expect(Number(a.rows)).toBeGreaterThanOrEqual(20)
+    expect(Number(a.rows)).toBeLessThanOrEqual(28)
+  }
+})
+
+test('in a terminal-only session the pane asks for a dock wide enough for its aligned rows and a small inline height', async ($, on) => {
+  const asked: { columns?: number; rows?: number }[] = []
+  on('ui.open', (_$, e) => {
+    asked.push({ columns: e.columns, rows: e.rows })
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.panes', () => ({ value: [] }) as never)
+  on('agent.spawn', (_$, e) => ({ model: 'claude-opus-5-5', agentId: `ag-${e.description}` }) as never)
+  on('session.usage', usageAt(0))
+  await session($, on, {}, ['terminal'])
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawnHelper($, 'a', 'A', 'builder-1')
+  await $.command.run({ command: 'glitch-pets', args: 'crew' } as never)
+  expect(asked.length).toBe(2)
+  for (const a of asked) {
+    expect(Number(a.columns)).toBeGreaterThanOrEqual(84)
+    expect(Number(a.columns)).toBeLessThanOrEqual(96)
+    expect(Number(a.rows)).toBeGreaterThan(0)
+    expect(Number(a.rows)).toBeLessThanOrEqual(12)
+  }
+})
+
+// glitch-hud as the band draws its crew pill: a press on it reaches glitch-pets' ui.press hook.
+const BAND_PILL = {
+  name: 'glitch-hud',
+  register: ((on: On) => {
+    on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+      const { Button } = $.ui.resolve(e)
+      return <Button key="glitch-crew" label="Crew · 1 at work" onPress={() => undefined} />
+    })
+  }) as never,
+}
+const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 4, bodyColumns: 120, scroll: { offset: 0, bodyRows: 4 }, view: {} }
+
+test('a press on the HUD band\'s crew pill toggles the pane', { plugins: [BAND_PILL] }, async ($, on) => {
+  const asked: { id: string; columns?: number }[] = []
+  let open = false
+  on('ui.open', (_$, e) => {
+    asked.push({ id: e.id, columns: e.columns })
+    open = true
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.close', () => {
+    open = false
+    return { value: undefined } as never
+  })
+  on('ui.panes', () => ({ value: open ? [{ id: 'glitch-crew', title: 'Crew', isShown: true, isFocused: false, isPlaced: true }] : [] }) as never)
+  await session($, on)
+  for (const surface of SURFACES) {
+    const band = await $.ui.mount({ plugin: 'glitch-hud', surface, component: 'AbovePrompt', props: BAND_PROPS as never })
+    await band.press({ key: 'glitch-crew' })
+    expect(open).toBe(true)
+    await band.press({ key: 'glitch-crew' })
+    expect(open).toBe(false)
+    await band.unmount()
+  }
+  // Each open is sized for the surface the press came from.
+  expect(asked.map(a => a.id)).toEqual(['glitch-crew', 'glitch-crew'])
+  expect(Number(asked[0]?.columns)).toBeGreaterThanOrEqual(84)
+  expect(Number(asked[1]?.columns)).toBeLessThanOrEqual(44)
+})
+
+test('glitch-pets publishes a crew summary for the HUD pill while a crew is open or recent', async ($, on) => {
+  const summaries: unknown[] = []
+  on('state.set', (_$, e, next) => {
+    if ((e as { key?: string }).key === 'crewSummary') summaries.push((e as { value?: unknown }).value)
+    return next(e)
+  })
+  const { h, clock } = await mixedCrew($, on)
+  await clock.advance(1100)
+  expect(summaries.length).toBeGreaterThan(0)
+  expect(summaries[summaries.length - 1]).toMatchObject({ running: 1, done: 1, failed: 1 })
+  h.status[B_ID] = 'completed'
+  await agentEnd($, B_ID)
+  await mainEnd($, 'm1')
+  await mainStart($, 'm2')
+  await mainEnd($, 'm2')
+  await clock.advance(1100)
+  expect(summaries[summaries.length - 1]).toMatchObject({ running: 0, done: 2, failed: 1 })
+  // Long after the crew closed: no pill.
+  await clock.advance(5 * 60_000)
+  expect(summaries[summaries.length - 1]).toBe(null)
 })
 
 // ── Crew tiers (#43) ──
@@ -868,4 +1209,139 @@ test('a step-up of a crew that closed is not carried into a fresh one', async ($
   expect(h.spawned[1]).toEqual({ type: 'glitch-pets:crew-light', name: 'builder-1' })
   await submit($)
   expect(stepNotes(h)).toEqual([])
+})
+
+// ---- Fix round 1 ----
+
+// The fixed columns of a terminal row, in cells, gaps included (the task takes the rest).
+// The one Text a keyed Box holds, as drawn.
+const textIn = (box: Drawn | undefined): Drawn | undefined => ((box?.children ?? []) as Drawn[]).find(c => c && typeof c === 'object' && (c as { type?: string }).type === 'Text')
+const stringOf = (n: Drawn | undefined) => ((n?.children ?? []) as unknown[]).filter(c => typeof c === 'string').join('')
+const fixedCells = (line: Drawn | undefined) => {
+  const cols = ((line?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
+  const widths = cols.map(c => c.props?.width).filter((w): w is number => typeof w === 'number')
+  return widths.reduce((t, w) => t + w, 0) + Math.max(0, cols.length - 1)
+}
+
+test('pane (terminal): at 100 cells the full row; at 40 cells tokens and bar glyphs go and the fixed columns leave the task room', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    for (const columns of [100, 40]) {
+      const ui = await mountPane($, surface, columns)
+      const joined = (await textsOf(ui)).join(' | ')
+      if (surface === 'terminal') {
+        const tree = await ui.drawn()
+        const line = drawnByKey(tree, `crew-line:${B_ID}`)
+        expect(line).toBeTruthy()
+        if (columns === 100) {
+          expect(joined).toContain('█')
+          expect(stringOf(textIn(drawnByKey(tree, `crew-tok:${B_ID}`)))).toBe('0')
+          expect(joined).toContain('Crew · 1 running · 1 done · 1 failed · ≈$0.50 · 0 tok · 0:01')
+        } else {
+          expect(joined).not.toContain('█')
+          expect(await ui.find({ key: `crew-tok:${B_ID}` })).toBeFalsy()
+          expect(joined).toContain('1/4')
+          expect(fixedCells(line)).toBeLessThanOrEqual(columns - 8)
+          // The header drops its tokens and truncates rather than wraps.
+          const head = drawnByKey(tree, 'crew-head')
+          expect(JSON.stringify(head)).toContain('truncate')
+          expect(joined).not.toContain('0 tok')
+        }
+      } else expect(joined).toContain('Research date formats')
+      await ui.unmount()
+    }
+  }
+})
+
+test('pane (desktop): the progress pill is drawn for light and dark: a translucent track, no fixed text color, the label as theme text', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      const pills = (await ui.findAll({ type: 'Svg' })).filter(s => ['1/4 steps', 'Done', 'Failed'].includes(String(s.props.alt)))
+      expect(pills.length).toBe(3)
+      for (const p of pills) {
+        const src = String(p.props.source)
+        expect(src).not.toContain('<text')
+        expect(src).not.toContain('#e6e8ef')
+        expect(src).toContain('fill-opacity')
+      }
+      const tree = await ui.drawn()
+      const label = textIn(drawnByKey(tree, `crew-pill-label:${B_ID}`))
+      expect(stringOf(label)).toBe('1/4 steps')
+      expect(label?.props?.color).toBe('suggestion')
+      expect(textIn(drawnByKey(tree, `crew-pill-label:${C_ID}`))?.props?.color).toBe('success')
+    } else expect(await ui.find({ key: `crew-pill-label:${B_ID}` })).toBeFalsy()
+    await ui.unmount()
+  }
+})
+
+test('pane (desktop): an accordion header has a border, a live dot on Running and its chevron on the right', async ($, on) => {
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    if (surface === 'desktop') {
+      for (const kind of ['running', 'finished']) {
+        const box = drawnByKey(await ui.drawn(), `crew-acc-box:${kind}`)
+        expect(box?.props?.borderStyle).toBeTruthy()
+        const kids = ((box?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
+        expect(kids[kids.length - 1]?.props?.key).toBe(`crew-acc-chev:${kind}`)
+      }
+      expect((await ui.find({ key: 'crew-acc-chev:running' }))?.text).toBe('▾')
+      await ui.press({ key: 'crew-acc-chev:running' })
+      expect((await ui.find({ key: 'crew-acc-chev:running' }))?.text).toBe('▸')
+      expect(stringOf(textIn(drawnByKey(await ui.drawn(), 'crew-live')))).toBe('●')
+    } else expect(await ui.find({ key: 'crew-acc-chev:running' })).toBeFalsy()
+    await ui.unmount()
+  }
+})
+
+test('pane: a refused or failed ui.view is said in a toast', async ($, on) => {
+  let answer: 'deny' | 'throw' = 'deny'
+  on('ui.view', () => {
+    if (answer === 'throw') throw new Error('view refused')
+    return { value: { deny: 'not now' } } as never
+  })
+  await mixedCrew($, on)
+  for (const surface of SURFACES) {
+    for (const a of ['deny', 'throw'] as const) {
+      answer = a
+      toasts = []
+      const ui = await mountPane($, surface)
+      await ui.press({ key: `crew-open:${B_ID}` })
+      expect(toasts.filter(t => t.startsWith('Glitch pets: '))).toHaveLength(1)
+      if (a === 'deny') expect(toasts).toContain('Glitch pets: not now')
+      await ui.unmount()
+    }
+  }
+})
+
+test('the HUD pill and the pane header show one crew cost', async ($, on) => {
+  const summaries: { cost?: number }[] = []
+  on('state.set', (_$, e, next) => {
+    if ((e as { key?: string }).key === 'crewSummary') summaries.push((e as { value?: { cost?: number } }).value ?? {})
+    return next(e)
+  })
+  const { clock } = await mixedCrew($, on)
+  await clock.advance(1100)
+  // costAtStart 1, the session now at 1.5: the pane says ≈$0.50.
+  expect(await paneText($, 'terminal')).toContain('≈$0.50')
+  expect(summaries[summaries.length - 1]?.cost).toBe(0.5)
+})
+
+test('with no crew the 1 s tick reads no cost', async ($, on) => {
+  let usageCalls = 0
+  on('session.usage', () => {
+    usageCalls += 1
+    return { value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd: 0 } } } as never
+  })
+  const statsReads: string[] = []
+  on('state.get', (_$, e, next) => {
+    if ((e.plugin as string) === 'glitch-hud' && (e as { key?: string }).key === 'stats') statsReads.push('stats')
+    return next(e)
+  })
+  const clock = await session($, on, { pet: 'off' })
+  await clock.advance(3000)
+  expect(usageCalls).toBe(0)
+  expect(statsReads).toEqual([])
 })
