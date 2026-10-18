@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { CREW_RULE, GATE_TEXT, needsReview } from './gate'
 import type { CrewRow, CrewState } from './crew'
-import { INITIAL_CREW } from './crew'
+import { INITIAL_CREW, onSpawn } from './crew'
 
 const row = (id: string, role: CrewRow['role'], status: CrewRow['status'], named = true): CrewRow =>
   ({ id, role, status, named, description: id, tier: 'medium', model: null, effort: null, tokens: 0, weight: 0, tools: 0, startedAt: 0, endedAt: null }) as CrewRow
@@ -52,6 +52,15 @@ test('a failed helper held for a step-up is not finished yet', () => {
 test('the crew rule names the crew tier types', () => {
   expect(CREW_RULE).toContain('glitch-pets:crew-<tier>')
   expect(CREW_RULE).toContain('no model or effort')
+})
+
+test('an unnamed row spawned on crew-reviewer satisfies the review (#45)', () => {
+  let s = onSpawn(INITIAL_CREW, { agentId: 'a', name: 'builder-1', description: 'a', model: null, now: 0, costNow: 0 })
+  s = onSpawn(s, { agentId: 'b', name: 'builder-2', description: 'b', model: null, now: 0, costNow: 0 })
+  s = { ...s, rows: s.rows.map(r => ({ ...r, status: 'done' as const })) }
+  expect(needsReview(s, o)).toBe(true)
+  s = onSpawn(s, { agentId: 'r', description: 'Build a summary', model: null, now: 0, costNow: 0, rung: 'crew-reviewer' })
+  expect(needsReview(s, o)).toBe(false)
 })
 
 test('the rule and the reminder start a lean reviewer that verifies, not redoes', () => {

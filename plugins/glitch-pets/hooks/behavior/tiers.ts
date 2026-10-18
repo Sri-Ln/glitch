@@ -1,6 +1,5 @@
 // Crew tiers: the model and effort each tier runs at, the step-up ladder a failed
 // crew member climbs, and the agent types that pin them. Pure.
-import { roleOf } from './crew'
 import type { CrewRow } from './crew'
 import type { Tier } from './types'
 
@@ -138,8 +137,10 @@ export function agentSpecs(ladder: readonly Rung[]): { name: string; description
 // ── The lean reviewer (#45): verification, not regeneration ──
 
 export const REVIEWER_TYPE = 'crew-reviewer'
-/** The reviewer's turn cap (`AgentSpec.maxTurns`, "the most turns the agent takes before it stops"): enough to read, run the checks and spot-check a few items. */
-export const REVIEWER_MAX_TURNS = 12
+/** The reviewer's turn cap (`AgentSpec.maxTurns`, "the most turns the agent takes before it stops"): room to read, run the checks, spot-check a few items and still reply. */
+export const REVIEWER_MAX_TURNS = 18
+/** The turn by which the reviewer stops investigating, so the cap never swallows its findings. */
+const REVIEWER_WRAP_UP = REVIEWER_MAX_TURNS - 4
 
 const REVIEWER_NAME = /^reviewer-\d+$/i
 /** `reviewer-<n>`, the crew rule's name for the reviewer. */
@@ -148,14 +149,10 @@ export const isReviewerName = (name: string | undefined): boolean => !!name && R
 export const isReviewerType = (type: string): boolean => shortType(type) === REVIEWER_TYPE
 
 /**
- * A main-loop spawn that is the crew's reviewer, so it runs as the lean crew-reviewer:
- * on that type, or named `reviewer-<n>` (on any type), or — while a crew of named
- * helpers is open — unnamed by role with a review job, unless Claude chose a crew tier type.
+ * A spawn that runs as the lean crew-reviewer: on that type, or named `reviewer-<n>`
+ * (on any type). By name only: a description never moves an agent onto it.
  */
-export function isReviewerSpawn(e: { subagentType: string; name?: string; description: string }, crewOpen: boolean, ladder: readonly Rung[]): boolean {
-  if (isReviewerType(e.subagentType) || isReviewerName(e.name)) return true
-  return crewOpen && !rungOfType(ladder, e.subagentType) && roleOf(e.name, e.description) === 'reviewer'
-}
+export const isReviewerSpawn = (e: { subagentType: string; name?: string }): boolean => isReviewerType(e.subagentType) || isReviewerName(e.name)
 
 export const CREW_REVIEWER_PROMPT = [
   'You are the reviewer of a Glitch crew: a verifier, not a second crew. The lead (the main Claude session) gives you the plan, each crew member\'s report and the paths of what changed.',
@@ -163,13 +160,14 @@ export const CREW_REVIEWER_PROMPT = [
   '1. Read the plan and the reports. Check that every task in the plan has a deliverable and that each report matches the plan and the user\'s request.',
   '2. Look at the changed files and outputs (git diff or git status when there is a repository). Read what changed, not the whole project.',
   '3. Run the project\'s existing tests, linters and checks, if there are any, once. Do not write new ones.',
-  '4. Spot-check at most 3 items against the plan (a value, a claim, an edge case), picking the riskiest.',
+  '4. Spot-check at most 3 items against the plan, picking the riskiest: check a value against its stated source or a quick sanity bound, never a full re-derivation.',
   'Never redo or recompute the work from scratch, and never rewrite a crew member\'s script or answer to compare. Go deeper on one item only when a concrete check fails (a test fails, a file is missing, a value contradicts its source), and only on that item.',
   'Do not change any file; do not start agents. On a second review, check only what changed since the first one and whether each earlier finding is fixed.',
   'Reply in under 200 words: a list of findings, each with where it is (path or item), which task it belongs to and what is wrong, or exactly "no findings". Say which checks you ran. Never say something is verified unless you checked it.',
+  `You have about ${REVIEWER_MAX_TURNS} turns; stop investigating by turn ${REVIEWER_WRAP_UP} and send your reply. Always end with the findings list or "no findings", even when you could not finish every check (say which ones you skipped).`,
 ].join('\n')
 
-/** The lean reviewer's agent type, as `$.agent.register` takes it: the `reviewer` entry's model and effort, a turn cap, no agents of its own. */
+/** The lean reviewer's agent type, as `$.agent.register` takes it: the `reviewer` entry's model and effort, a turn cap, no agents of its own and no file edits. */
 export function reviewerSpec(tiers: CrewTiers): { name: string; description: string; prompt: string; model: string; effort: Effort; maxTurns: number; disallowedTools: string[] } {
   const { model, effort } = tiers.reviewer
   return {
@@ -179,7 +177,8 @@ export function reviewerSpec(tiers: CrewTiers): { name: string; description: str
     model,
     effort,
     maxTurns: REVIEWER_MAX_TURNS,
-    disallowedTools: ['Agent'],
+    // Bash stays, to run the project's checks.
+    disallowedTools: ['Agent', 'Edit', 'Write', 'NotebookEdit'],
   }
 }
 

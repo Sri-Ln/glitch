@@ -403,7 +403,7 @@ type CrewStep = { rung?: string; stepUps?: number; steppedUpFrom?: NonNullable<C
  * rewritten to the step-up's target — and counts toward the cap. A crew type's model wins.
  * `restore` puts the claim back when the spawn is refused.
  */
-function crewSpawnOf<E extends { subagentType: string; model?: string; fork: boolean; workflow?: unknown; name?: string; description: string }>(e: E, c: CrewState | null, own: boolean): { e: E; step: CrewStep; restore: () => void } {
+function crewSpawnOf<E extends { subagentType: string; model?: string; fork: boolean; workflow?: unknown; name?: string }>(e: E, c: CrewState | null, own: boolean): { e: E; step: CrewStep; restore: () => void } {
   const none = { e: crewModelOf(e), step: {}, restore: () => undefined }
   if (!own) return none
   if (c?.closed) {
@@ -413,8 +413,8 @@ function crewSpawnOf<E extends { subagentType: string; model?: string; fork: boo
     steppedFrom = new Set()
   }
   const started = !((e as { resume?: unknown }).resume || e.fork || e.workflow)
-  // The crew's reviewer (#45) runs as the lean crew-reviewer whatever type it was asked on.
-  if (started && isReviewerSpawn(e, !!c && !c.closed && c.rows.some(r => r.named), ladder)) {
+  // The crew's reviewer (#45), by its reviewer-<n> name, runs as the lean crew-reviewer whatever type it was asked on.
+  if (started && isReviewerSpawn(e)) {
     const forced = isReviewerType(e.subagentType) ? e : { ...e, subagentType: `${AGENT_PREFIX}${REVIEWER_TYPE}` }
     return { e: crewModelOf(forced), step: { rung: REVIEWER_TYPE }, restore: () => undefined }
   }
