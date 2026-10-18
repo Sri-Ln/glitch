@@ -12,8 +12,16 @@ type Surface = (typeof SURFACES)[number]
 
 type H = { status: Record<string, string>; usd: number; summaries: unknown[]; listCalls: number; frames: number[]; openFails: boolean; contexts: (readonly string[] | undefined)[] }
 
+/** The engine version the harness answers (an Error: the version cannot be read). Read at the pane's first draw. */
+const engine = { version: '2.1.302' as string | Error }
+
 const harness = async ($: Engine, on: On) => {
   toasts = []
+  engine.version = '2.1.302'
+  on('session.version', () => {
+    if (engine.version instanceof Error) throw engine.version
+    return { value: { version: engine.version, base: engine.version } } as never
+  })
   const h: H = { status: {}, usd: 1, summaries: [], listCalls: 0, frames: [], openFails: false, contexts: [] }
   const store: Record<string, unknown> = {}
   on('ui.toast', (_$, e) => {
@@ -119,42 +127,6 @@ const wordsOf = (node: unknown): string => {
   return (n.children ?? []).map(wordsOf).join('')
 }
 const kids = (n: Drawn | undefined) => ((n?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
-
-// ── 1. The accordion header is one press ──
-
-test('desktop: the whole Running/Finished header line is one Button (dot, label, count, bar, chevron), and a press folds it', async ($, on) => {
-  await crew($, on)
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface)
-    if (surface === 'desktop') {
-      for (const kind of ['running', 'finished'] as const) {
-        const box = byKey(await ui.drawn(), `crew-acc-box:${kind}`)
-        // Nothing beside the Button: a click anywhere on the line is the press.
-        expect(kids(box).map(k => k.type)).toEqual(['Button'])
-        const btn = kids(box)[0]
-        expect(btn?.props?.key).toBe(`crew-acc:${kind}`)
-        // Strings and Text only inside a Button.
-        walk(btn, n => {
-          if (n !== btn) expect(n.type).toBe('Text')
-        })
-        const words = wordsOf(btn)
-        expect(words).toContain(kind === 'running' ? 'RUNNING' : 'FINISHED')
-        expect(words).toMatch(/━/)
-        expect(words.endsWith('▾')).toBe(true)
-      }
-      await ui.press({ key: 'crew-acc:running' })
-      expect(wordsOf(byKey(await ui.drawn(), 'crew-acc:running')).endsWith('▸')).toBe(true)
-      expect(await ui.find({ key: `crew-member:${B}` })).toBeFalsy()
-      await ui.press({ key: 'crew-acc:running' })
-      expect(await ui.find({ key: `crew-member:${B}` })).toBeTruthy()
-    } else {
-      expect(await ui.find({ key: 'crew-acc:running' })).toBeFalsy()
-      await ui.press({ key: 'crew-finished' })
-      expect(await ui.find({ key: `crew-line:${C}` })).toBeTruthy()
-    }
-    await ui.unmount()
-  }
-})
 
 // ── 4. A member press opens its transcript, or says why not ──
 
@@ -278,10 +250,13 @@ for (const cols of [28, 34, 40, 60]) {
     await crew($, on)
     const ui = await mountPane($, 'desktop', cols)
     const tree = await ui.drawn()
-    // No Text may wrap onto a second line.
+    // No Text may wrap onto a second line; the header Buttons' words are short and at their natural width (never cut).
+    const headerTexts = new Set<unknown>()
+    for (const kind of ['running', 'finished']) walk(byKey(tree, `crew-acc:${kind}`), n => headerTexts.add(n))
     walk(tree, n => {
-      if (n.type === 'Text') expect(['truncate-end', 'truncate']).toContain(n.props?.wrap)
+      if (n.type === 'Text' && !headerTexts.has(n)) expect(['truncate-end', 'truncate']).toContain(n.props?.wrap)
     })
+    for (const kind of ['running', 'finished']) expect(byKey(byKey(tree, `crew-acc-press:${kind}`), `crew-acc:${kind}`)).toBeTruthy()
     // The header line fits inside its border and padding.
     // ...with 2 cells of slack, so a native button's chrome or a wide glyph never cuts the chevron.
     for (const kind of ['running', 'finished']) {
@@ -471,27 +446,6 @@ test('the pane frame clock is floored at 250 ms on a rich surface (at most 4 fra
   }
 })
 
-test('a very narrow header cuts its label, never its chevron; the terminal has no such header', async ($, on) => {
-  await crew($, on)
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface, 18)
-    const tree = await ui.drawn()
-    if (surface === 'desktop') {
-      for (const kind of ['running', 'finished'] as const) {
-        const words = wordsOf(byKey(tree, `crew-acc:${kind}`))
-        expect(words.length).toBeLessThanOrEqual(18 - 6)
-        expect(words.endsWith(' ▾')).toBe(true)
-        // The label gives way first; the count and the chevron stay.
-        if (kind === 'running') expect(words).toMatch(/RUN.*… 1 ▾$/)
-      }
-    } else {
-      expect(byKey(tree, 'crew-acc:running')).toBeUndefined()
-      expect(JSON.stringify(byKey(tree, 'crew-head'))).toContain('truncate')
-    }
-    await ui.unmount()
-  }
-})
-
 test('a status change in a fresh crew publishes its own cost, never the last crew\'s cached one; pane and pill agree', async ($, on) => {
   const { h, clock } = await harness($, on)
   await $.turn.start({ turnId: 'm1' } as never)
@@ -583,4 +537,284 @@ test('a woken reviewer that ends again does not repeat the crewDone remark', { o
   h.status['ag-R'] = 'completed'
   await agentEnd($, 'ag-R')
   expect(said()).toBe(1)
+})
+
+// ── Round 2 of the live check (#45): the header, the per-member hop, Open where supported, the name once ──
+
+/** The header's Button: only short Text, its words natural (never cut) and its chevron last. */
+const headerButton = (tree: unknown, kind: 'running' | 'finished') => byKey(tree, `crew-acc:${kind}`)
+
+test('desktop header: a Button holding only short Text ("● RUNNING n ▾"), never cut, and the colored bar as an Svg beside it, outside the Button', async ($, on) => {
+  await crew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const tree = await ui.drawn()
+    if (surface === 'desktop') {
+      for (const kind of ['running', 'finished'] as const) {
+        const btn = headerButton(tree, kind)
+        expect(btn?.type).toBe('Button')
+        walk(btn, n => {
+          if (n !== btn) expect(n.type).toBe('Text')
+        })
+        const words = wordsOf(btn)
+        expect(words).toBe(kind === 'running' ? '● RUNNING 1 ▾' : 'FINISHED 2 ▾')
+        expect(words).not.toContain('…')
+        expect(words).not.toMatch(/━/)
+        // The bar: an Svg in the header box, not inside the Button, growing into the room left.
+        const bar = byKey(tree, `crew-acc-bar:${kind}`)
+        expect(bar).toBeTruthy()
+        expect(bar?.props?.flexGrow).toBe(1)
+        let svgInButton = false
+        walk(btn, n => {
+          svgInButton ||= n.type === 'Svg'
+        })
+        expect(svgInButton).toBe(false)
+        let svg: Drawn | undefined
+        walk(bar, n => {
+          svg ??= n.type === 'Svg' ? n : undefined
+        })
+        const src = String(svg?.props?.source)
+        expect(src).toContain(kind === 'running' ? '#2f7cf6' : '#1f9d55')
+        expect(Number(svg?.props?.width)).toBeGreaterThan(0)
+      }
+      // Toggling still works and the chevron stays visible.
+      await ui.press({ key: 'crew-acc:running' })
+      expect(wordsOf(headerButton(await ui.drawn(), 'running'))).toBe('● RUNNING 1 ▸')
+      expect(await ui.find({ key: `crew-member:${B}` })).toBeFalsy()
+      await ui.press({ key: 'crew-acc:running' })
+      expect(await ui.find({ key: `crew-member:${B}` })).toBeTruthy()
+    } else {
+      expect(headerButton(tree, 'running')).toBeUndefined()
+      expect(byKey(tree, 'crew-acc-bar:running')).toBeUndefined()
+      expect(byKey(tree, 'crew-head')).toBeTruthy()
+    }
+    await ui.unmount()
+  }
+})
+
+test('a very narrow pane shortens the header words ("RUN 1 ▾"), drops the bar before cutting anything, and keeps the chevron', async ($, on) => {
+  await crew($, on)
+  for (const surface of SURFACES) {
+    for (const cols of [14, 18, 22]) {
+      const ui = await mountPane($, surface, cols)
+      const tree = await ui.drawn()
+      if (surface === 'desktop') {
+        for (const kind of ['running', 'finished'] as const) {
+          const words = wordsOf(headerButton(tree, kind))
+          expect(words).not.toContain('…')
+          expect(words.endsWith(' ▾')).toBe(true)
+          expect(['● RUNNING 1 ▾', '● RUN 1 ▾', 'RUN 1 ▾', 'FINISHED 2 ▾', 'FIN 2 ▾']).toContain(words)
+          // The words and a bar never ask for more than the header's room (border and padding: 4 cells).
+          const bar = byKey(tree, `crew-acc-bar:${kind}`)
+          let w = 0
+          walk(bar, n => {
+            w = n.type === 'Svg' ? Number(n.props?.width) : w
+          })
+          expect(Array.from(words).length + 2 + (bar ? 1 + Math.ceil(w / 7) : 0)).toBeLessThanOrEqual(cols - 4)
+        }
+        if (cols === 14) expect(wordsOf(headerButton(tree, 'running'))).toBe('RUN 1 ▾')
+        if (cols === 18) expect(wordsOf(headerButton(tree, 'running'))).toBe('● RUN 1 ▾')
+      } else expect(headerButton(tree, 'running')).toBeUndefined()
+      await ui.unmount()
+    }
+  }
+})
+
+const minisOf = (tree: unknown) => {
+  const out: Record<string, { alt: string; source: string; width: number; height: number }> = {}
+  walk(tree, n => {
+    const key = String(n.props?.key ?? '')
+    if (!key.startsWith('crew-mini:')) return
+    walk(n, s => {
+      if (s.type === 'Svg') out[key.slice('crew-mini:'.length)] = { alt: String(s.props?.alt), source: String(s.props?.source), width: Number(s.props?.width), height: Number(s.props?.height) }
+    })
+  })
+  return out
+}
+
+test('no fishing rod, line or gift any more: no overlay, no gift badge, the lead keeps its own sprite', async ($, on) => {
+  const { clock } = await crew($, on)
+  for (const at of [0, 300, 2000, 5000]) {
+    await clock.advance(at)
+    for (const surface of SURFACES) {
+      const ui = await mountPane($, surface)
+      const text = JSON.stringify(await ui.drawn())
+      expect(text).not.toContain('crew-reward')
+      expect(text).not.toContain('crew-badge')
+      expect(text).not.toContain('a gift from')
+      expect(text).not.toContain('data-moment')
+      if (surface === 'desktop') expect(kids(byKey(await ui.drawn(), 'crew-lead-sprite')).length).toBeGreaterThan(0)
+      await ui.unmount()
+    }
+  }
+})
+
+test('every member that finishes hops with a sparkle on its own mini for about 1.5 s, concurrent finishes each their own; the lead is pleased; the terminal draws none', async ($, on) => {
+  const { h, clock } = await harness($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawn($, 'One', 'builder-1')
+  await spawn($, 'Two', 'builder-2')
+  await spawn($, 'Three', 'builder-3')
+  await spawn($, 'Four', 'tester-1')
+  await clock.advance(1000)
+  const ui = await mountPane($, 'desktop')
+  const term = await mountPane($, 'terminal')
+  // Two finish at once, a third 800 ms later.
+  h.status['ag-One'] = 'completed'
+  h.status['ag-Two'] = 'completed'
+  await agentEnd($, 'ag-One')
+  await agentEnd($, 'ag-Two')
+  let minis = minisOf(await ui.drawn())
+  for (const id of ['ag-One', 'ag-Two']) {
+    expect(minis[id]?.alt).toMatch(/happy/)
+    expect(minis[id]?.source).toContain('data-part="sparkle"')
+  }
+  // The ones still at work do not hop.
+  for (const id of ['ag-Three', 'ag-Four']) {
+    expect(minis[id]?.alt).not.toMatch(/happy/)
+    expect(minis[id]?.source).not.toContain('sparkle')
+  }
+  // The hop's frames change over its time, each in its member's own box (same size as its mini).
+  const first = minis['ag-One']
+  await clock.advance(400)
+  minis = minisOf(await ui.drawn())
+  // The lead's flourish (pleased, from the next tick) plays.
+  let leadAlt = ''
+  walk(byKey(await ui.drawn(), 'crew-lead-sprite'), n => {
+    leadAlt = n.type === 'Svg' ? String(n.props?.alt) : leadAlt
+  })
+  expect(leadAlt).toMatch(/pleased/)
+  expect(minis['ag-One']?.source).not.toBe(first?.source)
+  expect([minis['ag-One']?.width, minis['ag-One']?.height]).toEqual([first?.width, first?.height])
+  // The third finishes while the first two still hop: it gets its own.
+  await clock.advance(400)
+  h.status['ag-Three'] = 'completed'
+  await agentEnd($, 'ag-Three')
+  minis = minisOf(await ui.drawn())
+  for (const id of ['ag-One', 'ag-Two', 'ag-Three']) expect(minis[id]?.source).toContain('data-part="sparkle"')
+  // Well past 1.5 s the first two are still again; the third is still hopping.
+  await clock.advance(1050)
+  minis = minisOf(await ui.drawn())
+  expect(minis['ag-One']?.alt).not.toMatch(/happy/)
+  expect(minis['ag-Two']?.source).not.toContain('sparkle')
+  expect(minis['ag-Three']?.alt).toMatch(/happy/)
+  await clock.advance(800)
+  minis = minisOf(await ui.drawn())
+  expect(minis['ag-Three']?.alt).not.toMatch(/happy/)
+  // The terminal has no sprites at all.
+  expect(JSON.stringify(await term.drawn())).not.toContain('"Svg"')
+  await ui.unmount()
+  await term.unmount()
+})
+
+test('the hop drives the frame clock while it plays, then the clock stops; the hats theme keeps its look and size', async ($, on) => {
+  const { h, clock } = await harness($, on)
+  await $.command.run({ command: 'glitch', args: 'crew theme hats' } as never)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawn($, 'Only', 'builder-1')
+  const ui = await mountPane($, 'desktop')
+  const still = minisOf(await ui.drawn())['ag-Only']
+  h.status['ag-Only'] = 'completed'
+  await agentEnd($, 'ag-Only')
+  h.frames.length = 0
+  await clock.advance(1500)
+  // Redraws during the hop, at most 4 a second.
+  expect(h.frames.length).toBeGreaterThanOrEqual(3)
+  expect(h.frames.length).toBeLessThanOrEqual(7)
+  await clock.advance(100)
+  expect(minisOf(await ui.drawn())['ag-Only']?.alt).not.toMatch(/happy/)
+  // Once the lead's flourish (its brief joy) is over too, nothing is due: the clock stops.
+  await clock.advance(1500)
+  h.frames.length = 0
+  await clock.advance(3000)
+  expect(h.frames).toEqual([])
+  await ui.unmount()
+  // A fresh finish under hats: the hopping mini keeps the theme's 32 × 32 (the hat stays on).
+  await spawn($, 'Next', 'builder-2')
+  const ui2 = await mountPane($, 'desktop')
+  h.status['ag-Next'] = 'completed'
+  await agentEnd($, 'ag-Next')
+  const hop = minisOf(await ui2.drawn())['ag-Next']
+  expect(hop?.alt).toMatch(/happy/)
+  expect([hop?.width, hop?.height]).toEqual([still?.width, still?.height])
+  expect([hop?.width, hop?.height]).toEqual([32, 32])
+  await ui2.unmount()
+})
+
+// ── 3/4. Open ↗ only where the engine has $.ui.view; a 2-cell gap before it ──
+
+test('an engine that predates $.ui.view: no Open ↗, the name is plain Text (no Button), and no view is ever asked, on both surfaces', async ($, on) => {
+  let views = 0
+  on('ui.view', () => {
+    views += 1
+    return { value: {} } as never
+  })
+  await crew($, on)
+  engine.version = '2.1.296'
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const tree = await ui.drawn()
+    expect(byKey(tree, `crew-open:${B}`)).toBeUndefined()
+    expect(JSON.stringify(tree)).not.toContain('Open')
+    expect(JSON.stringify(tree)).not.toContain('↗')
+    const holder = byKey(tree, surface === 'desktop' ? `crew-title:${B}` : `crew-line:${B}`)
+    expect(wordsOf(holder)).toContain('researcher-1')
+    let buttons = 0
+    walk(holder, n => {
+      buttons += n.type === 'Button' ? 1 : 0
+    })
+    expect(buttons).toBe(0)
+    await ui.unmount()
+  }
+  expect(views).toBe(0)
+})
+
+test('an engine whose version cannot be read is treated as one without $.ui.view', async ($, on) => {
+  await crew($, on)
+  engine.version = new Error('no such op')
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    expect(byKey(await ui.drawn(), `crew-open:${B}`)).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('with $.ui.view: the name Button keeps "Open ↗" two cells after the name (non-breaking, so the desktop keeps the gap)', async ($, on) => {
+  await crew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const btn = byKey(await ui.drawn(), `crew-open:${B}`)
+    expect(btn?.type).toBe('Button')
+    if (surface === 'desktop') expect(wordsOf(btn)).toBe('researcher-1  Open ↗')
+    else expect(wordsOf(btn)).toBe('researcher-1')
+    await ui.unmount()
+  }
+})
+
+// ── 5. The name once, the task below ──
+
+test('a member shows its name once with its task below: a description that only repeats the role or name gives way to the task from the prompt', async ($, on) => {
+  await harness($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-r', prompt: 'Find the date formats our users type most often.\nList the top five with examples.', description: 'researcher', subagentType: 'general-purpose', name: 'researcher-1' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-u', prompt: 'p', description: 'Look up the parser options', subagentType: 'general-purpose' } as never)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, surface === 'desktop' ? 40 : 100)
+    const tree = await ui.drawn()
+    if (surface === 'desktop') {
+      expect(wordsOf(byKey(tree, 'crew-title:ag-researcher'))).toMatch(/^researcher-1/)
+      expect(wordsOf(byKey(tree, 'crew-task:ag-researcher'))).toMatch(/^Find the date formats/)
+      // The unnamed one: its role word as its name, its task below.
+      expect(wordsOf(byKey(tree, 'crew-title:ag-Look up the parser options'))).toMatch(/^researcher/)
+      expect(wordsOf(byKey(tree, 'crew-task:ag-Look up the parser options'))).toBe('Look up the parser options')
+    } else {
+      const line = wordsOf(byKey(tree, 'crew-line:ag-researcher'))
+      expect(line).toContain('researcher-1')
+      expect(line).toContain('Find the date formats')
+      // "researcher" appears only inside the name.
+      expect(line.split('researcher').length - 1).toBe(1)
+      expect(wordsOf(byKey(tree, 'crew-line:ag-Look up the parser options'))).toContain('Look up the parser options')
+    }
+    await ui.unmount()
+  }
 })

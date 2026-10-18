@@ -3,15 +3,15 @@ import type { AgentInfo, EngineInterface, Register } from 'claude-code'
 
 import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
-import { INITIAL_CREW, crewSummaryOf, elapsedOf, helpersRunning, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, shares, stepsOf } from './behavior/crew'
+import { INITIAL_CREW, crewSummaryOf, elapsedOf, helpersRunning, memberName, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, shares, stepsOf } from './behavior/crew'
 import type { CrewState, CrewSummary } from './behavior/crew'
 import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
 import { leadStatus } from './behavior/lead-status'
 import { isCapReached } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
 import { createPlayer, frameIndex } from './behavior/player'
-import { REWARD_MS, crewName, hasGift, rewardAt } from './behavior/reactions'
-import { rewardBadge, rewardFrame, rewardFrameTimes, rewardTimeline } from './behavior/reward'
+import { UI_VIEW_SINCE, isMissingCall, versionAtLeast } from './behavior/engine-support'
+import { isHopping, nextSparkIn, withSparkle } from './behavior/sparkle'
 import { STORE_STREAK, advance, asStreak } from './behavior/streak'
 import { AGENT_PREFIX, REVIEWER_TYPE, agentSpecs, claimStepUp, isReviewerName, isReviewerSpawn, isReviewerType, ladderOf, reviewerSpec, rungOfType, stepUpNote, stepUpsFor } from './behavior/tiers'
 import type { CrewTiers, Rung, StepUp } from './behavior/tiers'
@@ -22,7 +22,7 @@ import type { VoiceState } from './behavior/voice'
 import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petArgsOf, petList } from './commands'
 import { parsePetsConfig } from './config'
 import type { PetsConfig } from './config'
-import { DESKTOP_CELL, MINI_PIXEL, crewTree, rewardGeometry } from './pane'
+import { DESKTOP_CELL, MINI_PIXEL, crewTree } from './pane'
 import type { CrewGroup, CrewMember, CrewView } from './pane'
 import { PERSONAS } from './personas/index'
 import { onCrewChange, onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
@@ -42,14 +42,12 @@ export const crew = atom({ plugin: 'glitch-pets', key: 'crew' } as const, INITIA
 export const crewOpen = atom({ plugin: 'glitch-pets', key: 'crewOpen' } as const, {} as Record<string, boolean>)
 /** What glitch-hud's crew pill shows; null while no crew is open or recent. */
 export const crewSummary = atom({ plugin: 'glitch-pets', key: 'crewSummary' } as const, null as CrewSummary | null)
-/** The crew pane's frame clock: touched (from the 100 ms tick) when a mini or the reward next changes, so the pane redraws then. */
+/** The crew pane's frame clock: touched (from the 100 ms tick) when a mini (running, or hopping after its finish) next changes, so the pane redraws then. */
 export const paneFrame = atom({ plugin: 'glitch-pets', key: 'paneFrame' } as const, 0)
 
 const PANE = 'glitch-crew'
 /** The lead draws at 3× (48 × 39), clearly larger than the crew's 2× minis. */
 const LEAD_PIXEL = 3
-/** A reward moment first drawn later than this after it started shows only its badge (it would start part-way through). */
-const FIRST_SHOW_MS = 300
 /**
  * The room the pane asks for, by where it will show: a narrow dock (about 300 px) and
  * room inline for the lead and about three members on the rich surfaces; a dock wide
@@ -90,9 +88,13 @@ let crewDoneSaidFor = new Set<string>()
 let paneShown = false
 /** Per surface: when the pane's drawing next changes (clock ms), from its last draw. */
 const frameDue = new Map<string, number>()
-/** Per surface and reward moment: whether its overlay is shown (decided at its first draw). */
-type Shown = { show: false } | { show: true; sig: string; geo: NonNullable<ReturnType<typeof rewardGeometry>> }
-const rewardShown = new Map<string, Shown>()
+/**
+ * Whether this engine has `$.ui.view` (a member's "Open ↗"): null until asked. A hooks module may
+ * only call `$` (never read `$.ui.view` as a value), so it is known from the engine's version: 2.1.296's
+ * API has no view, 2.1.302's has. An unreadable version counts as none; a view call that turns out not
+ * to exist (not a function) sets it false too.
+ */
+let uiViewSupport: boolean | null = null
 /** The crew's cost as of a crew state: a frame-only redraw reads no usage. */
 let costCache: { sig: string; crewKey: string; cost: number; at: number } | null = null
 /** How long a read of the crew's cost stands (the pill's 1 s cadence). */
@@ -178,7 +180,7 @@ async function changeCrew($: EngineInterface, now: number, fn: (c: CrewState) =>
   await update($, crew, fn)
   const c = await read($, crew)
   queueStepUps(before.rows, c.rows)
-  // The lead reacts: a member done is a brief joy and a reward, one failed a worry (behavior/reactions.ts).
+  // The lead reacts: a member done is a brief joy (its own mini hops in the pane), one failed a worry (behavior/reactions.ts).
   await update($, mood, m => onCrewChange(m, before, c, now))
   // The HUD pill follows the pane now, not at the next 1 s tick.
   await publishSummary($, true).catch(() => undefined)
@@ -204,20 +206,56 @@ async function answerCrewDebug($: EngineInterface): Promise<string> {
   } catch (err) {
     listError = err instanceof Error ? err.message : String(err)
   }
-  const surfaces: readonly string[] = await $.session.surfaces().catch(() => [])
-  const panes = (await $.ui.panes().catch(() => [])).map(p => p.id)
+  const surfaces = await surfacesOf($)
+  const panes = (await panesOf($)).map(p => p.id)
   return crewDebugText({ now, crew: c, list: debug.list, listError, freshList, presses: debug.presses, views: debug.views, draws: debug.draws, surfaces, panes })
+}
+
+// Calls an older engine may lack are asked inside try (a missing one throws before any `.catch`):
+// an empty answer stands in for it.
+async function panesOf($: EngineInterface): Promise<readonly { id: string }[]> {
+  try {
+    return await $.ui.panes()
+  } catch {
+    return []
+  }
+}
+async function surfacesOf($: EngineInterface): Promise<readonly string[]> {
+  try {
+    return await $.session.surfaces()
+  } catch {
+    return []
+  }
+}
+async function usdOf($: EngineInterface): Promise<number | null> {
+  try {
+    return (await $.session.usage())?.cost?.usd ?? null
+  } catch {
+    return null
+  }
+}
+/** Whether this engine has `$.ui.view`, from its version (asked once per load). */
+async function hasUiView($: EngineInterface): Promise<boolean> {
+  if (uiViewSupport !== null) return uiViewSupport
+  try {
+    const v = await $.session.version()
+    uiViewSupport = versionAtLeast(v.base ?? v.version, UI_VIEW_SINCE)
+  } catch {
+    // Asked again at the next draw; until then no Open.
+    return false
+  }
+  return uiViewSupport
 }
 
 // With no surface named (auto-open), a session the desktop or a phone draws gets the
 // narrow dock; a terminal-only one the wide dock.
 async function sessionSize($: EngineInterface): Promise<PaneSize> {
-  const surfaces = await $.session.surfaces().catch(() => [] as const)
+  const surfaces = await surfacesOf($)
   return surfaces.some(s => s !== 'terminal') ? PANE_SIZE.rich : PANE_SIZE.terminal
 }
 
 async function toggleCrew($: EngineInterface, size: PaneSize): Promise<string> {
-  const isOpen = (await $.ui.panes().catch(() => [])).some(x => x.id === PANE)
+  const isOpen = (await panesOf($)).some(x => x.id === PANE)
   if (isOpen) {
     paneClosed()
     await $.ui.close({ id: PANE })
@@ -230,8 +268,6 @@ async function toggleCrew($: EngineInterface, size: PaneSize): Promise<string> {
 function paneClosed() {
   paneShown = false
   frameDue.clear()
-  // A moment shown before the close is not picked up again late: reopened, the gift is a badge.
-  rewardShown.clear()
 }
 
 /**
@@ -242,7 +278,7 @@ function paneClosed() {
 async function commandSize($: EngineInterface, e: { origin?: { kind: string }; presentation?: { isFullscreen?: boolean; columns?: number } }): Promise<PaneSize> {
   const fullscreen = e.presentation?.isFullscreen === true
   if (e.origin?.kind === 'composer') {
-    const surfaces: readonly string[] = await $.session.surfaces().catch(() => [])
+    const surfaces = await surfacesOf($)
     const atTerminal = fullscreen || surfaces.includes('terminal')
     const cols = e.presentation?.columns
     if (atTerminal) return fullscreen && typeof cols === 'number' && cols > 0 ? { columns: Math.max(DOCK_COLUMNS.min, Math.min(DOCK_COLUMNS.max, Math.floor(cols / 2))), rows: PANE_SIZE.terminal.rows } : PANE_SIZE.terminal
@@ -252,7 +288,7 @@ async function commandSize($: EngineInterface, e: { origin?: { kind: string }; p
 
 // The crew's share of the session cost: one source for the pane and the HUD pill.
 async function crewCostOf($: EngineInterface, c: CrewState): Promise<number> {
-  const usdNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? c.costAtStart
+  const usdNow = (await usdOf($)) ?? c.costAtStart
   return Math.max(0, usdNow - c.costAtStart)
 }
 
@@ -273,7 +309,7 @@ async function publishSummary($: EngineInterface, keepCost = false) {
 }
 
 /**
- * The receiver's mini while it is happy: its crew theme's frame drawn from the pet's happy loop
+ * A finished member's mini while it hops: its crew theme's frame drawn from the pet's happy loop
  * (the theme's own size, hat or hands kept), so it neither jumps nor loses its look.
  */
 function happyMini(p: Persona, theme: string, row: CrewState['rows'][number], elapsedMs: number, now: number): Sprite {
@@ -329,7 +365,7 @@ async function tick($: EngineInterface) {
     await refreshCrew($)
     await publishSummary($)
   }
-  // The pane's frame clock: while it is open and a mini (or the reward) is due to change.
+  // The pane's frame clock: while it is open and a mini (or the lead's flourish) is due to change.
   if (paneShown && frameDue.size > 0 && now >= Math.min(...frameDue.values())) {
     frameDue.clear()
     await update($, paneFrame, () => now)
@@ -588,7 +624,7 @@ export const register: Register = (on, options) => {
   reminderInFlight = false
   paneShown = false
   frameDue.clear()
-  rewardShown.clear()
+  uiViewSupport = null
   costCache = null
   debug = freshDebug()
 
@@ -764,14 +800,14 @@ export const register: Register = (on, options) => {
     const agentId = r.agentId
     try {
       const now = await $.clock.now()
-      const costNow = (await $.session.usage().catch(() => null))?.cost?.usd ?? 0
+      const costNow = (await usdOf($)) ?? 0
       // Decided inside the update, so two spawns at once cannot both start a crew.
       let fresh = false
       await update($, crew, c => {
         fresh = c.closed
-        return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, model: r.model, now, costNow, ...pre.step })
+        return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, prompt: e.prompt, model: r.model, now, costNow, ...pre.step })
       })
-      if (fresh && config.crewPane === 'auto' && !(await $.ui.panes().catch(() => [])).some(x => x.id === PANE)) {
+      if (fresh && config.crewPane === 'auto' && !(await panesOf($)).some(x => x.id === PANE)) {
         const size = await sessionSize($)
         await $.ui.open({ id: PANE, title: 'Crew', columns: size.columns, rows: size.rows }).catch(() => undefined)
       }
@@ -817,68 +853,39 @@ export const register: Register = (on, options) => {
       const isTerminal = e.surface === 'terminal'
       const o = await read($, crewOpen)
       const theme = pv.crewTheme ?? config.crewTheme
-      // When the drawing next changes: a running mini's next beat, the reward's beats.
+      // When the drawing next changes: a running mini's next beat, a hopping one's next frame or sparkle.
       const due: number[] = []
       const rows: CrewMember[] = c.rows.map(row => {
-        const mini = p && !isTerminal ? crewMini(theme, { persona: p, role: row.role, model: row.model, effort: row.effort, status: row.status, elapsedMs: (row.endedAt ?? now) - row.startedAt }, MINI_PIXEL) : null
+        let mini = p && !isTerminal ? crewMini(theme, { persona: p, role: row.role, model: row.model, effort: row.effort, status: row.status, elapsedMs: (row.endedAt ?? now) - row.startedAt }, MINI_PIXEL) : null
         if (row.status === 'running' && mini?.nextChangeMs !== undefined) due.push(now + mini.nextChangeMs)
-        return { row, mini, badge: null, cost: cost[row.id] ?? 0, steps: stepsOf(row, c.rows) }
+        // A member that just finished hops with a sparkle on its own mini (each its own, at once).
+        if (p && mini && isHopping(row, now)) {
+          const since = now - (row.endedAt as number)
+          mini = withSparkle(happyMini(p, theme, row, since, now), p.palette, since)
+          const spark = nextSparkIn(since)
+          due.push(now + Math.min(nextFrameIn(p.moods.happy, since), spark ?? Infinity))
+        }
+        return { row, mini, cost: cost[row.id] ?? 0, steps: stepsOf(row, c.rows) }
       })
       const themeColumns = (CREW_THEMES[theme] ?? CREW_THEMES[DEFAULT_CREW_THEME])?.size.columns ?? 16
+      // An engine that sends no bodyColumns: the size the pane asked for.
+      const bodyColumns = typeof e.props.bodyColumns === 'number' && e.props.bodyColumns > 0 ? e.props.bodyColumns : isTerminal ? PANE_SIZE.terminal.columns : PANE_SIZE.rich.columns
       const v: CrewView = {
         lead: { name: p?.name ?? 'Lead', status: leadStatus(p, c, m.reactions, now), sprite: p ? player.sprite(p, m.mood, now - m.since, LEAD_PIXEL) : null },
         rows,
         header: { cost: crewCost, tokens: c.rows.reduce((t, r) => t + r.tokens, 0), elapsedMs: elapsedOf(c, now) },
         isTerminal,
         now,
-        bodyColumns: e.props.bodyColumns,
+        bodyColumns,
         open: { running: isOpenIn(o, c, 'running', isTerminal), finished: isOpenIn(o, c, 'finished', isTerminal) },
         miniColumns: p ? Math.ceil((themeColumns * MINI_PIXEL) / DESKTOP_CELL.width) : 0,
-        reward: null,
       }
-      // The reward moment (desktop): its overlay from the lead down to the receiver's row,
-      // if its first draw comes in time and the row is drawn; else the gift is a badge at once.
-      const w = p && !isTerminal ? rewardAt(m.reactions, now) : null
-      let playing: string | null = null
-      if (p && w) {
-        // The next moment may start when this one's slot ends.
-        due.push(w.startedAt + REWARD_MS)
-        // Whether it shows is decided at the moment's first draw, and its geometry kept from then;
-        // each redraw draws that time's static frame in the same box (rewardFrame), and the frame
-        // clock comes back at the next change (rewardFrameTimes). If the receiver's row moves, the
-        // frames would miss it: the gift becomes the badge instead.
-        const key = `${e.surface}|${w.rowId}|${w.startedAt}`
-        const geo = rewardGeometry(v, w.rowId)
-        const sig = geo ? JSON.stringify([geo.receiverIndex, geo.rowTop(geo.receiverIndex), geo.leadBox, geo.mini]) : null
-        let shown = rewardShown.get(key)
-        if (shown === undefined) {
-          shown = geo && sig && now - w.startedAt < FIRST_SHOW_MS ? { show: true, sig, geo } : { show: false }
-          if (rewardShown.size > 64) rewardShown.clear()
-          rewardShown.set(key, shown)
-        } else if (shown.show && shown.sig !== sig) {
-          shown = { show: false }
-          rewardShown.set(key, shown)
-        }
-        const receiver = rows.find(x => x.row.id === w.rowId)
-        const since = now - w.startedAt
-        const frame = shown.show && receiver ? rewardFrame({ persona: p, ...shown.geo, startedAt: w.startedAt, t: since, reducedMotion: false }) : null
-        if (shown.show && receiver && frame) {
-          playing = w.rowId
-          v.reward = { ...frame, alt: `${p.name} lowers a gift to ${crewName(receiver.row)}` }
-          const pleased = p.moods.pleased
-          const nextAt = rewardFrameTimes(shown.geo.receiverIndex, since, false, { frames: pleased.frames.length, fps: pleased.fps })
-          if (nextAt !== null) due.push(w.startedAt + nextAt)
-          // From the gift's release to the moment's end the receiver is happy (it hops), in its own look.
-          const t = rewardTimeline(shown.geo.receiverIndex)
-          if (since >= t.release && since < t.end) {
-            receiver.mini = happyMini(p, theme, receiver.row, since - t.release, now)
-            due.push(now + nextFrameIn(p.moods.happy, since - t.release), w.startedAt + t.end)
-          }
-        }
-      }
-      if (p && !isTerminal) for (const x of rows) if (x.row.id !== playing && (hasGift(m.reactions, x.row.id, now) || x.row.id === w?.rowId)) x.badge = rewardBadge(p, MINI_PIXEL)
+      // The lead's flourish (pleased) after a finish is its mood: its next frame redraws the pane too.
+      if (p && !isTerminal && m.mood === 'pleased') due.push(now + nextFrameIn(p.moods.pleased, now - m.since))
+      // Open ↗ only where the engine can show a transcript.
+      const canView = await hasUiView($)
       // Floored on a rich surface: at most FRAME_FLOOR_MS apart, so a press never races a redraw every
-      // tick (the minis and the reward frames are computed from the time, so coarser steps stay right).
+      // tick (the minis and the hops are computed from the time, so coarser steps stay right).
       if (due.length) frameDue.set(e.surface, Math.max(Math.min(...due), isTerminal ? 0 : now + FRAME_FLOOR_MS))
       else frameDue.delete(e.surface)
       // For /glitch crew debug: the view this surface draws under, and when it drew.
@@ -910,7 +917,7 @@ export const register: Register = (on, options) => {
       // call, while the press is the person's own input; whatever comes of it is said.
       const show = async (agentId: string) => {
         const row = c.rows.find(r => r.id === agentId)
-        const who = row ? (row.name ?? row.role) : 'that crew member'
+        const who = row ? memberName(row) : 'that crew member'
         let answer: { deny?: string } | 'late' | { error: string }
         let timer: { cancel: () => void } | null = null
         try {
@@ -921,12 +928,21 @@ export const register: Register = (on, options) => {
           })
         } catch (err) {
           answer = { error: err instanceof Error ? err.message : String(err) }
+          // The engine has no view after all (its version said otherwise): no Open from now on.
+          if (isMissingCall(err, 'ui.view')) {
+            uiViewSupport = false
+            answer = { missing: true } as never
+          }
         } finally {
           ;(timer as { cancel: () => void } | null)?.cancel()
         }
         let text: string | null
         let result: string
-        if (answer === 'late') {
+        if (answer !== 'late' && 'missing' in answer) {
+          result = 'failed: this engine has no ui.view'
+          text = `this app cannot open ${who}'s transcript from the pane. Open it from the tasks list (background tasks).`
+          await update($, paneFrame, () => now + 1).catch(() => undefined)
+        } else if (answer === 'late') {
           result = `no answer within ${VIEW_WAIT_MS / 1000} s`
           text = `the app did not switch to ${who}'s transcript (no answer). Open it from the tasks list (background tasks).`
         } else if ('error' in answer) {
@@ -947,7 +963,7 @@ export const register: Register = (on, options) => {
         recordPress({ at: await $.clock.now().catch(() => now), surface, element: `crew-open:${agentId}`, result })
         if (text) $.ui.toast(`Glitch pets: ${text}`, { timeoutMs: 8000 })
       }
-      return crewTree(v, { Box, Text, Button, Svg: 'Svg' in ui ? ui.Svg : null } as never, { toggle, view: show })
+      return crewTree(v, { Box, Text, Button, Svg: 'Svg' in ui ? ui.Svg : null } as never, { toggle, view: canView ? show : null })
     } catch {
       return next(e)
     }

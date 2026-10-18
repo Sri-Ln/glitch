@@ -3,8 +3,8 @@ import { expect, test } from 'claude-code/testing'
 import { INITIAL_CREW } from './crew'
 import type { CrewRow, CrewState } from './crew'
 import {
-  INITIAL_REACTIONS, INVESTIGATE_MS, JOY_MS, MIN_REACTION_MS, REWARD_MS, WORRY_MS,
-  applyCrewEvents, crewEvents, crewName, hasGift, reactionAt, reactionMoodInputs, rewardAt,
+  INITIAL_REACTIONS, INVESTIGATE_MS, JOY_MS, MIN_REACTION_MS, WORRY_MS,
+  applyCrewEvents, crewEvents, crewName, reactionAt, reactionMoodInputs,
 } from './reactions'
 import type { CrewEvent, Reactions } from './reactions'
 
@@ -83,32 +83,8 @@ test('investigating: after the worry, while helpers still run, for at most 45 s 
   expect(reactionMoodInputs(r, crewOf(row('n1')), T + 10).investigateUntil).toBe(0)
 })
 
-test('reward: each finish gets the fishing-rod moment, one at a time, the latest waiting', () => {
-  let r = apply(INITIAL_REACTIONS, done('b1', T))
-  expect(rewardAt(r, T + 10)).toEqual({ rowId: 'b1', startedAt: T })
-  r = apply(r, done('b2', T + 1000), done('b3', T + 2000))
-  // b3 replaced b2 in the waiting slot: b2 gets its gift without the show.
-  expect(rewardAt(r, T + REWARD_MS - 1)?.rowId).toBe('b1')
-  expect(rewardAt(r, T + REWARD_MS)).toEqual({ rowId: 'b3', startedAt: T + REWARD_MS })
-  expect(rewardAt(r, T + 2 * REWARD_MS)).toBe(null)
-  // A failure is no reward.
-  expect(rewardAt(apply(INITIAL_REACTIONS, failed('x', T)), T)).toBe(null)
-})
-
-test('gift badges: kept by a finished row once its moment is over, never before', () => {
-  const r = apply(INITIAL_REACTIONS, done('b1', T), done('b2', T + 1000), done('b3', T + 2000))
-  expect(hasGift(r, 'b1', T + 10)).toBe(false)
-  expect(hasGift(r, 'b2', T + 1000)).toBe(true)
-  expect(hasGift(r, 'b3', T + 2000)).toBe(false)
-  expect(hasGift(r, 'b1', T + REWARD_MS)).toBe(true)
-  expect(hasGift(r, 'b3', T + 2 * REWARD_MS)).toBe(true)
-  expect(hasGift(r, 'nobody', T)).toBe(false)
-  expect(hasGift(apply(INITIAL_REACTIONS, failed('f', T)), 'f', T + 10 * REWARD_MS)).toBe(false)
-})
-
 test('a state from before reactions existed reads as none', () => {
   expect(reactionAt(undefined, T)).toBe(null)
-  expect(rewardAt(undefined, T)).toBe(null)
   expect(reactionMoodInputs(undefined, crewOf(), T)).toEqual({ crewJoyUntil: 0, crewWorryUntil: 0, investigateUntil: 0 })
 })
 

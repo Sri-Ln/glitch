@@ -15,15 +15,6 @@ const good = (): Persona => ({
   hatAnchor: { x: 8, y: 2 },
   laptopPaw: 'a',
   voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['one', 'two', 'three']])) as unknown as Persona['voice'],
-  rod: { hold: { frame: F, tip: { x: 15, y: 1 } }, flick: { frame: F, tip: { x: 15, y: 2 } }, bent: { frame: F, tip: { x: 15, y: 3 } }, stowed: F },
-})
-
-test('the rod needs its three poses and the stowed frame, each a grid frame with a tip inside the grid', () => {
-  const p = good()
-  expect(personaProblems({ ...p, rod: undefined } as unknown as Persona).join()).toContain('rod is missing')
-  expect(personaProblems({ ...p, rod: { ...p.rod, bent: { frame: F, tip: { x: 16, y: 0 } } } }).join()).toContain('rod bent tip')
-  expect(personaProblems({ ...p, rod: { ...p.rod, hold: { frame: F.slice(1), tip: { x: 1, y: 1 } } } }).join()).toContain('rod hold has 12 rows')
-  expect(personaProblems({ ...p, rod: { ...p.rod, stowed: F.map(r => r.replace('aa', 'zz')) } }).join()).toContain('rod stowed row 6 uses "z"')
 })
 
 test('leadStatus wording is optional, but only for known situations and never empty', () => {

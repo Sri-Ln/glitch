@@ -21,11 +21,6 @@ export type Reactions = {
   lastFailAt: number
   failId: string | null
   failWho: string | null
-  /** The fishing-rod reward playing now (one at a time), and the next one waiting (the latest finish wins). */
-  reward: { rowId: string; startedAt: number } | null
-  rewardNext: { rowId: string; at: number } | null
-  /** Rows that finished (id → clock ms): each keeps a gift badge once its reward has played. */
-  gifts: Record<string, number>
 }
 
 export type MoodState = {

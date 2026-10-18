@@ -32,20 +32,6 @@ export function personaProblems(p: Persona, opts: { composed?: boolean } = {}): 
     if (art.frames.length === 0) out.push(`${mood} has no frames`)
     art.frames.forEach((frame, f) => frameProblems(`${mood} frame ${f}`, frame))
   }
-  if (!p.rod) out.push('rod is missing')
-  else {
-    for (const pose of ['hold', 'flick', 'bent'] as const) {
-      const r = p.rod[pose]
-      if (!r?.frame || !r.tip) {
-        out.push(`rod ${pose} is missing`)
-        continue
-      }
-      frameProblems(`rod ${pose}`, r.frame)
-      if (!(r.tip.x >= 0 && r.tip.x < GRID.width && r.tip.y >= 0 && r.tip.y < GRID.height)) out.push(`rod ${pose} tip must be inside the 16 × 13 grid`)
-    }
-    if (!p.rod.stowed) out.push('rod stowed is missing')
-    else frameProblems('rod stowed', p.rod.stowed)
-  }
   for (const [situation, text] of Object.entries(p.leadStatus ?? {})) {
     if (!(LEAD_SITUATIONS as readonly string[]).includes(situation)) out.push(`leadStatus "${situation}" is not a lead situation`)
     const ok = (t: unknown) => typeof t === 'string' && !!t.trim()

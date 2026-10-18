@@ -84,7 +84,7 @@ export function onTurnStartStreak(m: MoodState, r: { cheer: boolean; broken: boo
   return { ...m, ...(r.cheer ? { cheerUntil: now + CHEER_MS } : {}), ...(r.broken ? { cryUntil: now + CRY_MS } : {}) }
 }
 
-/** After the crew's statuses change: members that finished or failed become the lead's reactions (and rewards). */
+/** After the crew's statuses change: members that finished or failed become the lead's reactions. */
 export function onCrewChange(m: MoodState, before: CrewState, after: CrewState, now: number): MoodState {
   const events = crewEvents(before, after, now)
   return events.length ? { ...m, reactions: applyCrewEvents(m.reactions, events) } : m

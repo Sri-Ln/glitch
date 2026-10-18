@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, roleOf, shares, stepsOf, tierOf, tokenWeight } from './crew'
+import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, memberName, memberTask, repeatsName, taskOfPrompt, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, roleOf, shares, stepsOf, tierOf, tokenWeight } from './crew'
 
 test('roleOf reads <role>-<n> names first, then the description', () => {
   expect(roleOf('builder-2', 'whatever')).toBe('builder')
@@ -233,4 +233,24 @@ test('onAgentWake sets an ended row running again (the crew open), counts kept; 
   expect(w.rows[0]?.killed).toBeUndefined()
   expect(w.closed).toBe(false)
   expect(onAgentWake(w, 'a1', 8000)).toBe(w)
+})
+
+test('the name once: a description that only repeats the role or the name gives way to the prompt\'s first sentence (#45 round 2)', () => {
+  expect(repeatsName('researcher', 'researcher-1', 'researcher')).toBe(true)
+  expect(repeatsName('Researcher 1', 'researcher-1', 'researcher')).toBe(true)
+  expect(repeatsName('researcher-1', 'researcher-1', 'researcher')).toBe(true)
+  expect(repeatsName('tester', undefined, 'other')).toBe(true)
+  expect(repeatsName('', 'builder-2', 'builder')).toBe(true)
+  expect(repeatsName('Research date formats', 'researcher-1', 'researcher')).toBe(false)
+  expect(taskOfPrompt('\n  Find the date formats users type most. List the top five.\nMore.')).toBe('Find the date formats users type most.')
+  expect(taskOfPrompt('x'.repeat(200)).length).toBeLessThanOrEqual(80)
+  const s = onSpawn(INITIAL_CREW, { agentId: 'r', name: 'researcher-1', description: 'researcher', prompt: 'Find the formats. Then report.', model: null, now: 1, costNow: 0 })
+  const r = s.rows[0]!
+  expect([memberName(r), memberTask(r)]).toEqual(['researcher-1', 'Find the formats.'])
+  // A real description is kept; an unnamed member is named by its role word, else a short form of its task.
+  const t = onSpawn(s, { agentId: 'u', description: 'Look up the parser options', prompt: 'p', model: null, now: 1, costNow: 0 }).rows[1]!
+  expect([memberName(t), memberTask(t)]).toEqual(['researcher', 'Look up the parser options'])
+  const o = onSpawn(s, { agentId: 'o', description: 'Tidy the changelog entries for the release', prompt: 'p', model: null, now: 1, costNow: 0 }).rows[1]!
+  expect(memberName(o)).toBe('Tidy the changelog…')
+  expect(memberTask(o)).toBe('Tidy the changelog entries for the release')
 })

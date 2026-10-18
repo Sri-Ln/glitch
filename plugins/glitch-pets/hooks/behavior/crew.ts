@@ -13,6 +13,8 @@ export type CrewRow = {
   /** Spawned under a crew name (`<role>-<n>`): only these count for the review reminder. */
   named: boolean
   description: string
+  /** What the pane shows as the task when the description only repeats the role or the name: the prompt's first sentence. */
+  task?: string
   role: Role
   tier: Tier
   model: string | null
@@ -72,6 +74,39 @@ export function roleOf(name: string | undefined, description: string): Role {
   return 'other'
 }
 
+const ROLE_WORD = /^(builder|researcher|designer|tester|reviewer)$/
+const squash = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+/** True when a description says no more than the role or the name ("researcher" for researcher-1). */
+export function repeatsName(description: string, name: string | undefined, role: Role): boolean {
+  const d = squash(description)
+  if (!d || d === role || ROLE_WORD.test(d)) return true
+  return !!name && (d === squash(name) || d === squash(name.replace(/-\d+$/, '')))
+}
+
+/** `text` in about `n` characters: cut at a word in its second half when there is one, with an ellipsis. */
+export function shortOf(text: string, n: number): string {
+  const t = text.trim().replace(/\s+/g, ' ')
+  if (t.length <= n) return t
+  const cut = t.slice(0, n)
+  const space = cut.lastIndexOf(' ')
+  return `${(space >= n / 2 ? cut.slice(0, space) : cut.slice(0, n - 1)).trimEnd()}…`
+}
+
+/** A prompt as a task line: its first non-empty line's first sentence, about 80 characters at most. */
+export function taskOfPrompt(prompt: string): string {
+  const first = prompt.split('\n').map(l => l.trim()).find(l => l.length > 0) ?? ''
+  const sentence = first.split(/(?<=[.!?])\s/)[0] ?? first
+  return shortOf(sentence, 80)
+}
+
+/** A member's name, shown once: its crew name, else its role word, else a short form of its task. */
+export const memberName = (r: Pick<CrewRow, 'name' | 'role' | 'description' | 'task'>): string =>
+  r.name ?? (r.role !== 'other' ? r.role : shortOf(memberTask(r), 24))
+
+/** A member's task line: its description, or the prompt's first sentence when the description only repeats the role or name. */
+export const memberTask = (r: Pick<CrewRow, 'description' | 'task'>): string => r.task || r.description
+
 export function tierOf(model: string | null, effort: string | null): Tier {
   const mdl = (model ?? '').toLowerCase()
   const eff = (effort ?? '').toLowerCase()
@@ -96,15 +131,18 @@ export const onMainTurnEnd = (s: CrewState): CrewState => ({ ...s, closed: s.clo
 const usageTokens = (u: UsageLike): number => u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens
 
 /** A spawn: a new row, or, for an agent already in the crew (a resume), its row running again with its counts kept. */
-export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; model: string | null; now: number; costNow: number; rung?: string; stepUps?: number; steppedUpFrom?: CrewRow['steppedUpFrom'] }): CrewState {
+export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; prompt?: string; model: string | null; now: number; costNow: number; rung?: string; stepUps?: number; steppedUpFrom?: CrewRow['steppedUpFrom'] }): CrewState {
   if (s.rows.some(r => r.id === a.agentId)) {
     return { ...mapRow(s, a.agentId, r => ({ ...r, status: 'running', resumedAt: a.now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
   }
   const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
+  // A row on the lean reviewer's type is the reviewer, whatever its name or description.
+  const role: Role = a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description)
+  const task = repeatsName(a.description, a.name, role) && a.prompt ? taskOfPrompt(a.prompt) : ''
   const row: CrewRow = {
     id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description,
-    // A row on the lean reviewer's type is the reviewer, whatever its name or description.
-    role: a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description),
+    ...(task ? { task } : {}),
+    role,
     tier: tierOf(a.model, null), model: a.model, effort: null, tokens: 0, weight: 0, turnTokens: 0, turnWeight: 0, tools: 0, startedAt: a.now, endedAt: null, status: 'running',
     ...(a.rung ? { rung: a.rung } : {}), ...(a.stepUps ? { stepUps: a.stepUps } : {}), ...(a.steppedUpFrom ? { steppedUpFrom: a.steppedUpFrom } : {}),
   }

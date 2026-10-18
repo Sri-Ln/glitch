@@ -1,5 +1,5 @@
 // Screenhead: a tiny CRT bot whose face is its screen. Earnest, literal, a little robotic.
-import type { Frame, Persona, RodPose } from '../behavior/types'
+import type { Frame, Persona } from '../behavior/types'
 
 const patch = (rows: Frame, p: Record<number, string>): Frame => rows.map((r, y) => p[y] ?? r)
 const at = (rows: Frame, x: number, y: number, ch: string): Frame =>
@@ -98,14 +98,6 @@ const armsUp = (f: Frame): Frame => put(f, [[1, 7], [0, 6], [0, 5], [14, 7], [15
 const blush = (f: Frame): Frame => put(f, [[4, 7], [11, 7]], 'C')
 const pleased = [beam, armsOut(OK), flash(armsUp(OK)), armsUp(OK), flash(armsUp(blush(beamShut))), armsOut(blush(beamShut))]
 
-// The fishing rod (the reward): a robotic arm folds out of the screen's right side and grips it.
-const rodBase = pleased[5] as Frame
-const rodPose = (tip: Pt): RodPose => {
-  const arm = put(put(rodBase, [[14, 8], [15, 8]], 'f'), [[14, 9]], 'f')
-  const cane = Array.from({ length: 7 - tip[1] }, (_, i) => [15, tip[1] + 1 + i] as Pt)
-  return { frame: put(put(put(arm, cane, 'b'), [tip], 'M'), [[15, 9]], 'm'), tip: { x: tip[0], y: tip[1] } }
-}
-
 const screenhead: Persona = {
   id: 'screenhead',
   name: 'Screenhead',
@@ -131,7 +123,6 @@ const screenhead: Persona = {
     investigating: { frames: investigating, fps: 3 },
     pleased: { frames: pleased, fps: 5 },
   },
-  rod: { hold: rodPose([15, 1]), flick: rodPose([15, 2]), bent: rodPose([15, 3]), stowed: rodBase },
   hatAnchor: { x: 7, y: 2 },
   laptopPaw: 'f',
   voice: {

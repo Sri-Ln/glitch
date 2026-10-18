@@ -37,16 +37,6 @@ for (const [id, persona] of Object.entries(PERSONAS)) {
     for (const f of art.frames.slice(1)) expect(happy.has(f.join('\n'))).toBe(false)
     expect(new Set(art.frames.map(f => f.join('\n'))).size).toBeGreaterThanOrEqual(3)
   })
-  test(`${id}'s rod: the tip sits at the right edge (columns 14-15) and drops under the gift`, () => {
-    const { hold, flick, bent, stowed } = persona!.rod
-    for (const pose of [hold, flick, bent]) {
-      expect(pose.tip.x).toBeGreaterThanOrEqual(14)
-      expect(pose.frame[pose.tip.y]![pose.tip.x]).not.toBe('.')
-    }
-    expect(bent.tip.y).toBeGreaterThan(hold.tip.y)
-    expect(bent.frame.join('\n')).not.toBe(hold.frame.join('\n'))
-    expect(stowed.join('\n')).not.toBe(hold.frame.join('\n'))
-  })
 }
 
 test("Fork's smile has no dark seam under the mouth's ends (it read as dripping)", () => {

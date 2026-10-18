@@ -1,4 +1,4 @@
-// Renders every persona × mood, the lead's fishing-rod poses, and every crew theme × pet × role × model,
+// Renders every persona × mood and every crew theme × pet × role × model,
 // to one HTML page for an art review.
 // Usage: node plugins/glitch-pets/scripts/gallery.mjs [out.html] [--focus mood,mood]   (Node 22.15 or later)
 // --focus adds a section on top for those moods: each pet animated at 3× and at pane size, plus its frame strip.
@@ -10,7 +10,6 @@ import { dirname, join, resolve } from 'node:path'
 import { MOOD_IDS } from '../hooks/behavior/types.ts'
 import { frameSvg } from '../hooks/behavior/player.ts'
 import { withLaptop } from '../hooks/behavior/laptop.ts'
-import { GIFT } from '../hooks/behavior/reward-art.ts'
 
 const IDS = ['screenhead', 'blob', 'pixel', 'dot', 'fork', 'bud']
 const personas = []
@@ -92,16 +91,6 @@ const animOf = (themeId, input) => {
   }
   return `<div class="anim" data-step="${STEP}" data-seq="${seq.join(',')}">${frames.map((f, i) => `<span${i ? ' hidden' : ''}>${f}</span>`).join('')}</div>`
 }
-// The fishing-rod reward: each lead's rod poses (the tip the line hangs from is ringed) and the shared gift.
-const POSES = ['hold', 'flick', 'bent', 'stowed']
-const rodCell = (p, pose) => {
-  const r = pose === 'stowed' ? { frame: p.rod.stowed, tip: null } : p.rod[pose]
-  const svg = frameSvg(p.palette, r.frame, 4)
-  const ring = r.tip ? `<rect x="${r.tip.x}" y="${r.tip.y}" width="1" height="1" fill="none" stroke="#ff3fd0" stroke-width="0.15"/>` : ''
-  return `<td>${svg.replace('</svg>', `${ring}</svg>`)}<div class="cap">${pose}${r.tip ? ` · tip ${r.tip.x},${r.tip.y}` : ''}</div></td>`
-}
-const giftSvg = p => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5 6" width="30" height="36" shape-rendering="crispEdges">${GIFT.flatMap((row, y) => [...row].map((ch, x) => (ch === '.' ? '' : `<rect x="${x}" y="${y}" width="1" height="1" fill="${p.palette[ch]}"/>`))).join('')}</svg>`
-const rodRows = personas.map(p => `<tr><th>${p.name}</th>${POSES.map(k => rodCell(p, k)).join('')}<td>${giftSvg(p)}<div class="cap">gift</div></td></tr>`).join('\n')
 const themeSection = theme => {
   const head = `<tr><th></th>${ROLES.map(r => `<th>${r}</th>`).join('')}</tr>`
   const body = personas
@@ -161,8 +150,6 @@ th{text-align:left;max-width:160px}.hat{display:inline-block;margin:0 4px}small{
 </style>
 <button onclick="document.body.classList.toggle('light')">dark / light</button>
 ${focusHtml}<table><tr><th></th>${MOOD_IDS.map(m => `<th>${m}</th>`).join('')}</tr>${rows}</table>
-<h2>Fishing-rod reward</h2>
-<table><tr><th></th>${POSES.map(k => `<th>${k}</th>`).join('')}<th>gift</th></tr>${rodRows}</table>
 ${themeSections}
 <script>
 for (const a of document.querySelectorAll('.anim[data-seq]')) {

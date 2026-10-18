@@ -4,8 +4,6 @@ import type { On } from 'claude-code'
 import { statusText } from './behavior/lead-status'
 import { DESKTOP_CELL, desktopLayout } from './pane'
 import { PERSONAS } from './personas/index'
-import { REWARD_MS } from './behavior/reactions'
-import { rewardTimeline } from './behavior/reward'
 
 let toasts: string[] = []
 const START = Date.parse('2026-10-14T10:00:00Z')
@@ -28,6 +26,8 @@ const session = async ($: Engine, on: On, store: Record<string, unknown> = {}, s
   })
   on('store.keys', () => ({ value: Object.keys(store) }) as never)
   on('session.surfaces', () => ({ value: surfaces }) as never)
+  // An engine with $.ui.view (2.1.302 has it).
+  on('session.version', () => ({ value: { version: '2.1.302', base: '2.1.302' } }) as never)
   on('command.register', () => ({ value: { command: 'glitch-pets' } }) as never)
   on('turn.start', () => ({ turnId: 't' }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
@@ -674,9 +674,9 @@ test('pane: one header line on the terminal, a lead row with total time on the d
       expect(all).toContain('0:01')
       expect(all).toContain('so far')
       expect(await ui.find({ key: 'crew-totals' })).toBeTruthy()
-      // At this moment tester-1's reward plays: the overlay draws the lead, its slot keeps its room.
+      // The lead draws itself in its own slot (no overlay ever takes its place).
       expect(drawnByKey(await ui.drawn(), 'crew-lead-sprite')?.props?.width).toBe(Math.ceil(48 / 7) + 2)
-      expect(await rewardBox(ui)).toBeTruthy()
+      expect(await ui.find({ key: 'crew-reward' })).toBeFalsy()
     }
     expect(all).not.toMatch(/helper/i)
     await ui.unmount()
@@ -685,7 +685,7 @@ test('pane: one header line on the terminal, a lead row with total time on the d
 
 test('pane (desktop): the lead is drawn at 3× (48 × 39), clearly larger than the minis, in a fixed slot', async ($, on) => {
   const { clock } = await mixedCrew($, on)
-  // Past tester-1's reward: the pane draws the lead itself.
+  // Past tester-1's hop and the lead's flourish.
   await clock.advance(4100)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
@@ -797,7 +797,7 @@ test('pane: pressing a crew member opens its transcript with ui.view', async ($,
   }
 })
 
-test('pane: each crew member block has a hover style and an Open ↗ hint a cell after the name, in the name\'s own Button (desktop)', async ($, on) => {
+test('pane: each crew member block has a hover style and an Open ↗ hint two cells after the name, in the name\'s own Button (desktop)', async ($, on) => {
   await mixedCrew($, on)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
@@ -807,7 +807,7 @@ test('pane: each crew member block has a hover style and an Open ↗ hint a cell
       const block = drawnByKey(tree, `crew-member:${B_ID}`)
       expect(block?.hover?.backgroundColor).toBeTruthy()
       // #45: the hint is part of the name's press target and always shown (a hover-only reveal is no press target).
-      expect((await ui.find({ key: `crew-open:${B_ID}` }))?.text).toBe('researcher-1 Open ↗')
+      expect((await ui.find({ key: `crew-open:${B_ID}` }))?.text).toBe('researcher-1\u00a0\u00a0Open ↗')
       // A little more space between members.
       expect((await ui.find({ key: 'crew-members:finished' }))?.props.rowGap).toBeTruthy()
     } else {
@@ -1378,10 +1378,13 @@ test('pane (desktop): the progress pill is drawn for light and dark: a transluce
   }
 })
 
-test('pane (desktop): an accordion header has a border, a live dot on Running and its chevron at the far right', async ($, on) => {
+test('pane (desktop): an accordion header has a border, a live dot on Running and its chevron ending the Button\'s words', async ($, on) => {
   await mixedCrew($, on)
-  // #45: the dot, the label, the count, the bar and the chevron are one Button's Text children.
-  const parts = async (ui: { drawn: () => Promise<unknown> }, kind: string) => ((drawnByKey(await ui.drawn(), `crew-acc:${kind}`)?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object').map(stringOf)
+  // #45 round 2: the dot, the label, the count and the chevron are one short Text in the Button (the bar is an Svg beside it).
+  const parts = async (ui: { drawn: () => Promise<unknown> }, kind: string) => {
+    const words = ((drawnByKey(await ui.drawn(), `crew-acc:${kind}`)?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object').map(stringOf).join('')
+    return [words.slice(0, 2), words.slice(-2)]
+  }
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
     if (surface === 'desktop') {
@@ -1524,7 +1527,7 @@ test('a note not acted on by the turn end stops holding the review, yet a later 
   expect(stepNotes(h)[1]).toContain('glitch-pets:crew-medium:')
 })
 
-// ── Integration (crew UX round 2): minis, the frame clock, the lead line, the reward, step-ups ──
+// ── Integration (crew UX round 2): minis, the frame clock, the lead line, step-ups ──
 
 const svgs = async (ui: Finder) => (await ui.findAll({ type: 'Svg' })).map(s => ({ alt: String(s.props.alt), source: String(s.props.source), width: Number(s.props.width), height: Number(s.props.height) }))
 const miniOf = async (ui: Finder, alt: string) => (await svgs(ui)).find(s => s.alt === alt)
@@ -1562,7 +1565,7 @@ test('pane: a running mini redraws at its next change from the 100 ms tick, only
     return next(e)
   })
   const { h, clock } = await mixedCrew($, on)
-  // Past tester-1's reward, 900 ms before the next 1 s status tick.
+  // Past tester-1's hop, 900 ms before the next 1 s status tick.
   await clock.advance(4100)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
@@ -1608,150 +1611,6 @@ test('pane: the lead row reads the lead\'s line: a fresh failure, then looking i
   }
 })
 
-const rewardBox = async (ui: { drawn: () => Promise<unknown> }) => drawnByKey(await ui.drawn(), 'crew-reward')
-// The lead's own sprite in the lead row (its alt names the mood; a happy receiver is not it).
-const leadSprite = async (ui: Finder) => (await svgs(ui)).find(s => s.alt.startsWith('Bud the dog') && !s.alt.endsWith('happy'))
-
-test('pane: a finish casts the reward from the lead to the receiver\'s row; the lead sprite steps aside; then the gift stays as a badge', async ($, on) => {
-  const { clock } = await mixedCrew($, on)
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface)
-    if (surface === 'desktop') {
-      const box = await rewardBox(ui)
-      expect(box?.props?.position).toBe('absolute')
-      // At the first member's mini column (1 cell in), from the lead row's top.
-      expect([box?.props?.top, box?.props?.left]).toEqual([0, 1])
-      // The lead sits at the right of a slot one gutter wider than the sprite column, so the
-      // line from its rod tip (pixel columns 14-15) drops through the gutter, not over the minis.
-      const slot = drawnByKey(await ui.drawn(), 'crew-lead-sprite')
-      expect(slot?.props?.justifyContent).toBe('flex-end')
-      const miniCols = Math.ceil(48 / 7)
-      expect(slot?.props?.width).toBe(miniCols + 2)
-      const tipX = (miniCols + 2) * 7 - 48 + 14.5 * 3
-      expect(tipX).toBeGreaterThanOrEqual((1 + miniCols) * 7)
-      expect(tipX).toBeLessThanOrEqual((2 + miniCols) * 7)
-      const overlay = (await svgs(ui)).find(s => s.source.includes('data-moment'))
-      expect(overlay?.source).toContain(`data-moment="${START + 1000}"`)
-      // The overlay draws the lead: the pane's own sprite steps aside, its slot kept.
-      expect(await leadSprite(ui)).toBeUndefined()
-      expect(drawnByKey(await ui.drawn(), 'crew-lead-sprite')?.props?.width).toBeGreaterThan(0)
-      // Rows have fixed heights, so the receiver's top is exact: the overlay ends just under its mini.
-      const tree = await ui.drawn()
-      const layout = desktopLayout({ rows: ['running', 'failed', 'done'], open: { running: true, finished: true }, steppedUp: [false, false, false] })
-      expect(drawnByKey(tree, `crew-member:${C_ID}`)?.props?.height).toBe(layout.heights[2])
-      expect(overlay?.height).toBe((layout.tops[2] as number) * DESKTOP_CELL.height + 26 + 2)
-      expect(await ui.find({ key: `crew-badge:${C_ID}` })).toBeFalsy()
-    } else {
-      expect(await rewardBox(ui)).toBeUndefined()
-      expect(await svgs(ui)).toEqual([])
-    }
-    await ui.unmount()
-  }
-  // The gift reaches the receiver: its mini is happy for the rest of the moment.
-  await clock.advance(2900)
-  let ui = await mountPane($, 'desktop')
-  expect((await svgs(ui)).some(s => s.alt === 'Bud the dog, happy')).toBe(true)
-  await ui.unmount()
-  // The moment is over: no overlay, the lead is back, the gift is a badge on the row.
-  await clock.advance(1200)
-  for (const surface of SURFACES) {
-    ui = await mountPane($, surface)
-    if (surface === 'desktop') {
-      expect(await rewardBox(ui)).toBeUndefined()
-      expect(await leadSprite(ui)).toBeTruthy()
-      expect(await ui.find({ key: `crew-badge:${C_ID}` })).toBeTruthy()
-      expect((await svgs(ui)).some(s => s.alt === 'a gift from Bud')).toBe(true)
-    } else expect(await svgs(ui)).toEqual([])
-    await ui.unmount()
-  }
-})
-
-test('pane: the reward plays frame by frame: static frames from the frame clock (floored at 250 ms, so at most 4 fps), then it stops; no usage per frame', async ($, on) => {
-  const frames: number[] = []
-  on('state.set', (_$, e, next) => {
-    if ((e as { key?: string }).key === 'paneFrame') frames.push(Number((e as { value?: unknown }).value))
-    return next(e)
-  })
-  // One member, so no running mini keeps the clock going.
-  const { h, clock } = await crewHarness($, on)
-  await mainStart($, 'm1')
-  await spawnHelper($, 'A', 'Build A', 'builder-1')
-  await clock.advance(1000)
-  h.status['ag-Build A'] = 'completed'
-  await agentEnd($, 'ag-Build A')
-  const startedAt = START + 1000
-  const ui = await mountPane($, 'desktop')
-  const term = await mountPane($, 'terminal')
-  const sources: string[] = []
-  const calls = h.usageCalls
-  const T = rewardTimeline(0)
-  const seen = async () => {
-    const src = await overlaySource(ui)
-    if (src && sources[sources.length - 1] !== src) sources.push(src)
-  }
-  await seen()
-  frames.length = 0
-  for (let t = 0; t < T.end; t += 100) {
-    await clock.advance(100)
-    await seen()
-  }
-  // Many distinct frames (the frame clock's 250 ms floor: about 4 a second), none animated, all in one box.
-  expect(sources.length).toBeGreaterThanOrEqual(Math.floor(T.end / 250) - 3)
-  expect(sources.length).toBeLessThanOrEqual(Math.ceil(T.end / 250) + 2)
-  for (const src of sources) expect(/<(set|animate|animateTransform)\b/.test(src)).toBe(false)
-  expect(new Set(sources.map(src => src.match(/viewBox="[^"]+"/)?.[0])).size).toBe(1)
-  // The line's travel still redraws several times.
-  const during = frames.filter(f => f - startedAt >= T.cast && f - startedAt <= T.land)
-  expect(during.length).toBeGreaterThanOrEqual(Math.floor((T.land - T.cast) / 250))
-  // No usage read per frame (the shared cost is read again at most once a second).
-  expect(h.usageCalls - calls).toBeLessThanOrEqual(Math.ceil(T.end / 1000) + 1)
-  // The terminal draws none of it.
-  expect(await svgs(term)).toEqual([])
-  // Past the slot: no overlay, the badge; and the frame clock stops writing.
-  await clock.advance(REWARD_MS - T.end + 200)
-  expect(await rewardBox(ui)).toBeUndefined()
-  expect(await ui.find({ key: 'crew-badge:ag-Build A' })).toBeTruthy()
-  frames.length = 0
-  await clock.advance(3000)
-  expect(frames).toEqual([])
-  await ui.unmount()
-  await term.unmount()
-})
-
-test('pane: a reward first drawn late (past ~300 ms) shows only the badge', async ($, on) => {
-  const { clock } = await mixedCrew($, on)
-  await clock.advance(500)
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface)
-    expect(await rewardBox(ui)).toBeUndefined()
-    if (surface === 'desktop') {
-      expect(await ui.find({ key: `crew-badge:${C_ID}` })).toBeTruthy()
-      expect(await leadSprite(ui)).toBeTruthy()
-    } else expect(await svgs(ui)).toEqual([])
-    await ui.unmount()
-  }
-})
-
-test('pane: with Finished folded the reward is skipped; unfolded, the receiver shows its badge', async ($, on) => {
-  const { h, clock } = await mixedCrew($, on)
-  await clock.advance(4100)
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface)
-    if (surface === 'desktop') {
-      await ui.press({ key: 'crew-acc:finished' })
-      h.status[B_ID] = 'completed'
-      await agentEnd($, B_ID)
-      expect(await rewardBox(ui)).toBeUndefined()
-      await ui.press({ key: 'crew-acc:finished' })
-      expect(await rewardBox(ui)).toBeUndefined()
-      expect(await ui.find({ key: `crew-badge:${B_ID}` })).toBeTruthy()
-    } else {
-      expect(await rewardBox(ui)).toBeUndefined()
-      expect(await svgs(ui)).toEqual([])
-    }
-    await ui.unmount()
-  }
-})
 
 test('pane: a stepped-up member says what it stepped up from (compact on the terminal)', async ($, on) => {
   const { h } = await crewHarness($, on)
@@ -1875,56 +1734,6 @@ test('pane (terminal): the progress column is at most 40 cells', async ($, on) =
 
 // ── Integration review, fix round 1 ──
 
-const overlaySource = async (ui: Finder) => (await svgs(ui)).find(s => s.source.includes('data-moment'))?.source
-const overlayBox = async (ui: Finder) => {
-  const o = (await svgs(ui)).find(s => s.source.includes('data-moment'))
-  return o ? { moment: o.source.match(/data-moment="(\d+)"/)?.[1], width: o.width, height: o.height } : undefined
-}
-
-test('pane: a moment keeps its overlay while the layout holds; when the receiver moves, the gift becomes its badge (no restart)', async ($, on) => {
-  const { h, clock: clockOf } = await crewHarness($, on)
-  await mainStart($, 'm1')
-  await spawnHelper($, 'B', 'Build B', 'builder-2')
-  await spawnHelper($, 'A', 'Build A', 'builder-1')
-  await spawnHelper($, 'K', 'Build K', 'builder-3')
-  const ui = await mountPane($, 'desktop')
-  h.status['ag-Build A'] = 'completed'
-  await agentEnd($, 'ag-Build A')
-  const first = await overlayBox(ui)
-  expect(first).toBeTruthy()
-  // B, above A in the list, finishes 500 ms later: the same moment in the same box (a later frame), or A's badge.
-  await clockOf.advance(500)
-  h.status['ag-Build B'] = 'completed'
-  await agentEnd($, 'ag-Build B')
-  const second = await overlayBox(ui)
-  if (second !== undefined) expect(second).toEqual(first)
-  else expect(await ui.find({ key: 'crew-badge:ag-Build A' })).toBeTruthy()
-  // A new member starts: Running grows and A moves down; the overlay would miss it, so A shows its badge.
-  await spawnHelper($, 'C', 'Build C', 'builder-4')
-  expect(await overlaySource(ui)).toBeUndefined()
-  expect(await ui.find({ key: 'crew-badge:ag-Build A' })).toBeTruthy()
-  await ui.unmount()
-  // The terminal draws no overlay at all.
-  const term = await mountPane($, 'terminal')
-  expect(await svgs(term)).toEqual([])
-  await term.unmount()
-})
-
-test('pane: closing the pane forgets the moments it showed: reopened late, only the badge', async ($, on) => {
-  const { h, clock } = await mixedCrew($, on)
-  let ui = await mountPane($, 'desktop')
-  expect(await overlaySource(ui)).toBeTruthy()
-  await ui.unmount()
-  h.panes = [{ id: 'glitch-crew', title: 'Crew', isShown: true, isFocused: false, isPlaced: true }]
-  await $.command.run({ command: 'glitch', args: 'crew' } as never)
-  await clock.advance(500)
-  for (const surface of SURFACES) {
-    ui = await mountPane($, surface)
-    expect(await overlaySource(ui)).toBeUndefined()
-    if (surface === 'desktop') expect(await ui.find({ key: `crew-badge:${C_ID}` })).toBeTruthy()
-    await ui.unmount()
-  }
-})
 
 test('the pane and the HUD pill read one crew cost, also once nothing runs', async ($, on) => {
   const summaries: { cost?: number }[] = []
@@ -1945,23 +1754,6 @@ test('the pane and the HUD pill read one crew cost, also once nothing runs', asy
   await term.unmount()
 })
 
-test('pane (hats): the happy receiver keeps its hat and its size, so the gift lands at its feet', async ($, on) => {
-  const { h, clock } = await crewHarness($, on)
-  await $.command.run({ command: 'glitch', args: 'crew theme hats' } as never)
-  await mainStart($, 'm1')
-  await spawnHelper($, 'X', 'Build X', 'builder-1')
-  await spawnHelper($, 'Y', 'Test Y', 'tester-1')
-  const ui = await mountPane($, 'desktop')
-  h.status['ag-Test Y'] = 'completed'
-  await agentEnd($, 'ag-Test Y')
-  await clock.advance(2500)
-  const happy = (await svgs(ui)).find(s => s.alt.includes('happy'))
-  expect([happy?.width, happy?.height]).toEqual([32, 32])
-  // The hat stays on: the happy frame is the theme's frame size, not the bare pet's 13 rows.
-  expect(happy?.source).toContain('viewBox="0 0 16 16"')
-  await ui.unmount()
-})
-
 test('pane with the pet off: no minis and no empty sprite column; the lead row has no sprite', async ($, on) => {
   const { h } = await crewHarness($, on)
   await $.command.run({ command: 'glitch', args: 'pet off' } as never)
@@ -1973,7 +1765,7 @@ test('pane with the pet off: no minis and no empty sprite column; the lead row h
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
     expect(await svgs(ui).then(s => s.filter(x => !/steps|Done|Failed|at work|completed/.test(x.alt)))).toEqual([])
-    expect((await keysOf(ui)).filter(k => k.startsWith('crew-mini:') || k.startsWith('crew-badge:') || k === 'crew-lead-sprite' || k === 'crew-reward')).toEqual([])
+    expect((await keysOf(ui)).filter(k => k.startsWith('crew-mini:') || k === 'crew-lead-sprite')).toEqual([])
     expect((await textsOf(ui)).join(' | ')).toContain('Lead')
     await ui.unmount()
   }

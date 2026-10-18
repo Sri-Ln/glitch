@@ -1,5 +1,5 @@
 // Fork: an octopus who runs eight things at once. The organised multitasker, a born lead.
-import type { Frame, Persona, RodPose } from '../behavior/types'
+import type { Frame, Persona } from '../behavior/types'
 
 type Pt = readonly [number, number]
 const E = '................'
@@ -114,15 +114,6 @@ const pleased = [0, 1, 2, 3, 4, 5].map(n => {
   return f
 })
 
-// The fishing rod (the reward): one outer tentacle reaches up and wraps the rod twice; the rest stay put.
-// The tip is where the line hangs: it snaps back a pixel on the cast and bends under the gift.
-const rodBase = blush(smileRest)
-const rodPose = (tip: Pt): RodPose => {
-  const wrapped = put(put(rodBase, [[15, 11], [15, 12], [14, 12]], '.'), [[14, 10], [14, 9], [14, 8], [15, 10]], 'o')
-  const cane = Array.from({ length: 9 - tip[1] }, (_, i) => [15, tip[1] + 1 + i] as Pt)
-  return { frame: put(put(put(wrapped, cane, 'b'), [tip], 'M'), [[13, 9]], 'm'), tip: { x: tip[0], y: tip[1] } }
-}
-
 const fork: Persona = {
   id: 'fork',
   name: 'Fork',
@@ -148,7 +139,6 @@ const fork: Persona = {
     investigating: { frames: investigating, fps: 3 },
     pleased: { frames: pleased, fps: 5 },
   },
-  rod: { hold: rodPose([15, 1]), flick: rodPose([15, 2]), bent: rodPose([15, 3]), stowed: rodBase },
   leadStatus: {
     many: 'juggling the crew ({n} at work)',
     one: 'waiting on {who}',

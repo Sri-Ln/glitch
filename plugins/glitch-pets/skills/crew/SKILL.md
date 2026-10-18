@@ -20,7 +20,7 @@ Write a short plan in your reply:
 
 ## 2. Crew members
 
-- Launch every parallel task together, in the background, each named `<role>-<n>` (`builder-1`, `researcher-1`, …) with a one-line description (the pane shows it).
+- Launch every parallel task together, in the background, each named `<role>-<n>` (`builder-1`, `researcher-1`, …) with a one-line description of the task itself, not the role (the pane shows it under the name).
 - Start each crew member with `subagent_type: glitch-pets:crew-<tier>` from its plan row, and pass no `model` and no `effort`: the type sets both.
 - If a crew member fails, a Glitch crew note names the next step up (for example `glitch-pets:crew-light-high`). Retry that task once with that type, the same prompt and the same name. Use the step-up types (`crew-<tier>-high`, `crew-heavy-xhigh`, `crew-heavy-max`) only when a note names one.
 - Each prompt states: the task, the files or sources in scope, constraints from the user, and exactly what to return (a short report: what was done, where, anything unsure).

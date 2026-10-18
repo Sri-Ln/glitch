@@ -1,5 +1,5 @@
 // Pixel: a violet cat. Dry and unimpressed, secretly proud.
-import type { Frame, Persona, RodPose } from '../behavior/types'
+import type { Frame, Persona } from '../behavior/types'
 
 type Pt = readonly [number, number]
 const E = '................'
@@ -113,15 +113,6 @@ const pleased = [
   body(blush(smile)),
 ]
 
-// The fishing rod (the reward): the tail runs along the floor, up the right edge and coils once round
-// the rod, as though it were no effort at all.
-const rodBase = pleased[5] as Frame
-const rodPose = (tip: Pt): RodPose => {
-  const cane = Array.from({ length: 10 - tip[1] }, (_, i) => [14, tip[1] + 1 + i] as Pt)
-  const rod = put(put(put(rodBase.map(r => r.replaceAll('t', '.')), cane, 'b'), [tip], 'M'), [[13, 10]], 'm')
-  return { frame: put(rod, [[12, 11], [13, 11], [14, 11], [15, 10], [15, 9], [15, 8], [14, 8], [13, 8]], 't'), tip: { x: tip[0], y: tip[1] } }
-}
-
 const pixel: Persona = {
   id: 'pixel',
   name: 'Pixel',
@@ -147,7 +138,6 @@ const pixel: Persona = {
     investigating: { frames: investigating, fps: 3 },
     pleased: { frames: pleased, fps: 5 },
   },
-  rod: { hold: rodPose([14, 1]), flick: rodPose([14, 2]), bent: rodPose([14, 3]), stowed: rodBase },
   leadStatus: {
     many: 'supervising {n}. Barely.',
     one: 'waiting on {who}',

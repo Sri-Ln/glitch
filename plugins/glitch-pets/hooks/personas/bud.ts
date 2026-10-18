@@ -1,5 +1,5 @@
 // Bud: a brown dog. Eager and loyal; his tail carries his mood.
-import type { Frame, Persona, RodPose } from '../behavior/types'
+import type { Frame, Persona } from '../behavior/types'
 
 type Pt = readonly [number, number]
 const E = '................'
@@ -99,14 +99,6 @@ const beaming = blush(smile)
 const wiggle = (d: number, n: number): Frame => shiftRows(shift(tail(beaming, n), d), 9, 12, -d)
 const pleased = [tail(smile, 1), wiggle(-1, 0), wiggle(1, 2), wiggle(-1, 0), wiggle(1, 2), tail(beaming, 1)]
 
-// The fishing rod (the reward): held crosswise in his mouth, tail going. A cream cane with a grey tip,
-// since a brown one would vanish into his ears.
-const rodBase = pleased[5] as Frame
-const rodPose = (tip: Pt): RodPose => {
-  const cane: Pt[] = tip[1] <= 2 ? [[11, 7], [12, 6], [13, 5], [14, 4], [14, 3]] : [[11, 7], [12, 6], [13, 5], [14, 5], [15, 5]]
-  return { frame: put(put(rodBase, [[9, 8], [10, 8], ...cane], 'B'), [tip], 'm'), tip: { x: tip[0], y: tip[1] } }
-}
-
 const bud: Persona = {
   id: 'bud',
   name: 'Bud',
@@ -138,7 +130,6 @@ const bud: Persona = {
     investigating: { frames: investigating, fps: 2 },
     pleased: { frames: pleased, fps: 5 },
   },
-  rod: { hold: rodPose([15, 2]), flick: rodPose([14, 2]), bent: rodPose([15, 6]), stowed: rodBase },
   leadStatus: {
     many: 'watching the pack ({n})',
     one: 'waiting for {who}!',

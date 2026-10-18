@@ -1,5 +1,5 @@
 // Byte blob: a squishy teal blob. Bubbly, easily startled, wobbles when worried.
-import type { Frame, Persona, RodPose } from '../behavior/types'
+import type { Frame, Persona } from '../behavior/types'
 
 type Pt = readonly [number, number]
 const E = '................'
@@ -113,15 +113,6 @@ const pleased = [
   burst(armsUp(blush(smile))),
 ]
 
-// The fishing rod (the reward): a pseudopod stretches up from the jelly and wraps it; the other arm stays up.
-// It starts from the flourish's last frame with the burst cleared and the right arm lowered.
-const rodBase = put((pleased[5] as Frame).map((r, y) => (y <= 4 ? r.replaceAll('Y', '.') : r)), [[14, 7], [15, 6], [15, 5]], '.')
-const rodPose = (tip: Pt): RodPose => {
-  const pod = put(put(rodBase, [[14, 6], [15, 7]], 'p'), [[15, 8]], 'o')
-  const cane = Array.from({ length: 6 - tip[1] }, (_, i) => [15, tip[1] + 1 + i] as Pt)
-  return { frame: put(put(put(pod, cane, 'b'), [tip], 'M'), [[14, 5]], 'm'), tip: { x: tip[0], y: tip[1] } }
-}
-
 const blob: Persona = {
   id: 'blob',
   name: 'Byte blob',
@@ -147,7 +138,6 @@ const blob: Persona = {
     investigating: { frames: investigating, fps: 3 },
     pleased: { frames: pleased, fps: 5 },
   },
-  rod: { hold: rodPose([15, 0]), flick: rodPose([15, 1]), bent: rodPose([15, 2]), stowed: rodBase },
   leadStatus: {
     many: ['a buddy busy!', '{n} buddies busy!'],
     one: 'waiting on {who}…',

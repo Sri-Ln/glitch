@@ -1,5 +1,5 @@
 // Dot: a ladybug who sits on a daisy. Tidy, gentle, encouraging.
-import type { Frame, Persona, RodPose } from '../behavior/types'
+import type { Frame, Persona } from '../behavior/types'
 
 type Pt = readonly [number, number]
 const E = '................'
@@ -105,16 +105,6 @@ const pleased = [
   pomsHigh(smile),
 ]
 
-// The fishing rod (the reward): one antenna holds it out level like a pole; the other is a pom-pom,
-// still cheering. The cast lifts the outer end off the grid edge; the gift makes it droop.
-const rodBase = blush(smile)
-const rodPose = (tip: Pt): RodPose => {
-  const pom = put(put(rodBase, [[2, 0], [3, 0], [2, 1], [3, 1]], 'Y'), [[4, 0], [4, 1], [5, 1]], '.')
-  const held = put(put(pom, [[4, 1], [5, 1]], 'k'), [[11, 0]], 'm')
-  const cane: Pt[] = tip[1] === 0 ? [[12, 0], [13, 0], [14, 0]] : tip[1] === 1 ? [[12, 0], [13, 0], [14, 1]] : [[12, 0], [13, 1], [14, 1]]
-  return { frame: put(put(held, cane, 'b'), [tip], 'M'), tip: { x: tip[0], y: tip[1] } }
-}
-
 const dot: Persona = {
   id: 'dot',
   name: 'Dot',
@@ -140,7 +130,6 @@ const dot: Persona = {
     investigating: { frames: investigating, fps: 3 },
     pleased: { frames: pleased, fps: 5 },
   },
-  rod: { hold: rodPose([15, 0]), flick: rodPose([15, 0]), bent: rodPose([15, 2]), stowed: rodBase },
   hatAnchor: { x: 7, y: 2 },
   laptopPaw: 'k',
   voice: {

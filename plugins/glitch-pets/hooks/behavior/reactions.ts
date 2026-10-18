@@ -1,6 +1,6 @@
 // The lead's reactions to crew news. Pure: crew rows in, "until" timestamps out.
-// A member finishing is a brief joy (`pleased`) and a fishing-rod reward; one failing is a
-// worry, then `investigating` while the crew still works. One reaction plays and one waits:
+// A member finishing is a brief joy (`pleased`; its own mini hops in the pane, behavior/sparkle.ts);
+// one failing is a worry, then `investigating` while the crew still works. One reaction plays and one waits:
 // each plays at least a second, the latest event wins the waiting slot, and events of the
 // same kind collapse into the one playing. The waiting slot is resolved lazily from the
 // clock, so nothing needs a timer: every reader asks "as of now".
@@ -13,17 +13,13 @@ export const WORRY_MS = 3000
 export const INVESTIGATE_MS = 45_000
 /** A reaction plays at least this long before another kind replaces it. */
 export const MIN_REACTION_MS = 1000
-/** One fishing-rod reward's slot: the moment itself (reward.ts) always ends inside it. */
-export const REWARD_MS = 4000
-/** Finished rows older than this are forgotten (their badges with them). */
-const GIFT_FORGET_MS = 6 * 3600_000
 
 export type CrewEvent = { kind: 'done' | 'failed'; id: string; name: string; at: number }
 // The state's shape is the contract's (types/index.d.ts), the single source.
 export type { Reaction, Reactions }
 export type ReactionKind = Reaction['kind']
 
-export const INITIAL_REACTIONS: Reactions = { current: null, pending: null, lastFailAt: 0, failId: null, failWho: null, reward: null, rewardNext: null, gifts: {} }
+export const INITIAL_REACTIONS: Reactions = { current: null, pending: null, lastFailAt: 0, failId: null, failWho: null }
 
 const holdOf = (k: ReactionKind): number => (k === 'joy' ? JOY_MS : WORRY_MS)
 
@@ -46,22 +42,16 @@ export function crewEvents(before: CrewState, after: CrewState, now: number): Cr
     .map(r => ({ kind: r.status === 'done' ? 'done' : 'failed', id: r.id, name: crewName(r), at: now }))
 }
 
-/** The state as of `now`: a waiting reaction or reward that is due has taken over, finished ones are gone. */
+/** The state as of `now`: a waiting reaction that is due has taken over, a finished one is gone. */
 function settle(r: Reactions, now: number): Reactions {
-  let { current, pending, reward, rewardNext } = r
+  let { current, pending } = r
   if (current && pending && now >= current.startedAt + MIN_REACTION_MS) {
     const startedAt = Math.max(pending.at, current.startedAt + MIN_REACTION_MS)
     current = { kind: pending.kind, who: pending.who, startedAt, until: startedAt + holdOf(pending.kind) }
     pending = null
   }
   if (current && current.until <= now) current = null
-  if (reward && now >= reward.startedAt + REWARD_MS) {
-    const end = reward.startedAt + REWARD_MS
-    reward = rewardNext ? { rowId: rewardNext.rowId, startedAt: Math.max(end, rewardNext.at) } : null
-    rewardNext = null
-    if (reward && now >= reward.startedAt + REWARD_MS) reward = null
-  }
-  return current === r.current && pending === r.pending && reward === r.reward && rewardNext === r.rewardNext ? r : { ...r, current, pending, reward, rewardNext }
+  return current === r.current && pending === r.pending ? r : { ...r, current, pending }
 }
 
 const join = (a: readonly string[], b: string): string[] => (a.includes(b) ? [...a] : [...a, b])
@@ -70,11 +60,6 @@ function applyOne(state: Reactions, e: CrewEvent): Reactions {
   let r = settle(state, e.at)
   const kind: ReactionKind = e.kind === 'done' ? 'joy' : 'worry'
   if (kind === 'worry') r = { ...r, lastFailAt: e.at, failId: e.id, failWho: e.name }
-  else {
-    const gifts = Object.fromEntries(Object.entries(r.gifts).filter(([, at]) => e.at - at < GIFT_FORGET_MS))
-    gifts[e.id] = e.at
-    r = r.reward ? { ...r, gifts, rewardNext: { rowId: e.id, at: e.at } } : { ...r, gifts, reward: { rowId: e.id, startedAt: e.at } }
-  }
   const cur = r.current
   // Joins the reaction playing; a different kind already waiting still gets its turn.
   if (cur && cur.kind === kind) return { ...r, pending: r.pending && r.pending.kind !== kind ? r.pending : null, current: { ...cur, who: join(cur.who, e.name), until: e.at + holdOf(kind) } }
@@ -91,20 +76,6 @@ export const applyCrewEvents = (r: Reactions | undefined, events: readonly CrewE
 
 /** The reaction playing at `now`, or null. */
 export const reactionAt = (r: Reactions | undefined, now: number): Reaction | null => (r ? settle(r, now).current : null)
-
-/** The fishing-rod reward playing at `now` (its slot is REWARD_MS long), or null. */
-export function rewardAt(r: Reactions | undefined, now: number): { rowId: string; startedAt: number } | null {
-  if (!r) return null
-  const w = settle(r, now).reward
-  return w && now >= w.startedAt ? w : null
-}
-
-/** True when the row finished and its gift has been handed over (its moment played, or was skipped for a later one). */
-export function hasGift(r: Reactions | undefined, rowId: string, now: number): boolean {
-  if (!r || r.gifts[rowId] === undefined || r.gifts[rowId]! > now) return false
-  const s = settle(r, now)
-  return s.reward?.rowId !== rowId && s.rewardNext?.rowId !== rowId
-}
 
 /** True while the lead is looking into a failure: the failed row is in this crew, a helper still runs, and it is recent. */
 export function isInvestigating(r: Reactions | undefined, crew: CrewState, now: number): boolean {

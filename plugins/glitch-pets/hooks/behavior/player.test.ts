@@ -14,7 +14,6 @@ const persona: Persona = {
   hatAnchor: { x: 8, y: 1 },
   laptopPaw: 'a',
   voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['a', 'b', 'c']])) as unknown as Persona['voice'],
-  rod: { hold: { frame: A, tip: { x: 15, y: 1 } }, flick: { frame: A, tip: { x: 15, y: 2 } }, bent: { frame: B, tip: { x: 15, y: 3 } }, stowed: A },
 }
 
 test('frameIndex steps at the mood fps and loops', () => {
