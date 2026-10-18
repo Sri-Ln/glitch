@@ -2,8 +2,10 @@
 // the two actions (open or close a group, show a member's transcript).
 //
 // Desktop: a lead row (the pet at 2×, its status, the crew's time on the right),
-// cost and token chips, then Running and Finished as accordion groups, each member
-// a block that lights on hover and opens its transcript when pressed. Every block has
+// cost and token chips, then Running and Finished as accordion groups (each header line
+// one Button, its bar drawn in text), each member a block that lights on hover and opens
+// its transcript when its title line (one Button) is pressed. Every width comes from the
+// pane's real bodyColumns: texts are cut with an ellipsis, chips drop by priority. Every block has
 // a fixed height, so a row's top is known exactly: the reward overlay (one Svg laid
 // over the pane) lands on its receiver.
 // Terminal: one header line, the lead's line, one aligned line per running member,
@@ -200,9 +202,21 @@ const fromLabel = (r: CrewRow): string | null => (r.steppedUpFrom ? rungLabel({ 
 /** The pill's words: n/m steps while running, else Done or Failed. */
 export function pillLabel(m: CrewMember): string {
   if (m.row.status === 'done') return 'Done'
-  if (m.row.status === 'failed') return 'Failed'
+  // Stopped (the engine's `killed`, or an interrupted run) is not a failure of its own.
+  if (m.row.status === 'failed') return m.row.killed ? 'Stopped' : 'Failed'
   return m.steps ? `${m.steps.n}/${m.steps.of} steps` : `${m.row.tools} steps`
 }
+
+/** The pill's words in the fewest cells: "1/4", else as pillLabel. */
+const shortPillLabel = (m: CrewMember): string => (m.row.status === 'running' ? (m.steps ? `${m.steps.n}/${m.steps.of}` : `${m.row.tools}`) : pillLabel(m))
+
+/** `s` in at most `n` cells: cut with an ellipsis, never wrapped. */
+export function fit(s: string, n: number): string {
+  const chars = Array.from(s)
+  if (n <= 0) return ''
+  return chars.length <= n ? s : `${chars.slice(0, Math.max(0, n - 1)).join('')}…`
+}
+const cells = (s: string) => Array.from(s).length
 
 const fractionOf = (m: CrewMember): number =>
   m.row.status !== 'running' ? 1 : m.steps ? clamp(m.steps.n / m.steps.of, 0, 1) : 0.5
@@ -222,23 +236,6 @@ export function pillSvg(m: CrewMember, width: number): Sprite {
   return { source, alt: label, width, height: PILL_HEIGHT }
 }
 
-/** A group header's thin bar: running members in blue, or completed green then failed red. */
-function groupBarSvg(parts: { share: number; color: string }[], width: number, alt: string): Sprite {
-  let x = 0
-  const fills = parts.map(p => {
-    const w = Math.round(clamp(p.share, 0, 1) * width)
-    const s = w > 0 ? `<rect x="${x}" width="${w}" height="4" fill="${p.color}"/>` : ''
-    x += w
-    return s
-  })
-  return {
-    source: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="4" viewBox="0 0 ${width} 4"><rect width="${width}" height="4" rx="2" fill="${TRACK}" fill-opacity="0.25"/>${fills.join('')}</svg>`,
-    alt,
-    width,
-    height: 4,
-  }
-}
-
 const statusColor = (r: CrewRow) => (r.status === 'done' ? 'success' : r.status === 'failed' ? 'error' : 'suggestion')
 const glyph = (r: CrewRow) => (r.status === 'done' ? '✓' : r.status === 'failed' ? '✗' : '●')
 const modelEffort = (r: CrewRow, sep: string) => `${shortModel(r.model)}${r.effort ? `${sep}${r.effort}` : ''}`
@@ -252,6 +249,11 @@ export const chipModel = (r: CrewRow): string => {
 }
 /** The lead row's time column (cells): "12:34" over "so far". */
 const LEAD_TIME_CELLS = 6
+/** Under this many body cells the lead's time moves to the totals line, so its words keep room. */
+const LEAD_TIME_MIN_COLUMNS = 34
+/** A progress pill's bar is drawn only with at least this many cells beside its words. */
+const PILL_MIN_CELLS = 4
+const PILL_MAX_PX = 260
 
 export function crewTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   return v.isTerminal ? terminalTree(v, el, act) : desktopTree(v, el, act)
@@ -278,7 +280,7 @@ function terminalTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   const costW = Math.max(5, ...shown.map(m => usd(m.cost).length))
   const progW = Math.min(PROGRESS_MAX, Math.max(4, ...shown.map(m => progress(m).length)))
   function progress(m: CrewMember): string {
-    if (m.row.status !== 'running') return m.row.status === 'done' ? 'done' : 'failed'
+    if (m.row.status !== 'running') return m.row.status === 'done' ? 'done' : m.row.killed ? 'stopped' : 'failed'
     if (!m.steps) return `${m.row.tools} steps`
     if (narrow) return `${m.steps.n}/${m.steps.of}`
     const f = Math.round(fractionOf(m) * 8)
@@ -363,6 +365,7 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   const Btn = el.Button as unknown as Make
   const S = el.Svg as unknown as Make | null
   const R = DESKTOP_ROWS
+  const cols = Math.max(1, Math.floor(v.bodyColumns))
   const running = v.rows.filter(m => m.row.status === 'running')
   const finished = v.rows.filter(m => m.row.status !== 'running')
   const total = v.rows.length
@@ -373,23 +376,66 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   // With the pet off there are no minis and no sprite column.
   const miniCols = Math.max(0, v.miniColumns)
   const spriteCells = miniCols > 0 ? miniCols + 1 : 0
-  // Images sized to the body: the pill beside the sprite column, the bar beside a header.
-  const pillPx = clamp((v.bodyColumns - 12 - spriteCells) * CELL_PX, 80, 260)
-  const barPx = clamp((v.bodyColumns - 18) * CELL_PX, 40, 220)
   const img = (s: Sprite) => (S ? <S source={s.source} alt={s.alt} width={s.width} height={s.height} /> : null)
+  // Every text is one line: cut to its cells with an ellipsis, and truncating if the surface measures otherwise.
+  const line = (text: string, p: Record<string, unknown> = {}) => (
+    <T wrap="truncate-end" {...p}>
+      {text}
+    </T>
+  )
   const chip = (text: string, dim = false, key?: string) => (
     <B key={key} backgroundColor={CHIP_BG} paddingX={1} flexShrink={0}>
-      <T dimColor={dim} wrap="truncate-end">{text}</T>
+      {line(text, { dimColor: dim })}
     </B>
   )
+  /** Chips in priority order, as many as fit `room` cells (padding 1 each side, a gap between); the first is cut to fit. */
+  const chipsFit = (items: { text: string; dim?: boolean; key?: string }[], room: number) => {
+    const out: RenderElement[] = []
+    let used = 0
+    for (const c of items) {
+      const gap = out.length ? 1 : 0
+      const text = out.length ? c.text : fit(c.text, room - 2)
+      const w = cells(text) + 2 + gap
+      if (!text || used + w > room) break
+      used += w
+      out.push(chip(text, c.dim, c.key))
+    }
+    return out
+  }
 
   // The details column's cells: what is left beside the padding, the sprite column and its gap.
-  const detailCells = v.bodyColumns - 2 * MEMBER_PAD - spriteCells
+  const detailCells = Math.max(1, cols - 2 * MEMBER_PAD - spriteCells)
   const member = (m: CrewMember) => {
     const id = m.row.id
     const scope = scopeOf(id)
     const rung = fromLabel(m.row)
     const from = rung ? (`↑ stepped up from ${rung}`.length <= detailCells ? `↑ stepped up from ${rung}` : `↑ from ${rung}`) : null
+    // The title line: one Button (status glyph, name, Open ↗) and the time at the right edge.
+    const took = tookOf(m.row, v.now)
+    const titleRoom = Math.max(1, detailCells - cells(took) - 1)
+    const mark = m.row.status === 'running' ? '' : `${glyph(m.row)} `
+    const name = nameOf(m.row)
+    const nameRoom = titleRoom - cells(mark)
+    // The name first: the hint takes only the room the whole name leaves.
+    const hint = nameRoom - cells(name) >= 7 ? ' Open ↗' : nameRoom - cells(name) >= 2 ? ' ↗' : ''
+    const shownName = fit(name, nameRoom - cells(hint))
+    // The pill: its bar takes what its words leave; a narrow column drops to the short words, then the bar.
+    let label = pillLabel(m)
+    let pillCells = detailCells - cells(label) - 1
+    if (pillCells < PILL_MIN_CELLS) {
+      label = shortPillLabel(m)
+      pillCells = detailCells - cells(label) - 1
+    }
+    const withPill = pillCells >= PILL_MIN_CELLS
+    label = fit(label, detailCells)
+    const chips = chipsFit(
+      [
+        { text: chipModel(m.row) },
+        { text: usd(m.cost), dim: true },
+        { text: k(m.row.tokens), dim: true, key: `crew-chip-tok:${id}` },
+      ],
+      detailCells,
+    )
     return (
       <B key={`crew-member:${id}`} flexDirection="row" columnGap={1} paddingX={MEMBER_PAD} height={heightOf(m)} overflow="hidden" hover={{ backgroundColor: HOVER_BG, scope }}>
         {/* The sprite column and the details column are two Boxes, so the details keep their width. */}
@@ -403,91 +449,82 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
             ) : null}
           </B>
         ) : null}
-        <B flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
-          <B flexDirection="row" justifyContent="space-between" columnGap={1} height={1}>
-            <B flexDirection="row" flexShrink={1} minWidth={0} alignItems="center">
-              {m.row.status === 'running' ? null : <T color={statusColor(m.row)} bold>{`${glyph(m.row)} `}</T>}
-              <Btn key={`crew-open:${id}`} plain label={nameOf(m.row)} onPress={() => act.view(id)} />
-              <B key={`crew-hint-box:${id}`} display="none" hover={{ display: 'flex', scope }} marginLeft={1}>
-                <Btn key={`crew-hint:${id}`} plain label="Open ↗" onPress={() => act.view(id)} />
-              </B>
+        <B flexDirection="column" width={detailCells} flexShrink={0} overflow="hidden">
+          <B key={`crew-title:${id}`} flexDirection="row" justifyContent="space-between" columnGap={1} height={1} width={detailCells}>
+            {/* Always shown, never revealed on hover only: the press lands wherever on the name or the hint. */}
+            <Btn key={`crew-open:${id}`} plain onPress={() => act.view(id)}>
+              {mark ? line(mark, { color: statusColor(m.row), bold: true }) : null}
+              {line(shownName)}
+              {hint ? line(hint, { dimColor: true }) : null}
+            </Btn>
+            <B key={`crew-time:${id}`} flexShrink={0}>
+              {line(took, { dimColor: true })}
             </B>
-            <T dimColor>{tookOf(m.row, v.now)}</T>
           </B>
-          <T wrap="truncate-end">{m.row.description}</T>
-          {from ? (
-            <T dimColor wrap="truncate-end">
-              {from}
-            </T>
-          ) : null}
+          <B key={`crew-task:${id}`} height={1}>
+            {line(fit(m.row.description, detailCells))}
+          </B>
+          {from ? <B height={1}>{line(fit(from, detailCells), { dimColor: true })}</B> : null}
           <B flexDirection="row" columnGap={1} alignItems="center" height={1}>
-            {img(pillSvg(m, pillPx))}
+            {withPill ? (
+              <B key={`crew-pill:${id}`} width={pillCells} flexShrink={0} overflow="hidden">
+                {img(pillSvg(m, Math.min(PILL_MAX_PX, pillCells * CELL_PX - 2)))}
+              </B>
+            ) : null}
             <B key={`crew-pill-label:${id}`} flexShrink={0}>
-              <T color={statusColor(m.row)} bold>
-                {pillLabel(m)}
-              </T>
+              {line(label, { color: statusColor(m.row), bold: true })}
             </B>
           </B>
           <B key={`crew-chips:${id}`} flexDirection="row" flexWrap="nowrap" columnGap={1} overflow="hidden" height={1}>
-            {/* Short words, so the three fit a 40-cell dock: "Sonnet med", "≈$0.06", "18k". */}
-            {chip(chipModel(m.row))}
-            {chip(usd(m.cost), true)}
-            {chip(k(m.row.tokens), true, `crew-chip-tok:${id}`)}
+            {/* By priority as the column narrows: the model, then ≈cost, then tokens. */}
+            {chips}
           </B>
         </B>
       </B>
     )
   }
 
+  // A header's line inside its border and padding.
+  const headerCells = Math.max(1, cols - 4)
   const group = (kind: CrewGroup, items: CrewMember[]) => {
     const open = v.open[kind]
-    const bar =
+    const dot = kind === 'running' ? '● ' : ''
+    const word = kind === 'running' ? 'RUNNING' : 'FINISHED'
+    const count = ` ${items.length}`
+    const chev = open ? '▾' : '▸'
+    const fixed = cells(dot) + word.length + count.length + 1 + chev.length
+    // The bar is drawn in text, so the whole line is one Button: a space either side of it.
+    const barCells = headerCells - fixed - 1
+    const showBar = barCells >= 3
+    const shares =
       kind === 'running'
-        ? groupBarSvg([{ share: items.length / Math.max(1, total), color: PILL_COLOR.running }], barPx, `${items.length} of ${total} at work`)
-        : groupBarSvg(
-            [
-              { share: done / Math.max(1, total), color: PILL_COLOR.done },
-              { share: failed / Math.max(1, total), color: PILL_COLOR.failed },
-            ],
-            barPx,
-            `${done} completed, ${failed} failed of ${total}`,
-          )
+        ? [{ share: items.length / Math.max(1, total), color: 'suggestion' }]
+        : [
+            { share: done / Math.max(1, total), color: 'success' },
+            { share: failed / Math.max(1, total), color: 'error' },
+          ]
+    let left = showBar ? barCells : 0
+    const fills = shares.map(p => {
+      const n = Math.min(left, Math.round(clamp(p.share, 0, 1) * (showBar ? barCells : 0)))
+      left -= n
+      return { n, color: p.color }
+    })
+    const wordShown = fit(word, Math.max(1, headerCells - (fixed - word.length)))
     return (
       <B key={`crew-acc-wrap:${kind}`} flexDirection="column" rowGap={R.gap}>
-        <B key={`crew-acc-box:${kind}`} flexDirection="row" alignItems="center" columnGap={1} paddingX={1} height={R.header} borderStyle="round" borderDimColor hover={{ backgroundColor: HOVER_BG }}>
-          {/* A static dot: a pulse would need an interactive Svg. */}
-          {kind === 'running' ? (
-            <B key="crew-live" flexShrink={0}>
-              <T color="suggestion">●</T>
-            </B>
-          ) : null}
-          {/* One toggle per header (the label and the count); the chevron ends the line and shows its state. */}
+        <B key={`crew-acc-box:${kind}`} flexDirection="row" alignItems="center" paddingX={1} height={R.header} borderStyle="round" borderDimColor hover={{ backgroundColor: HOVER_BG }}>
+          {/* One Button for the whole line: the dot, the label, the count, the bar and the chevron. */}
           <Btn key={`crew-acc:${kind}`} plain onPress={() => act.toggle(kind)}>
-            <T color={kind === 'running' ? 'suggestion' : undefined} dimColor={kind === 'finished'} bold>
-              {kind === 'running' ? 'RUNNING' : 'FINISHED'}
-            </T>
-            <T bold>{` ${items.length}`}</T>
+            {dot ? line(dot, { color: 'suggestion' }) : null}
+            {line(wordShown, { color: kind === 'running' ? 'suggestion' : undefined, dimColor: kind === 'finished', bold: true })}
+            {line(count, { bold: true })}
+            {showBar ? line(' ') : null}
+            {fills.map((f, n) => (f.n > 0 ? <T key={`crew-acc-bar:${kind}:${n}`} wrap="truncate-end" color={f.color}>{'━'.repeat(f.n)}</T> : null))}
+            {showBar && left > 0 ? line('━'.repeat(left), { dimColor: true }) : null}
+            {line(` ${chev}`, { dimColor: true })}
           </Btn>
-          <B flexGrow={1} flexShrink={1} minWidth={0}>
-            {img(bar)}
-          </B>
-          <B key={`crew-acc-chev:${kind}`} flexShrink={0}>
-            <T dimColor>{open ? '▾' : '▸'}</T>
-          </B>
         </B>
-        {kind === 'finished' ? (
-          <B key="crew-tally" flexDirection="row" columnGap={1} paddingX={1} height={R.tally}>
-            <B flexGrow={1} width={0} justifyContent="center" backgroundColor={CHIP_BG}>
-              <T>{`${total} tasks`}</T>
-            </B>
-            <B flexGrow={1} width={0} justifyContent="center" backgroundColor={CHIP_BG}>
-              <T color="success">{`${done} completed`}</T>
-            </B>
-            <B flexGrow={1} width={0} justifyContent="center" backgroundColor={CHIP_BG}>
-              <T color={failed ? 'error' : undefined} dimColor={!failed}>{`${failed} failed`}</T>
-            </B>
-          </B>
-        ) : null}
+        {kind === 'finished' ? tally() : null}
         {open ? (
           <B key={`crew-members:${kind}`} flexDirection="column" rowGap={R.gap}>
             {items.map(member)}
@@ -497,10 +534,36 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
     )
   }
 
+  // Three equal cells; the words shorten as the cells narrow.
+  const tally = () => {
+    const cell = Math.max(1, Math.floor((cols - 2 - 2) / 3))
+    const forms = [
+      [`${total} tasks`, `${done} completed`, `${failed} failed`],
+      [`${total} tasks`, `${done} done`, `${failed} failed`],
+      [`${total}`, `✓ ${done}`, `✗ ${failed}`],
+    ]
+    const words = (forms.find(f => f.every(w => cells(w) <= cell)) ?? (forms[2] as string[])).map(w => fit(w, cell))
+    return (
+      <B key="crew-tally" flexDirection="row" columnGap={1} paddingX={1} height={R.tally}>
+        <B flexGrow={1} width={0} justifyContent="center" backgroundColor={CHIP_BG}>
+          {line(words[0] as string)}
+        </B>
+        <B flexGrow={1} width={0} justifyContent="center" backgroundColor={CHIP_BG}>
+          {line(words[1] as string, { color: 'success' })}
+        </B>
+        <B flexGrow={1} width={0} justifyContent="center" backgroundColor={CHIP_BG}>
+          {line(words[2] as string, { color: failed ? 'error' : undefined, dimColor: !failed })}
+        </B>
+      </B>
+    )
+  }
+
   // While the reward plays its overlay draws the lead; the lead's slot keeps its room.
   const lead = v.lead.sprite
   const leadSlot = lead ? leadSlotOf(miniCols) : 0
-  const leadWords = Math.max(1, v.bodyColumns - (lead ? leadSlot + 1 : 0) - 1 - LEAD_TIME_CELLS)
+  // A narrow pane gives the time column's cells to the words.
+  const timeCells = cols >= LEAD_TIME_MIN_COLUMNS ? LEAD_TIME_CELLS : 0
+  const leadWords = Math.max(1, cols - (lead ? leadSlot + 1 : 0) - (timeCells ? timeCells + 1 : 0))
   // The overlay is placed in whole cells; a left that is not one is made up inside its image.
   const reward = v.reward ? onCellGrid(v.reward) : null
   return (
@@ -513,17 +576,18 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
         ) : null}
         {/* The words have their own width and truncate, so they never run into the time. */}
         <B key="crew-lead-words" flexDirection="column" width={leadWords} flexShrink={0} overflow="hidden">
-          <T bold wrap="truncate-end">{v.lead.name}</T>
-          <T dimColor wrap="truncate-end">{v.lead.status}</T>
+          {line(fit(v.lead.name, leadWords), { bold: true })}
+          {line(fit(v.lead.status, leadWords), { dimColor: true })}
         </B>
-        <B key="crew-lead-time" flexDirection="column" alignItems="flex-end" width={LEAD_TIME_CELLS} flexShrink={0}>
-          <T bold>{clock(v.header.elapsedMs)}</T>
-          <T dimColor>{running.length ? 'so far' : 'total'}</T>
-        </B>
+        {timeCells ? (
+          <B key="crew-lead-time" flexDirection="column" alignItems="flex-end" width={timeCells} flexShrink={0}>
+            {line(clock(v.header.elapsedMs), { bold: true })}
+            {line(running.length ? 'so far' : 'total', { dimColor: true })}
+          </B>
+        ) : null}
       </B>
-      <B key="crew-totals" flexDirection="row" columnGap={1} flexWrap="nowrap" height={R.totals}>
-        {chip(usd(v.header.cost))}
-        {chip(`${k(v.header.tokens)} tok`)}
+      <B key="crew-totals" flexDirection="row" columnGap={1} flexWrap="nowrap" overflow="hidden" height={R.totals}>
+        {chipsFit([{ text: usd(v.header.cost) }, { text: `${k(v.header.tokens)} tok` }, ...(timeCells ? [] : [{ text: clock(v.header.elapsedMs), dim: true }])], cols)}
       </B>
       {running.length ? group('running', running) : null}
       {finished.length ? group('finished', finished) : null}

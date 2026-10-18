@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { AgentInfo, EngineInterface, Register } from 'claude-code'
 
 import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
-import { INITIAL_CREW, crewSummaryOf, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, shares, stepsOf } from './behavior/crew'
+import { INITIAL_CREW, crewSummaryOf, elapsedOf, helpersRunning, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, shares, stepsOf } from './behavior/crew'
 import type { CrewState, CrewSummary } from './behavior/crew'
 import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
 import { leadStatus } from './behavior/lead-status'
@@ -28,7 +28,8 @@ import { PERSONAS } from './personas/index'
 import { onCrewChange, onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
 import { INITIAL_REACTIONS } from './behavior/reactions'
 // Crew themes (#41): the setting and /glitch crew theme. The pane draws minis with crewMini(view.crewTheme, ...).
-import { STORE_CREW_THEME, crewThemeArgOf, parseThemeArg, themeList } from './commands'
+import { STORE_CREW_THEME, crewDebugText, crewThemeArgOf, isCrewDebug, parseThemeArg, themeList } from './commands'
+import type { CrewDebugState } from './commands'
 import { CREW_THEMES, DEFAULT_CREW_THEME, crewMini, crewThemeIds } from './crew-themes/index'
 
 const INITIAL_MOOD: MoodState = { mood: 'idle', since: 0, turnSince: null, lastPromptAt: 0, oopsUntil: 0, happyUntil: 0, cheerUntil: 0, cryUntil: 0, failStreak: 0, pokedUntil: 0, pokeSeen: 0, reactions: INITIAL_REACTIONS }
@@ -98,6 +99,14 @@ const COST_FRESH_MS = 1000
 let reviewMissed = false
 /** A prompt is carrying the reminder now: claimed before awaiting, so two prompts at once cannot both. */
 let reminderInFlight = false
+/** How long a member press waits for the view to switch before it says it did not. */
+const VIEW_WAIT_MS = 4000
+/** What `/glitch crew debug` shows: the engine's last list, the last presses, the view each surface drew under. */
+const freshDebug = (): CrewDebugState => ({ list: null, listError: null, presses: [], views: {}, draws: {} })
+let debug: CrewDebugState = freshDebug()
+function recordPress(p: CrewDebugState['presses'][number]) {
+  debug.presses = [p, ...debug.presses].slice(0, 10)
+}
 
 // $.state.get needs a literal plugin and key, so these three cannot be merged.
 async function hudStats($: EngineInterface): Promise<unknown> {
@@ -132,29 +141,64 @@ async function hudPoke($: EngineInterface): Promise<unknown> {
   }
 }
 
-// Helpers' statuses from the engine's list; the crewDone remark once the reviewer finishes and nothing else runs.
-// While a row runs, each refresh touches the crew so the pane's clocks move.
+// Helpers' statuses from the engine's list. While a row runs, each refresh touches the
+// crew so the pane's clocks move.
 async function refreshCrew($: EngineInterface) {
   // Nothing runs: no status can change, so no call.
   if (!(await read($, crew)).rows.some(r => r.status === 'running')) return
-  const list = await $.agent.list().catch(() => null)
-  if (!list) return
-  const now = await $.clock.now()
-  const before = await read($, crew)
-  const after = onStatuses(before, list, now)
-  if (after.rows.every((r, i) => r.status === before.rows[i]?.status)) {
-    if (before.rows.some(r => r.status === 'running')) await update($, crew, c => ({ ...c, tickAt: now }))
-    return
+  let list: AgentInfo[] | null = null
+  try {
+    list = await $.agent.list()
+  } catch (err) {
+    debug.listError = err instanceof Error ? err.message : String(err)
   }
-  await update($, crew, c => onStatuses(c, list, now))
+  const now = await $.clock.now()
+  if (!list) return
+  debug.list = { at: now, entries: list.map(a => ({ id: a.id, status: a.status, description: a.description, ...(a.name ? { name: a.name } : {}) })) }
+  debug.listError = null
+  const got = list
+  if (!(await changeCrew($, now, c => onStatuses(c, got, now)))) {
+    if ((await read($, crew)).rows.some(r => r.status === 'running')) await update($, crew, c => ({ ...c, tickAt: now }))
+  }
+}
+
+/**
+ * One change to the crew's statuses, from whichever source (the list, a helper's own turn end or
+ * wake): the rows, the step-ups, the lead's reaction, the HUD summary at once, and the crewDone
+ * remark once the reviewer finishes and nothing else runs. False when no status changed.
+ */
+async function changeCrew($: EngineInterface, now: number, fn: (c: CrewState) => CrewState): Promise<boolean> {
+  const before = await read($, crew)
+  const sameStatuses = (c: CrewState) => c.rows.length === before.rows.length && c.rows.every((r, i) => r.status === before.rows[i]?.status)
+  if (sameStatuses(fn(before))) return false
+  await update($, crew, fn)
   const c = await read($, crew)
   queueStepUps(before.rows, c.rows)
   // The lead reacts: a member done is a brief joy and a reward, one failed a worry (behavior/reactions.ts).
   await update($, mood, m => onCrewChange(m, before, c, now))
+  // The HUD pill follows the pane now, not at the next 1 s tick.
+  await publishSummary($, true).catch(() => undefined)
   const reviewerFinished = before.rows.some(r => r.role === 'reviewer' && r.status === 'running' && c.rows.find(x => x.id === r.id)?.status !== 'running')
-  if (!reviewerFinished || helpersRunning(c) > 0 || reviewerRunning(c)) return
+  if (!reviewerFinished || helpersRunning(c) > 0 || reviewerRunning(c)) return true
   if ((await read($, mood)).turnSince !== null) crewDonePending = true
   else await say($, 'crewDone')
+  return true
+}
+
+// `/glitch crew debug`: the rows against a fresh read of the engine's list, the last presses and views.
+async function answerCrewDebug($: EngineInterface): Promise<string> {
+  const now = await $.clock.now()
+  const c = await read($, crew)
+  let freshList: NonNullable<CrewDebugState['list']>['entries'] | null = null
+  let listError = debug.listError
+  try {
+    freshList = (await $.agent.list()).map(a => ({ id: a.id, status: a.status, description: a.description, ...(a.name ? { name: a.name } : {}) }))
+  } catch (err) {
+    listError = err instanceof Error ? err.message : String(err)
+  }
+  const surfaces: readonly string[] = await $.session.surfaces().catch(() => [])
+  const panes = (await $.ui.panes().catch(() => [])).map(p => p.id)
+  return crewDebugText({ now, crew: c, list: debug.list, listError, freshList, presses: debug.presses, views: debug.views, draws: debug.draws, surfaces, panes })
 }
 
 // With no surface named (auto-open), a session the desktop or a phone draws gets the
@@ -205,12 +249,15 @@ async function crewCostOf($: EngineInterface, c: CrewState): Promise<number> {
 }
 
 // The figures glitch-hud's crew pill shows, written only when they change. No crew, no reads.
-async function publishSummary($: EngineInterface) {
+// `keepCost`: a status change publishes its counts at once with the cost as last read (no usage
+// read between the 1 s reads, so the pane and the pill keep one cost); the next tick reads it.
+async function publishSummary($: EngineInterface, keepCost = false) {
   const c = await read($, crew)
   const before = await read($, crewSummary)
   if (c.rows.length === 0 && before === null) return
   const now = await $.clock.now()
-  const next = crewSummaryOf(c, c.rows.length ? await sharedCost($, c, now) : 0, now)
+  const cost = !c.rows.length ? 0 : keepCost ? (costCache?.cost ?? before?.cost ?? 0) : await sharedCost($, c, now)
+  const next = crewSummaryOf(c, cost, now)
   if (JSON.stringify(before) !== JSON.stringify(next)) await update($, crewSummary, () => next)
 }
 
@@ -519,6 +566,7 @@ export const register: Register = (on, options) => {
   frameDue.clear()
   rewardShown.clear()
   costCache = null
+  debug = freshDebug()
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -597,6 +645,15 @@ export const register: Register = (on, options) => {
       } catch {
         // The pet just misses this one.
       }
+    } else {
+      // A helper's own turn starting: a message woke a finished one, so its row runs again.
+      const agentId = (e as { agentId?: string }).agentId as string
+      try {
+        const now = await $.clock.now()
+        await changeCrew($, now, c => onAgentWake(c, agentId, now))
+      } catch {
+        // The list's poll still sees it.
+      }
     }
     return next(e)
   })
@@ -640,7 +697,10 @@ export const register: Register = (on, options) => {
         try {
           const now = await $.clock.now()
           await update($, crew, c => onAgentTurnEnd(c, agentId, e.usage, now))
+          // The list's word first (it names a failure or a stop exactly); then, one run of a helper's
+          // loop being one turn, a row the list still shows running ends by the turn's reason.
           await refreshCrew($)
+          await changeCrew($, now, c => onAgentRunEnd(c, agentId, e.reason, now))
         } catch {
           // The tick asks for the statuses again.
         }
@@ -790,22 +850,71 @@ export const register: Register = (on, options) => {
       if (p && !isTerminal) for (const x of rows) if (x.row.id !== playing && (hasGift(m.reactions, x.row.id, now) || x.row.id === w?.rowId)) x.badge = rewardBadge(p, MINI_PIXEL)
       if (due.length) frameDue.set(e.surface, Math.min(...due))
       else frameDue.delete(e.surface)
-      // A group's open state is kept per crew: a new crew starts from the defaults.
+      // For /glitch crew debug: the view this surface draws under, and when it drew.
+      const surface = e.surface
+      const viewing = (e.props as { view?: { agentId?: string } }).view?.agentId ?? null
+      debug.views[surface] = viewing
+      debug.draws[surface] = [...(debug.draws[surface] ?? []).filter(t => now - t <= 10_000), now].slice(-200)
+      // A group's open state is kept per crew: a new crew starts from the defaults. A press is never silent:
+      // it is recorded for /glitch crew debug, and a failure is said in a toast.
       const toggle = async (group: CrewGroup) => {
-        const now2 = await read($, crew)
-        const key = openKey(now2, group, isTerminal)
-        const prefix = `${now2.startedAt ?? 0}:`
-        await update($, crewOpen, x => ({ ...Object.fromEntries(Object.entries(x).filter(([kk]) => kk.startsWith(prefix))), [key]: !isOpenIn(x, now2, group, isTerminal) }))
-      }
-      // Shows that member's transcript in the main view (only from the person's press).
-      const show = async (agentId: string) => {
-        let why: string | null = null
+        const element = isTerminal ? 'crew-finished' : `crew-acc:${group}`
         try {
-          why = (await $.ui.view({ agentId })).deny ?? null
+          const now2 = await read($, crew)
+          const key = openKey(now2, group, isTerminal)
+          const prefix = `${now2.startedAt ?? 0}:`
+          let opened = false
+          await update($, crewOpen, x => {
+            opened = !isOpenIn(x, now2, group, isTerminal)
+            return { ...Object.fromEntries(Object.entries(x).filter(([kk]) => kk.startsWith(prefix))), [key]: opened }
+          })
+          recordPress({ at: await $.clock.now(), surface, element, result: opened ? 'opened' : 'folded' })
         } catch (err) {
-          why = `could not show that crew member (${err instanceof Error ? err.message : String(err)})`
+          const why = err instanceof Error ? err.message : String(err)
+          recordPress({ at: now, surface, element, result: `failed: ${why}` })
+          $.ui.toast(`Glitch pets: could not fold or open ${group === 'running' ? 'Running' : 'Finished'} (${why})`, { timeoutMs: 6000 })
         }
-        if (why) $.ui.toast(`Glitch pets: ${why}`, { timeoutMs: 6000 })
+      }
+      // Shows that member's transcript in the main view. The view is asked first, before any other
+      // call, while the press is the person's own input; whatever comes of it is said.
+      const show = async (agentId: string) => {
+        const row = c.rows.find(r => r.id === agentId)
+        const who = row ? (row.name ?? row.role) : 'that crew member'
+        let answer: { deny?: string } | 'late' | { error: string }
+        let timer: { cancel: () => void } | null = null
+        try {
+          const asked = $.ui.view({ agentId })
+          answer = await new Promise<{ deny?: string } | 'late'>((resolve, reject) => {
+            timer = $.clock.after(VIEW_WAIT_MS, () => resolve('late'))
+            asked.then(resolve, reject)
+          })
+        } catch (err) {
+          answer = { error: err instanceof Error ? err.message : String(err) }
+        } finally {
+          ;(timer as { cancel: () => void } | null)?.cancel()
+        }
+        let text: string | null
+        let result: string
+        if (answer === 'late') {
+          result = `no answer within ${VIEW_WAIT_MS / 1000} s`
+          text = `the app did not switch to ${who}'s transcript (no answer). Open it from the tasks list (background tasks).`
+        } else if ('error' in answer) {
+          result = `failed: ${answer.error}`
+          text = `could not show ${who}'s transcript (${answer.error}). Open it from the tasks list (background tasks).`
+        } else if (answer.deny) {
+          result = `denied: ${answer.deny}`
+          // Asked after the answer, so the view itself was the press's first call.
+          const listed = await $.agent.list().then(l => l.some(a => a.id === agentId)).catch(() => true)
+          text = listed
+            ? `could not show ${who}'s transcript: ${answer.deny}. Open it from the tasks list (background tasks).`
+            : `${who} has finished and left the tasks list, so its transcript cannot be opened (${answer.deny}). Its report is in the conversation.`
+        } else {
+          result = 'shown'
+          // The terminal's view visibly switches; elsewhere say so, so a press is never silent.
+          text = isTerminal ? null : `showing ${who}'s transcript. Back: pick the main conversation in the tasks list.`
+        }
+        recordPress({ at: await $.clock.now().catch(() => now), surface, element: `crew-open:${agentId}`, result })
+        if (text) $.ui.toast(`Glitch pets: ${text}`, { timeoutMs: 8000 })
       }
       return crewTree(v, { Box, Text, Button, Svg: 'Svg' in ui ? ui.Svg : null } as never, { toggle, view: show })
     } catch {
@@ -823,13 +932,21 @@ export const register: Register = (on, options) => {
   // opens or closes here, behind the person's press.
   on('ui.press', { plugin: 'glitch-hud', element: HUD_PILL }, async ($, e, next) => {
     const r = await next(e)
-    await toggleCrew($, e.surface === 'terminal' ? PANE_SIZE.terminal : PANE_SIZE.rich).catch(() => undefined)
+    try {
+      const said = await toggleCrew($, e.surface === 'terminal' ? PANE_SIZE.terminal : PANE_SIZE.rich)
+      recordPress({ at: await $.clock.now(), surface: e.surface, element: `glitch-hud:${HUD_PILL}`, result: said })
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err)
+      recordPress({ at: 0, surface: e.surface, element: `glitch-hud:${HUD_PILL}`, result: `failed: ${why}` })
+      $.ui.toast(`Glitch pets: could not open or close the crew pane (${why}). Try /glitch crew.`, { timeoutMs: 8000 })
+    }
     return r
   })
 
   on('command.run', { command: 'glitch-pets' }, async ($, e) => {
     const themeArg = crewThemeArgOf(e.args) // crew themes (#41)
     if (themeArg !== null) return { text: await answerCrewTheme($, themeArg) }
+    if (isCrewDebug(e.args)) return { text: await answerCrewDebug($) }
     return { text: firstWord(e.args) === 'crew' ? await toggleCrew($, await commandSize($, e)) : await answerPets($, petArgsOf('glitch-pets', e.args)) }
   })
   on('command.run', { command: 'glitch' }, async ($, e, next) => {
@@ -837,6 +954,7 @@ export const register: Register = (on, options) => {
     if (!ROUTED_PETS.includes(word)) return next(e)
     const themeArg = crewThemeArgOf(e.args) // crew themes (#41)
     if (themeArg !== null) return { text: await answerCrewTheme($, themeArg) }
+    if (isCrewDebug(e.args)) return { text: await answerCrewDebug($) }
     return { text: word === 'crew' ? await toggleCrew($, await commandSize($, e)) : await answerPets($, petArgsOf('glitch', e.args)) }
   })
 

@@ -106,6 +106,7 @@ Bud · sniffing out builder-1
 - **Folding:** in the terminal the finished members always start folded into one line (`✓ 3 finished · 3 completed · 0 failed [ Show ]`); Show lists them, Hide folds them again. On the desktop, Running and Finished are accordion groups that start open; press a header to fold it to that line (Finished keeps its tally of tasks, completed and failed). The choice lasts for the current crew.
 - In the terminal there are no sprites: the lead's line carries its reactions.
 - `/glitch crew` (or `/glitch-pets crew`) opens or closes the pane. With `crewPane: auto` it opens by itself when the first crew member starts.
+- `/glitch crew debug` (or `/glitch-pets crew debug`) prints the crew rows beside the engine's own agent list (ids and statuses), the pane's last presses and what came of them, and the view each surface drew under: for checking the pane live.
 - `/glitch crew theme [id]` (or `/glitch-pets crew theme [id]`) lists the crew looks, or picks one and keeps it: `busy-hands` (default: each crew member acts its role out beside itself, and the model sets how much each beat makes and the tempo) or `hats`.
 
 The `crew` skill is the workflow Claude follows when work splits into 2 or more parts:

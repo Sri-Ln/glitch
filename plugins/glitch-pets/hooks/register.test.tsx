@@ -795,7 +795,7 @@ test('pane: pressing a crew member opens its transcript with ui.view', async ($,
   }
 })
 
-test('pane: each crew member block has a hover style and an Open ↗ hint 1 cell after the name (desktop)', async ($, on) => {
+test('pane: each crew member block has a hover style and an Open ↗ hint a cell after the name, in the name\'s own Button (desktop)', async ($, on) => {
   await mixedCrew($, on)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
@@ -804,13 +804,8 @@ test('pane: each crew member block has a hover style and an Open ↗ hint 1 cell
       const tree = await ui.drawn()
       const block = drawnByKey(tree, `crew-member:${B_ID}`)
       expect(block?.hover?.backgroundColor).toBeTruthy()
-      const hint = drawnByKey(tree, `crew-hint-box:${B_ID}`)
-      expect(hint?.props?.marginLeft).toBe(1)
-      expect(hint?.props?.display).toBe('none')
-      expect(hint?.hover?.display).toBe('flex')
-      // The hint lights with its member's block: one hover group.
-      expect(hint?.hover?.scope).toBe(block?.hover?.scope)
-      expect((await ui.find({ key: `crew-hint:${B_ID}` }))?.text).toBe('Open ↗')
+      // #45: the hint is part of the name's press target and always shown (a hover-only reveal is no press target).
+      expect((await ui.find({ key: `crew-open:${B_ID}` }))?.text).toBe('researcher-1 Open ↗')
       // A little more space between members.
       expect((await ui.find({ key: 'crew-members:finished' }))?.props.rowGap).toBeTruthy()
     } else {
@@ -1323,21 +1318,20 @@ test('pane (desktop): the progress pill is drawn for light and dark: a transluce
 
 test('pane (desktop): an accordion header has a border, a live dot on Running and its chevron at the far right', async ($, on) => {
   await mixedCrew($, on)
-  const chev = async (ui: { drawn: () => Promise<unknown> }, kind: string) => stringOf(textIn(drawnByKey(await ui.drawn(), `crew-acc-chev:${kind}`)))
+  // #45: the dot, the label, the count, the bar and the chevron are one Button's Text children.
+  const parts = async (ui: { drawn: () => Promise<unknown> }, kind: string) => ((drawnByKey(await ui.drawn(), `crew-acc:${kind}`)?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object').map(stringOf)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
     if (surface === 'desktop') {
       for (const kind of ['running', 'finished']) {
         const box = drawnByKey(await ui.drawn(), `crew-acc-box:${kind}`)
         expect(box?.props?.borderStyle).toBeTruthy()
-        // The chevron ends the line, after the bar.
-        const kids = ((box?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
-        expect(kids[kids.length - 1]?.props?.key).toBe(`crew-acc-chev:${kind}`)
       }
-      expect(await chev(ui, 'running')).toBe('▾')
+      // The chevron ends the line, after the bar.
+      expect((await parts(ui, 'running')).at(-1)).toBe(' ▾')
       await ui.press({ key: 'crew-acc:running' })
-      expect(await chev(ui, 'running')).toBe('▸')
-      expect(stringOf(textIn(drawnByKey(await ui.drawn(), 'crew-live')))).toBe('●')
+      expect((await parts(ui, 'running')).at(-1)).toBe(' ▸')
+      expect((await parts(ui, 'running'))[0]).toBe('● ')
     } else expect(await ui.find({ key: 'crew-acc:running' })).toBeFalsy()
     await ui.unmount()
   }
@@ -1357,7 +1351,7 @@ test('pane: a refused or failed ui.view is said in a toast', async ($, on) => {
       const ui = await mountPane($, surface)
       await ui.press({ key: `crew-open:${B_ID}` })
       expect(toasts.filter(t => t.startsWith('Glitch pets: '))).toHaveLength(1)
-      if (a === 'deny') expect(toasts).toContain('Glitch pets: not now')
+      if (a === 'deny') expect(toasts[0]).toContain(': not now')
       await ui.unmount()
     }
   }
