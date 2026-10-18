@@ -241,8 +241,8 @@ async function hasUiView($: EngineInterface): Promise<boolean> {
     const v = await $.session.version()
     uiViewSupport = versionAtLeast(v.base ?? v.version, UI_VIEW_SINCE)
   } catch {
-    // Asked again at the next draw; until then no Open.
-    return false
+    // No version to read (an engine older still, or a refusal): no Open for this load.
+    uiViewSupport = false
   }
   return uiViewSupport
 }
