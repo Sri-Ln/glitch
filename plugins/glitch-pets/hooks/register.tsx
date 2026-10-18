@@ -13,8 +13,8 @@ import { createPlayer, frameIndex } from './behavior/player'
 import { REWARD_MS, crewName, hasGift, rewardAt } from './behavior/reactions'
 import { rewardBadge, rewardFrame, rewardFrameTimes, rewardTimeline } from './behavior/reward'
 import { STORE_STREAK, advance, asStreak } from './behavior/streak'
-import { AGENT_PREFIX, agentSpecs, claimStepUp, ladderOf, rungOfType, stepUpNote, stepUpsFor } from './behavior/tiers'
-import type { Rung, StepUp } from './behavior/tiers'
+import { AGENT_PREFIX, REVIEWER_TYPE, agentSpecs, claimStepUp, isReviewerName, isReviewerSpawn, isReviewerType, ladderOf, reviewerSpec, rungOfType, stepUpNote, stepUpsFor } from './behavior/tiers'
+import type { CrewTiers, Rung, StepUp } from './behavior/tiers'
 import type { MoodArt, MoodId, Persona, PetId, Sprite, VoiceMoment } from './behavior/types'
 import { PET_IDS } from './behavior/types'
 import { INITIAL_VOICE, pickLine } from './behavior/voice'
@@ -373,7 +373,8 @@ async function answerPets($: EngineInterface, arg: string): Promise<string> {
 // review reminder's channel): Claude retries under the next rung's type, so the
 // retry's answer reaches it as its own helper's task notification.
 
-let ladder: Rung[] = ladderOf(parsePetsConfig({}).config.crewTiers)
+let crewTiers: CrewTiers = parsePetsConfig({}).config.crewTiers
+let ladder: Rung[] = ladderOf(crewTiers)
 /** Failed crew members whose note has not reached the model yet. */
 let stepUpsQueued: StepUp[] = []
 /** Notes sent this main turn: the retry spawn they ask for claims one, linking its row. */
@@ -458,7 +459,13 @@ function crewSpawnOf<E extends { subagentType: string; model?: string; fork: boo
     stepUpsStale = []
     steppedFrom = new Set()
   }
-  const asked = (e as { resume?: unknown }).resume || e.fork || e.workflow ? null : rungOfType(ladder, e.subagentType)
+  const started = !((e as { resume?: unknown }).resume || e.fork || e.workflow)
+  // The crew's reviewer (#45), by its reviewer-<n> name, runs as the lean crew-reviewer whatever type it was asked on.
+  if (started && isReviewerSpawn(e)) {
+    const forced = isReviewerType(e.subagentType) ? e : { ...e, subagentType: `${AGENT_PREFIX}${REVIEWER_TYPE}` }
+    return { e: crewModelOf(forced), step: { rung: REVIEWER_TYPE }, restore: () => undefined }
+  }
+  const asked = started ? rungOfType(ladder, e.subagentType) : null
   if (!asked) return none
   const retry = findRetry(e.subagentType, e.name)
   if (!retry) {
@@ -479,16 +486,17 @@ function crewSpawnOf<E extends { subagentType: string; model?: string; fork: boo
   }
 }
 
-/** A spawn on a crew type runs on the type's model: a different `model` is set back to it. */
+/** A spawn on a crew type (or the reviewer's) runs on the type's model: a different `model` is set back to it. */
 function crewModelOf<E extends { subagentType: string; model?: string; fork: boolean; workflow?: unknown }>(e: E): E {
-  const rung = (e as { resume?: unknown }).resume || e.fork || e.workflow ? null : rungOfType(ladder, e.subagentType)
-  return !rung || e.model === undefined || e.model === rung.model ? e : { ...e, model: rung.model }
+  const fresh = !((e as { resume?: unknown }).resume || e.fork || e.workflow)
+  const pinned = !fresh ? null : isReviewerType(e.subagentType) ? crewTiers.reviewer : rungOfType(ladder, e.subagentType)
+  return !pinned || e.model === undefined || e.model === pinned.model ? e : { ...e, model: pinned.model }
 }
 
-/** One agent type per rung (glitch-pets:crew-light, crew-light-high, …): effort can only come from a type. */
+/** One agent type per rung (glitch-pets:crew-light, crew-light-high, …) and the lean reviewer: effort can only come from a type. */
 async function registerCrewTypes($: EngineInterface) {
   const failed: string[] = []
-  for (const spec of agentSpecs(ladder)) {
+  for (const spec of [...agentSpecs(ladder), reviewerSpec(crewTiers)]) {
     try {
       await $.agent.register(spec)
     } catch {
@@ -962,7 +970,8 @@ export const register: Register = (on, options) => {
   })
 
   // ── Crew tiers (#43): hooks ──
-  ladder = ladderOf(config.crewTiers)
+  crewTiers = config.crewTiers
+  ladder = ladderOf(crewTiers)
   stepUpsQueued = []
   stepUpsSent = []
   stepUpsInFlight = []
@@ -973,9 +982,11 @@ export const register: Register = (on, options) => {
   // the type's (session.start registers the types, agent.spawn pins their model, prompt.submit
   // carries the step-up notes: one hook per event, so those are lines in the hooks above).
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
-    const a = e as typeof e & { subagent_type?: string; effort?: string }
-    const asked = a.effort !== undefined && a.subagent_type ? rungOfType(ladder, a.subagent_type) : null
-    const rung = asked ? (findRetry(a.subagent_type as string, (a as { name?: string }).name)?.target ?? asked) : null
+    const a = e as typeof e & { subagent_type?: string; effort?: string; name?: string }
+    // The reviewer (its type, or a reviewer-<n> name agent.spawn moves onto it) runs at the reviewer's effort.
+    const reviewer = a.effort !== undefined && (isReviewerName(a.name) || (!!a.subagent_type && isReviewerType(a.subagent_type)))
+    const asked = a.effort !== undefined && a.subagent_type && !reviewer ? rungOfType(ladder, a.subagent_type) : null
+    const rung = reviewer ? crewTiers.reviewer : asked ? (findRetry(a.subagent_type as string, a.name)?.target ?? asked) : null
     return next(!rung || a.effort === rung.effort ? e : ({ ...a, effort: rung.effort } as typeof e))
   })
   // ── end crew tiers (hooks) ──

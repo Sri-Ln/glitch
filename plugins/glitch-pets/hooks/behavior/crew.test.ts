@@ -37,6 +37,17 @@ test('a spawn starts a crew and a row', () => {
   expect(helpersRunning(s)).toBe(1)
 })
 
+test('a row on the crew-reviewer type is a reviewer whatever its name or description (#45)', () => {
+  let s = spawn(INITIAL_CREW, 'a1', { name: 'builder-1' })
+  s = spawn(s, 'a2', { name: 'builder-2' })
+  s = spawn(s, 'r1', { description: 'Build a summary', rung: 'crew-reviewer' })
+  expect(s.rows[2]?.role).toBe('reviewer')
+  expect(helpersRunning(s)).toBe(2)
+  expect(reviewerRunning(s)).toBe(true)
+  s = spawn(s, 'x', { name: 'helper', description: 'Build it', rung: 'crew-light' })
+  expect(s.rows[3]?.role).toBe('builder')
+})
+
 test('a spawn while the crew is open joins it, in any later main turn', () => {
   let s = onMainTurnEnd(spawn())
   s = onMainTurnStart(s)

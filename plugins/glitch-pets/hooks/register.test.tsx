@@ -973,7 +973,7 @@ test('glitch-pets publishes a crew summary for the HUD pill while a crew is open
 // ── Crew tiers (#43) ──
 
 const registered = (on: On, fail = false) => {
-  const specs: { name: string; model?: string; effort?: string | number; description: string; disallowedTools?: readonly string[] }[] = []
+  const specs: { name: string; model?: string; effort?: string | number; description: string; disallowedTools?: readonly string[]; maxTurns?: number; prompt: string }[] = []
   on('agent.register', (_$, e) => {
     if (fail) throw new Error('schema refused')
     specs.push(e)
@@ -993,6 +993,7 @@ test('the crew types are registered at the start, each with its rung\'s model an
     'crew-heavy claude-opus-5-5 high',
     'crew-heavy-xhigh claude-opus-5-5 xhigh',
     'crew-heavy-max claude-opus-5-5 max',
+    'crew-reviewer claude-sonnet-5-5 low',
   ])
   expect(specs.every(s => s.disallowedTools?.includes('Agent'))).toBe(true)
   expect(toasts.filter(t => t.includes('crew agent types'))).toEqual([])
@@ -1047,6 +1048,65 @@ test('an Agent call\'s own effort is set to the crew type\'s, kept for others', 
   expect(inputs[0]?.effort).toBe('low')
   expect(inputs[0]?.subagent_type).toBe('glitch-pets:crew-light')
   expect(inputs[1]?.effort).toBe('max')
+})
+
+// ── The lean reviewer (#45) ──
+
+test('the reviewer type is registered with its model, effort and turn cap, and no agents of its own', async ($, on) => {
+  const specs = registered(on)
+  await session($, on)
+  const r = specs.find(s => s.name === 'crew-reviewer')
+  expect(r).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low', maxTurns: 18, disallowedTools: ['Agent', 'Edit', 'Write', 'NotebookEdit'] })
+  expect(r?.prompt).toContain('Never redo or recompute the work from scratch')
+})
+
+test('the crewTiers reviewer entry changes the reviewer type; a bad one keeps its default and toasts', { options: { crewTiers: '{"reviewer":{"model":"claude-haiku-5-5","effort":"xhigh"}}' } }, async ($, on) => {
+  const specs = registered(on)
+  await session($, on)
+  expect(specs.find(s => s.name === 'crew-reviewer')).toMatchObject({ model: 'claude-haiku-5-5', effort: 'low' })
+  expect(toasts.some(t => t.includes('crewTiers.reviewer.effort'))).toBe(true)
+})
+
+test('a spawn named reviewer-<n> on any other type is started as the lean crew-reviewer, on its model', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  await spawnCrew($, 'B', 'crew-light', 'builder-2')
+  await $.agent.spawn({ tool_use_id: 'tu-R', prompt: 'p', description: 'R', subagentType: 'glitch-pets:crew-heavy', name: 'reviewer-1', model: 'opus' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-R2', prompt: 'p', description: 'R2', subagentType: 'general-purpose', name: 'Reviewer-2' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-R3', prompt: 'p', description: 'R3', subagentType: 'glitch-pets:crew-reviewer', name: 'reviewer-3', model: 'claude-opus-5-5' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-C', prompt: 'p', description: 'C', subagentType: 'general-purpose', name: 'builder-3' } as never)
+  expect(h.spawned.slice(2)).toEqual([
+    { type: 'glitch-pets:crew-reviewer', model: 'claude-sonnet-5-5', name: 'reviewer-1' },
+    { type: 'glitch-pets:crew-reviewer', name: 'Reviewer-2' },
+    { type: 'glitch-pets:crew-reviewer', model: 'claude-sonnet-5-5', name: 'reviewer-3' },
+    { type: 'general-purpose', name: 'builder-3' },
+  ])
+})
+
+test('unnamed review-like spawns and another plugin\'s reviewer keep their type while a crew is open; so does a resumed reviewer', async ($, on) => {
+  const { h } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  await spawnCrew($, 'B', 'crew-light', 'builder-2')
+  await $.agent.spawn({ tool_use_id: 'tu-X', prompt: 'p', description: 'review the docs', subagentType: 'Explore' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-Y', prompt: 'p', description: 'Audit dependency licenses', subagentType: 'general-purpose' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-Z', prompt: 'p', description: 'Check the auth code', subagentType: 'x:security-reviewer' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-W', prompt: 'p', description: 'W', subagentType: 'general-purpose', name: 'reviewer-1', resume: { agentId: 'ag-R' } } as never)
+  expect(h.spawned.slice(2)).toEqual([{ type: 'Explore' }, { type: 'general-purpose' }, { type: 'x:security-reviewer' }, { type: 'general-purpose', name: 'reviewer-1' }])
+})
+
+test('a reviewer\'s Agent call runs at the reviewer\'s effort', async ($, on) => {
+  const inputs: Record<string, unknown>[] = []
+  on('tool.call', (_$, e) => {
+    inputs.push(e as never)
+    return { result: 'ok' } as never
+  })
+  await session($, on)
+  await $.tool.call({ tool: 'Agent', description: 'a', prompt: 'p', subagent_type: 'glitch-pets:crew-reviewer', effort: 'high' } as never)
+  await $.tool.call({ tool: 'Agent', description: 'b', prompt: 'p', subagent_type: 'glitch-pets:crew-heavy', name: 'reviewer-1', effort: 'max' } as never)
+  await $.tool.call({ tool: 'Agent', description: 'c', prompt: 'p', subagent_type: 'Explore', name: 'builder-1', effort: 'max' } as never)
+  expect(inputs.map(i => i.effort)).toEqual(['low', 'low', 'max'])
 })
 
 const spawnCrew = async ($: Engine, id: string, type: string, name: string) =>

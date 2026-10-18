@@ -2,6 +2,7 @@
 // A crew spans main turns (background helpers finish in later turns, the reviewer
 // is spawned after them): it stays open until a quiet main turn ends, one where no
 // helper ran at its start, none was spawned and none runs at its end.
+import { REVIEWER_TYPE } from './tiers'
 import type { Role, Tier } from './types'
 
 export type UsageLike = { input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number }
@@ -101,7 +102,9 @@ export function onSpawn(s: CrewState, a: { agentId: string; name?: string; descr
   }
   const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
   const row: CrewRow = {
-    id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description, role: roleOf(a.name, a.description),
+    id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description,
+    // A row on the lean reviewer's type is the reviewer, whatever its name or description.
+    role: a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description),
     tier: tierOf(a.model, null), model: a.model, effort: null, tokens: 0, weight: 0, turnTokens: 0, turnWeight: 0, tools: 0, startedAt: a.now, endedAt: null, status: 'running',
     ...(a.rung ? { rung: a.rung } : {}), ...(a.stepUps ? { stepUps: a.stepUps } : {}), ...(a.steppedUpFrom ? { steppedUpFrom: a.steppedUpFrom } : {}),
   }

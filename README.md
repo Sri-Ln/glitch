@@ -113,8 +113,8 @@ The `crew` skill is the workflow Claude follows when work splits into 2 or more 
 
 1. **Plan:** a short task list, with a role and tier for each task.
 2. **Crew members:** role-named crew members run the independent tasks in parallel.
-3. **Review:** one reviewer checks the whole result against the plan.
-4. **Fix loop:** each finding goes back to the crew member that did that part, then it is reviewed again, at most 2 rounds. Whatever is still open is reported plainly.
+3. **Review:** one quick reviewer verifies the whole result against the plan (see "The lean review" below).
+4. **Fix loop:** each finding goes back to the crew member that did that part, then the reviewer checks only what changed, at most 2 rounds. Whatever is still open is reported plainly.
 
 A standing system-prompt rule asks for this. If 2 or more crew members (named `builder-1`, `researcher-2` and so on) finish with no reviewer, Claude gets a one-time reminder on its next turn to run the review.
 
@@ -122,7 +122,7 @@ A standing system-prompt rule asks for this. If 2 or more crew members (named `b
 |---|---|---|
 | `crewPane` | `auto` | `auto` opens the pane when a crew starts; `manual` waits for `/glitch crew` |
 | `crewReview` | `true` | the crew rule in the system prompt, and the reminder when a review was skipped |
-| `crewTiers` | empty | JSON: each crew tier's model and effort (see below); empty uses the default table |
+| `crewTiers` | empty | JSON: each crew tier's model and effort, and the reviewer's (see below); empty uses the default table |
 | `crewTheme` | `busy-hands` | how crew members look in the pane: `busy-hands` or `hats`; `/glitch crew theme <id>` overrides it |
 
 #### Who picks the roles, models and effort
@@ -151,6 +151,22 @@ A standing system-prompt rule asks for this. If 2 or more crew members (named `b
   A task gets at most 2 step-ups. The step-up types (`crew-light-high`, `crew-medium-high`, `crew-heavy-xhigh`, `crew-heavy-max`) are registered next to the tiers. `xhigh` and `max` are only ever steps, never a tier's own effort. With your own `crewTiers`, the steps follow the same rule: the tier's model at high effort (if it isn't already high), then the next tier, and after the heavy tier each higher effort.
 - **Other agent types:** an agent Claude starts on any other type (`general-purpose`, your `.claude/agents/*.md`) picks its model as Claude Code always does: the Agent call's `model`, then the type's `model`, then your default subagent model, then the session's model. A fork always runs on its parent's model. The plugin leaves those alone and doesn't step them up.
 - **What the pane shows:** the model and effort each crew member's requests actually use.
+
+#### The lean review
+
+The reviewer checks the crew's work. It doesn't do the work again. Redoing every task would roughly double the cost and the time of the crew.
+
+- **What it checks:** it reads the plan, each crew member's report and the files or outputs that changed (the diff). It runs the project's existing tests, linters and checks, if there are any. It spot-checks at most 3 items against the plan, picking the riskiest. It only looks deeper where a concrete check fails, for example a failing test, a missing file or a value that contradicts its source. It never recomputes the work from scratch and doesn't change files.
+- **What it returns:** a short list of findings, each saying where it is and which task it belongs to, or "no findings", in under about 200 words.
+- **Model, effort and limit:** it runs as its own agent type, `glitch-pets:crew-reviewer`, on Sonnet 5.5 (`claude-sonnet-5-5`) at low effort. It has a limit of 18 turns and is told to stop checking by turn 14, so it always has room to send its findings. It can run commands (for the checks) but can't edit files or start agents of its own. Claude starts it as `reviewer-1`. If Claude starts an agent named `reviewer-<n>` on another type anyway, the plugin moves it onto `glitch-pets:crew-reviewer`, with the reviewer's model and effort. Only the name counts: other agents that review something (an Explore agent reading docs, another plugin's reviewer) keep their own type.
+- **Fix rounds:** after the fixes, a second review checks only what changed and whether each finding is fixed. There are at most 2 review rounds.
+- **Changing it:** add a `reviewer` entry to `crewTiers`. For example, to use Haiku at medium effort:
+
+  ```json
+  { "reviewer": { "model": "claude-haiku-5-5", "effort": "medium" } }
+  ```
+
+  The reviewer's `effort` is `low`, `medium` or `high`. A field you leave out or get wrong keeps its default. The reviewer never steps up.
 
 ## Themes
 
