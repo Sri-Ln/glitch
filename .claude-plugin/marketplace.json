@@ -5,6 +5,6 @@
   "plugins": [
     { "name": "glitch-core", "source": "./plugins/glitch-core", "description": "Shared themes and the /glitch command.", "version": "0.2.0", "category": "mod" },
     { "name": "glitch-hud", "source": "./plugins/glitch-hud", "description": "Band above the prompt: turn, speed, cost and budget, cache countdown with keep-warm, context, git.", "version": "0.5.2", "category": "mod" },
-    { "name": "glitch-pets", "source": "./plugins/glitch-pets", "description": "Pick a pixel pet for the HUD: moods, a signature motion, short remarks; a crew pane for helper agents.", "version": "0.4.1", "category": "mod" }
+    { "name": "glitch-pets", "source": "./plugins/glitch-pets", "description": "Pick a pixel pet for the HUD: moods, a signature motion, short remarks; a crew pane for helper agents.", "version": "0.4.2", "category": "mod" }
   ]
 }
