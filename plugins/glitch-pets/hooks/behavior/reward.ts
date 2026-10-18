@@ -1,13 +1,14 @@
 // The fishing-rod reward: when a crew member finishes, the lead does its flourish, casts a line
 // down the pane and lowers a gift to that member's row, which keeps it as a badge. Pure.
 //
-// It is ONE Svg laid over the pane for the moment (REWARD_MS), animated inside itself with SMIL,
-// so it never depends on the pane's redraws: the markup is the same on every redraw (it starts
-// when the surface first shows it). Its static rendering, on a surface that ignores SMIL, is the
-// end state: the lead with its rod put away and the gift by the receiver, no line. Within one moment the
-// markup never changes; the next moment's differs (data-moment). Reduced motion
-// draws exactly that. The overlay draws the lead itself, so while it is up the pane leaves out its
-// own lead sprite.
+// The moment is drawn frame by frame by the pane: rewardFrame gives the STATIC Svg for a time t
+// into the moment, and rewardFrameTimes the next time that drawing changes, so the pane's frame
+// clock redraws exactly then (the flourish at its own fps, the line, the gift and the reel at about
+// 10 fps). No SMIL: the desktop draws an Svg as an image, so an animation inside it never plays.
+// Every frame has the same box (one absolutely placed overlay from the lead down past the
+// receiver). Reduced motion, and any time past the moment's end, draw the end state: the lead
+// with its rod put away and the gift by the receiver, no line. The overlay draws the lead itself,
+// so while it is up the pane leaves out its own lead sprite.
 import type { Persona, Frame, Sprite } from './types'
 import { GIFT, SPARKS } from './reward-art'
 import { REWARD_MS } from './reactions'
@@ -70,21 +71,60 @@ function rects(palette: Readonly<Record<string, string>>, frame: Frame, x: numbe
   return out
 }
 
-const ms = (n: number): string => `${Math.round(n)}ms`
-/** On a hidden element: visible from a to b. */
-const during = (a: number, b: number): string => `<set attributeName="visibility" to="visible" begin="${ms(a)}" dur="${ms(b - a)}"/>`
-/** On a visible element (the end state): hidden until t. */
-const hiddenUntil = (t: number): string => `<set attributeName="visibility" to="hidden" begin="0ms" dur="${ms(t)}"/>`
-const EASE_OUT = 'calcMode="spline" keyTimes="0;1" keySplines="0 0 0.58 1"'
-const EASE_IN = 'calcMode="spline" keyTimes="0;1" keySplines="0.42 0 1 1"'
-const move = (from: [number, number], to: [number, number], a: number, b: number, ease: string): string =>
-  `<animateTransform attributeName="transform" type="translate" values="${n2(from[0])} ${n2(from[1])};${n2(to[0])} ${n2(to[1])}" begin="${ms(a)}" dur="${ms(b - a)}" fill="freeze" ${ease}/>`
+/** The line, the gift's slide and the reel are sampled at about 10 fps (the pane's 100 ms tick). */
+const TWEEN_MS = 100
+const easeOut = (u: number): number => 1 - (1 - u) * (1 - u)
+const easeIn = (u: number): number => u * u
+const clamp01 = (u: number): number => (u < 0 ? 0 : u > 1 ? 1 : u)
+const lerp = (a: number, b: number, u: number): number => a + (b - a) * u
 
-export function rewardOverlay(i: RewardInput): RewardOverlay | null {
-  if (i.receiverIndex < 0 || i.now >= i.startedAt + REWARD_MS) return null
+/** Sample times of a tween from a to b (its first frame, at a, is the pose before it): a + step, ..., b. */
+function tween(a: number, b: number): number[] {
+  const n = Math.max(1, Math.round((b - a) / TWEEN_MS))
+  return Array.from({ length: n }, (_, k) => Math.round(a + ((k + 1) * (b - a)) / n))
+}
+
+/** Every time (ms from the start) the moment's drawing changes, ascending, from 0. */
+function changeTimes(receiverIndex: number, flourishFrames: number, flourishFps: number): number[] {
+  const t = rewardTimeline(receiverIndex)
+  const period = 1000 / Math.max(1, flourishFps)
+  const out = new Set<number>()
+  for (let k = 0; k < flourishFrames; k++) if (k * period < t.grab) out.add(Math.round(k * period))
+  for (const x of [t.grab, t.flick, t.cast, t.release, t.stow]) out.add(x)
+  for (const x of [...tween(t.cast, t.land), ...tween(t.release, t.caught), ...tween(t.reel, t.stow)]) out.add(x)
+  for (let k = 0; k <= SPARKS.length; k++) out.add(Math.min(t.caught + k * SPARK_STEP_MS, t.stow))
+  return [...out].filter(x => x <= t.end).sort((x, y) => x - y)
+}
+
+const DEFAULT_FLOURISH = { frames: 6, fps: 5 }
+
+/**
+ * The next time (ms from the moment's start) after `t` that the drawing changes, or null when it
+ * will not change again (the moment is drawn out, or reduced motion draws only the end state).
+ * The flourish's frame count and fps come from the lead's `pleased` mood (default 6 at 5 fps).
+ */
+export function rewardFrameTimes(receiverIndex: number, t: number, reducedMotion = false, flourish: { frames: number; fps: number } = DEFAULT_FLOURISH): number | null {
+  if (reducedMotion || receiverIndex < 0) return null
+  return changeTimes(receiverIndex, flourish.frames, flourish.fps).find(x => x > t) ?? null
+}
+
+export type RewardFrameInput = Omit<RewardInput, 'now'> & {
+  /** Ms since the moment's start (now - startedAt). */
+  t: number
+}
+
+/**
+ * The moment's drawing at `t` ms into it: one static Svg (no SMIL), the same box at every t. A
+ * time between two change times draws the earlier one's frame. Null for no receiver or once the
+ * slot (REWARD_MS) is over.
+ */
+export function rewardFrame(i: RewardFrameInput): RewardOverlay | null {
+  if (i.receiverIndex < 0 || i.t >= REWARD_MS) return null
   const p = i.persona
   const pal = p.palette
-  const t = rewardTimeline(i.receiverIndex)
+  const T = rewardTimeline(i.receiverIndex)
+  const flourish = p.moods.pleased.frames
+  const fps = p.moods.pleased.fps
   const px = i.leadBox.width / 16
   const mini = i.mini ?? { left: i.leadBox.left, width: 24, height: 24 }
   const gpx = mini.width / 16
@@ -108,38 +148,54 @@ export function rewardOverlay(i: RewardInput): RewardOverlay | null {
   const width = Math.ceil(Math.max(lx + 16 * px, gx + giftW + 3 * gpx, xb + giftW / 2, xh + giftW / 2)) + 1
   const height = Math.ceil(Math.max(gy + giftH, my + mini.height, ly + 13 * px)) + 2
 
-  const lead = (frame: Frame) => rects(pal, frame, lx, ly, px)
-  const endState = `<g>${i.reducedMotion ? '' : hiddenUntil(t.stow)}${lead(p.rod.stowed)}</g>`
-  const giftEnd = (anim: string) => `<g>${anim}${rects(pal, GIFT, gx, gy, gpx)}</g>`
-  // data-moment is inert: it keys the markup to this moment, so back-to-back moments differ and the second plays from its start.
-  const open = `<svg xmlns="http://www.w3.org/2000/svg" data-moment="${i.startedAt}" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" shape-rendering="crispEdges">`
-  if (i.reducedMotion) return { svg: `${open}${endState}${giftEnd('')}</svg>`, width, height, top, left }
-
-  const line = i.lineColor ?? '#8a90a8'
+  // The frame shown at t is the one from the last change at or before it.
+  const changes = changeTimes(i.receiverIndex, flourish.length, fps)
+  const t = (i.reducedMotion ? changes : changes.filter(x => x <= Math.max(0, i.t))).pop() ?? 0
+  const lineColor = i.lineColor ?? '#8a90a8'
+  const group = (name: string, body: string, extra = ''): string => `<g data-part="${name}"${extra}>${body}</g>`
+  const vline = (x: number, y1: number, y2: number): string => group('line', `<line x1="${n2(x)}" y1="${n2(y1)}" x2="${n2(x)}" y2="${n2(y2)}" stroke="${lineColor}" stroke-width="1"/>`)
   let s = ''
+
   // The lead: its flourish, then the rod up, the cast, bent under the gift, up again, put away.
-  const flourish = p.moods.pleased.frames
-  const step = t.grab / flourish.length
-  flourish.forEach((f, k) => (s += `<g visibility="hidden">${during(k * step, (k + 1) * step)}${lead(f)}</g>`))
-  const poses: [Frame, number, number][] = [[p.rod.hold.frame, t.grab, t.flick], [p.rod.flick.frame, t.flick, t.cast], [p.rod.bent.frame, t.cast, t.release], [p.rod.hold.frame, t.release, t.stow]]
-  for (const [f, a, b] of poses) s += `<g visibility="hidden">${during(a, b)}${lead(f)}</g>`
-  s += endState
-  // The line drops from the bent tip with the gift on the hook, easing out.
-  s += `<line x1="${n2(xb)}" y1="${n2(yb)}" x2="${n2(xb)}" y2="${n2(yLand)}" stroke="${line}" stroke-width="1" visibility="hidden">${during(t.cast, t.release)}<animate attributeName="y2" values="${n2(yb + 2)};${n2(yLand)}" begin="${ms(t.cast)}" dur="${ms(t.land - t.cast)}" fill="freeze" ${EASE_OUT}/></line>`
-  s += `<g visibility="hidden">${during(t.cast, t.release)}${move([0, yb + 2 - yLand], [0, 0], t.cast, t.land, EASE_OUT)}${rects(pal, GIFT, xb - giftW / 2, yLand, gpx)}</g>`
-  // The gift slides off the hook into the member's arms and stays: the end state.
-  s += giftEnd(`${hiddenUntil(t.release)}${move([xb - giftW / 2 - gx, yLand - gy], [0, 0], t.release, t.caught, EASE_OUT)}`)
-  // The empty hook hangs, then reels back up and the rod straightens.
-  const up = yh + 2 - yLand
-  s += `<line x1="${n2(xh)}" y1="${n2(yh)}" x2="${n2(xh)}" y2="${n2(yLand)}" stroke="${line}" stroke-width="1" visibility="hidden">${during(t.release, t.stow)}<animate attributeName="y2" values="${n2(yLand)};${n2(yh + 2)}" begin="${ms(t.reel)}" dur="${ms(t.stow - t.reel)}" fill="freeze" ${EASE_IN}/></line>`
-  s += `<path d="M${n2(xh)} ${n2(yLand)}v3h-2v-1.5" fill="none" stroke="${line}" stroke-width="1" visibility="hidden">${during(t.release, t.stow)}${move([0, 0], [0, up], t.reel, t.stow, EASE_IN)}</path>`
-  // The catch: a sparkle grows and bursts by the mini's head and above the gift.
-  SPARKS.forEach((sp, k) => {
-    const h = (sp.length * gpx) / 2
-    const a = t.caught + k * SPARK_STEP_MS
-    s += `<g visibility="hidden">${during(a, Math.min(a + SPARK_STEP_MS, REWARD_MS))}${rects(pal, sp, miniLeft + 2 * gpx - h, my + 2 * gpx - h, gpx)}${rects(pal, sp, gx + giftW / 2 - h, gy - 2 * gpx - h, gpx)}</g>`
-  })
-  return { svg: `${open}${s}</svg>`, width, height, top, left }
+  let leadFrame: Frame
+  let poseName: string
+  if (t < T.grab) {
+    const k = Math.min(flourish.length - 1, Math.floor((t * fps) / 1000 + 1e-9))
+    leadFrame = flourish[k] ?? p.rod.stowed
+    poseName = `flourish-${k}`
+  } else if (t < T.flick) [leadFrame, poseName] = [p.rod.hold.frame, 'hold']
+  else if (t < T.cast) [leadFrame, poseName] = [p.rod.flick.frame, 'flick']
+  else if (t < T.release) [leadFrame, poseName] = [p.rod.bent.frame, 'bent']
+  else if (t < T.stow) [leadFrame, poseName] = [p.rod.hold.frame, 'hold']
+  else [leadFrame, poseName] = [p.rod.stowed, 'stowed']
+  s += group('lead', rects(pal, leadFrame, lx, ly, px), ` data-pose="${poseName}"`)
+
+  if (t >= T.cast && t < T.release) {
+    // The line drops from the bent tip with the gift on the hook, easing out, and hangs there.
+    const yEnd = t < T.land ? lerp(yb + 2, yLand, easeOut(clamp01((t - T.cast) / (T.land - T.cast)))) : yLand
+    s += vline(xb, yb, yEnd)
+    s += group('gift', rects(pal, GIFT, xb - giftW / 2, yEnd, gpx))
+  } else if (t >= T.release) {
+    // The gift slides off the hook into the member's arms and stays: the end state.
+    const u = easeOut(clamp01((t - T.release) / (T.caught - T.release)))
+    s += group('gift', rects(pal, GIFT, lerp(xb - giftW / 2, gx, u), lerp(yLand, gy, u), gpx))
+    if (t < T.stow) {
+      // The empty hook hangs, then reels back up as the rod straightens.
+      const yHook = t < T.reel ? yLand : lerp(yLand, yh + 2, easeIn(clamp01((t - T.reel) / (T.stow - T.reel))))
+      s += vline(xh, yh, yHook)
+      s += group('hook', `<path d="M${n2(xh)} ${n2(yHook)}v3h-2v-1.5" fill="none" stroke="${lineColor}" stroke-width="1"/>`)
+    }
+    // The catch: a sparkle grows and bursts by the mini's head and above the gift.
+    const k = Math.floor((t - T.caught) / SPARK_STEP_MS)
+    const sp = t >= T.caught && t < T.stow ? SPARKS[k] : undefined
+    if (sp) {
+      const h = (sp.length * gpx) / 2
+      s += group('spark', `${rects(pal, sp, miniLeft + 2 * gpx - h, my + 2 * gpx - h, gpx)}${rects(pal, sp, gx + giftW / 2 - h, gy - 2 * gpx - h, gpx)}`)
+    }
+  }
+  // data-moment and data-t are inert: they name the moment and the frame drawn.
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" data-moment="${i.startedAt}" data-t="${t}" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" shape-rendering="crispEdges">${s}</svg>`
+  return { svg, width, height, top, left }
 }
 
 /** The kept gift, as a small sprite for the receiver's row once its moment is over (hasGift). */
