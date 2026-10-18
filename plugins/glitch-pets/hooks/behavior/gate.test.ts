@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { CREW_RULE, needsReview } from './gate'
+import { CREW_RULE, GATE_TEXT, needsReview } from './gate'
 import type { CrewRow, CrewState } from './crew'
 import { INITIAL_CREW } from './crew'
 
@@ -52,4 +52,14 @@ test('a failed helper held for a step-up is not finished yet', () => {
 test('the crew rule names the crew tier types', () => {
   expect(CREW_RULE).toContain('glitch-pets:crew-<tier>')
   expect(CREW_RULE).toContain('no model or effort')
+})
+
+test('the rule and the reminder start a lean reviewer that verifies, not redoes', () => {
+  for (const t of [CREW_RULE, GATE_TEXT]) {
+    expect(t).toContain('reviewer-1')
+    expect(t).toContain('subagent_type glitch-pets:crew-reviewer')
+    expect(t).toContain('verify, not redo')
+    expect(t).toContain('at most 2 rounds')
+    expect(t).toContain('only what changed')
+  }
 })

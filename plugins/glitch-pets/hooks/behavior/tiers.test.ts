@@ -1,16 +1,73 @@
 import { expect, test } from 'claude-code/testing'
 
-import { AGENT_PREFIX, DEFAULT_TIERS, MAX_STEP_UPS, agentSpecs, claimStepUp, ladderOf, nextRung, parseCrewTiers, rungLabel, rungOfType, stepUpNote, stepUpsFor } from './tiers'
+import { AGENT_PREFIX, DEFAULT_TIERS, MAX_STEP_UPS, REVIEWER_MAX_TURNS, REVIEWER_TYPE, agentSpecs, isReviewerName, isReviewerSpawn, reviewerSpec, claimStepUp, ladderOf, nextRung, parseCrewTiers, rungLabel, rungOfType, stepUpNote, stepUpsFor } from './tiers'
 import type { CrewRow } from './crew'
 
 const types = (tiers = DEFAULT_TIERS) => ladderOf(tiers).map(r => `${r.type} ${r.model} ${r.effort}`)
 
-test('the default table: Haiku low, Sonnet medium, Opus high', () => {
+test('the default table: Haiku low, Sonnet medium, Opus high; the reviewer Sonnet low', () => {
   expect(DEFAULT_TIERS).toEqual({
     light: { model: 'claude-haiku-5-5', effort: 'low' },
     medium: { model: 'claude-sonnet-5-5', effort: 'medium' },
     heavy: { model: 'claude-opus-5-5', effort: 'high' },
+    reviewer: { model: 'claude-sonnet-5-5', effort: 'low' },
   })
+})
+
+// ── The lean reviewer (#45) ──
+
+test('parseCrewTiers: the reviewer entry fills in from its default (Sonnet low) field by field', () => {
+  expect(parseCrewTiers('{"reviewer":{"model":"haiku"}}')).toEqual({ tiers: { ...DEFAULT_TIERS, reviewer: { model: 'haiku', effort: 'low' } }, problems: [] })
+  expect(parseCrewTiers({ reviewer: { effort: 'medium' } }).tiers.reviewer).toEqual({ model: 'claude-sonnet-5-5', effort: 'medium' })
+  const bad = parseCrewTiers({ reviewer: { model: 'two words', effort: 'max' } })
+  expect(bad.tiers.reviewer).toEqual(DEFAULT_TIERS.reviewer)
+  expect(bad.problems).toEqual(['crewTiers.reviewer.model must be a model alias or id', 'crewTiers.reviewer.effort must be low, medium or high'])
+  expect(parseCrewTiers({ reviewer: 'fast' }).problems).toEqual(['crewTiers.reviewer must be an object with model and effort'])
+  // The reviewer is not a rung: the ladder is the same with or without it.
+  expect(ladderOf(parseCrewTiers({ reviewer: { model: 'haiku' } }).tiers)).toEqual(ladderOf(DEFAULT_TIERS))
+})
+
+test('reviewerSpec: the crew-reviewer type, its model and effort, a turn cap, no agents of its own', () => {
+  const s = reviewerSpec(parseCrewTiers({ reviewer: { model: 'claude-haiku-5-5', effort: 'medium' } }).tiers)
+  expect(s.name).toBe(REVIEWER_TYPE)
+  expect(REVIEWER_TYPE).toBe('crew-reviewer')
+  expect(s).toMatchObject({ model: 'claude-haiku-5-5', effort: 'medium', maxTurns: REVIEWER_MAX_TURNS, disallowedTools: ['Agent'] })
+  expect(REVIEWER_MAX_TURNS).toBeLessThanOrEqual(20)
+  expect(s.description).toContain('reviewer-1')
+  expect(s.description).toContain('verif')
+})
+
+test('the reviewer prompt makes a verifier: checks, spot-checks, never redoes the work, a short list back', () => {
+  const p = reviewerSpec(DEFAULT_TIERS).prompt
+  expect(p).toContain('verifier')
+  expect(p).toContain('existing tests')
+  expect(p).toContain('Spot-check')
+  expect(p).toContain('Never redo or recompute the work from scratch')
+  expect(p).toContain('concrete check fails')
+  expect(p).toContain('no findings')
+  expect(p).toContain('200 words')
+  expect(p).toContain('only what changed')
+})
+
+test('isReviewerName: reviewer-<n> only', () => {
+  expect(isReviewerName('reviewer-1')).toBe(true)
+  expect(isReviewerName('Reviewer-12')).toBe(true)
+  expect(isReviewerName('reviewer')).toBe(false)
+  expect(isReviewerName('builder-1')).toBe(false)
+  expect(isReviewerName(undefined)).toBe(false)
+})
+
+test('isReviewerSpawn: the reviewer type, a reviewer-<n> name, or a review job in an open crew not on a tier type', () => {
+  const l = ladderOf(DEFAULT_TIERS)
+  const s = (subagentType: string, description: string, name?: string) => ({ subagentType, description, ...(name ? { name } : {}) })
+  expect(isReviewerSpawn(s('glitch-pets:crew-reviewer', 'x'), false, l)).toBe(true)
+  expect(isReviewerSpawn(s('general-purpose', 'x', 'reviewer-1'), false, l)).toBe(true)
+  expect(isReviewerSpawn(s('glitch-pets:crew-heavy', 'x', 'reviewer-2'), false, l)).toBe(true)
+  expect(isReviewerSpawn(s('general-purpose', 'Review the whole result'), true, l)).toBe(true)
+  expect(isReviewerSpawn(s('general-purpose', 'Review the whole result'), false, l)).toBe(false)
+  expect(isReviewerSpawn(s('glitch-pets:crew-heavy', 'Review the whole result'), true, l)).toBe(false)
+  expect(isReviewerSpawn(s('general-purpose', 'Review and fix the parser', 'builder-1'), true, l)).toBe(false)
+  expect(isReviewerSpawn(s('general-purpose', 'Build it'), true, l)).toBe(false)
 })
 
 test('the ladder: effort first, then model; xhigh and max only past the heavy tier', () => {
