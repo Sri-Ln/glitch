@@ -1,6 +1,6 @@
 ---
 name: crew
-description: Use when a task splits into 2 or more independent parts that crew members (agents) can do in parallel (research + build + design, several files or services, a fan-out of checks). Plans the parts, runs role-named crew members, then a reviewer over the whole result with a fix loop.
+description: Use when a task splits into 2 or more independent parts that crew members (agents) can do in parallel (research + build + design, several files or services, a fan-out of checks). Plans the parts, runs role-named crew members, then a lean reviewer that verifies (not redoes) the whole result, with a fix loop.
 ---
 
 # Crew
@@ -28,9 +28,12 @@ Write a short plan in your reply:
 
 ## 3. Review (always, once every crew member has finished)
 
-- Launch one agent named `reviewer-1` (usually `glitch-pets:crew-heavy`) with: the plan, every crew member's report, and the paths of what changed. It checks the **whole** result against the plan and the user's request and returns findings, each with where it is and which task it belongs to — or "no findings".
+- Launch one agent named `reviewer-1` with `subagent_type: glitch-pets:crew-reviewer` and no `model` or `effort` (the type sets them; a reviewer started on any other type is moved onto it). Give it: the plan, every crew member's report, and the paths of what changed.
+- The review is **verification, not regeneration**. Tell it to verify, not redo: check that each task has its deliverable, read the diff or the changed outputs, run the project's existing tests, linters or checks, and spot-check a few items against the plan. It must never redo or recompute the work from scratch; it digs deeper only where a concrete check fails.
+- It returns a short list of findings, each with where it is and which task it belongs to, or "no findings".
+- Do not ask it to recompute answers independently or rewrite the crew's scripts to compare: that doubles the cost and time of the crew.
 
 ## 4. Fix loop (at most 2 rounds)
 
-- Send each finding to the crew member that did that task (continue that same agent with the finding), wait, then run the reviewer again on what changed.
+- Send each finding to the crew member that did that task (continue that same agent with the finding), wait, then continue `reviewer-1` with the fixes (or start `reviewer-2` on the same type) to check only what changed: the fixed files and whether each finding is resolved, not the whole result again.
 - Stop after 2 review rounds. Report to the user plainly: what was done, what the review found, what was fixed, and anything still open. Never say something was fixed or verified unless the reviewer confirmed it.

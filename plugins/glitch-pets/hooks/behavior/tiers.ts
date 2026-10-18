@@ -110,7 +110,7 @@ export function rungLabel(r: Pick<Rung, 'model' | 'effort'>): string {
 const WHEN: Record<Tier, string> = {
   light: 'small, mechanical tasks: a lookup, a rename, a one-file edit, running a known check',
   medium: 'normal work: a feature across a few files, a focused research question, a test pass',
-  heavy: 'hard reasoning: a tricky design, debugging across a system, reviewing a whole result',
+  heavy: 'hard reasoning: a tricky design, debugging across a system',
 }
 
 export const CREW_MEMBER_PROMPT = [
