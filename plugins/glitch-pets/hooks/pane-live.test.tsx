@@ -10,11 +10,11 @@ const START = Date.parse('2026-10-14T10:00:00Z')
 const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
 
-type H = { status: Record<string, string>; usd: number; summaries: unknown[]; listCalls: number }
+type H = { status: Record<string, string>; usd: number; summaries: unknown[]; listCalls: number; frames: number[]; openFails: boolean; contexts: (readonly string[] | undefined)[] }
 
 const harness = async ($: Engine, on: On) => {
   toasts = []
-  const h: H = { status: {}, usd: 1, summaries: [], listCalls: 0 }
+  const h: H = { status: {}, usd: 1, summaries: [], listCalls: 0, frames: [], openFails: false, contexts: [] }
   const store: Record<string, unknown> = {}
   on('ui.toast', (_$, e) => {
     toasts.push(e.text)
@@ -34,7 +34,10 @@ const harness = async ($: Engine, on: On) => {
   on('turn.complete', () => ({ text: '' }) as never)
   on('session.start', async () => ({ cwd: 'C:\\repo' }) as never)
   on('prompt.compose', () => ({ sections: [] }) as never)
-  on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
+  on('prompt.submit', (_$, e) => {
+    h.contexts.push(e.context)
+    return { text: e.text } as never
+  })
   on('agent.spawn', (_$, e) => {
     h.status[`ag-${e.description}`] = 'running'
     return { model: 'claude-opus-5-5', agentId: `ag-${e.description}` } as never
@@ -43,7 +46,10 @@ const harness = async ($: Engine, on: On) => {
     h.listCalls += 1
     return { value: Object.entries(h.status).map(([id, status]) => ({ id, description: id, type: 'general-purpose', status })) } as never
   })
-  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
+  on('ui.open', () => {
+    if (h.openFails) throw new Error('no room')
+    return { value: { isPlaced: true } } as never
+  })
   on('ui.panes', () => ({ value: [] }) as never)
   on('ui.close', () => ({ value: undefined }) as never)
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd: h.usd } } }) as never)
@@ -53,6 +59,7 @@ const harness = async ($: Engine, on: On) => {
   })
   on('state.set', (_$, e, next) => {
     if ((e as { key?: string }).key === 'crewSummary') h.summaries.push((e as { value?: unknown }).value)
+    if ((e as { key?: string }).key === 'paneFrame') h.frames.push(Number((e as { value?: unknown }).value))
     return next(e)
   })
   await $.session.start({ source: 'startup', cwd: 'C:\\repo', surface: 'desktop', isInteractive: true } as never)
@@ -151,17 +158,26 @@ test('desktop: the whole Running/Finished header line is one Button (dot, label,
 
 // ── 4. A member press opens its transcript, or says why not ──
 
-test('desktop: a member\'s name and its Open ↗ are one always-visible Button (no hover-only reveal)', async ($, on) => {
+test('a member\'s name is its press target: on the desktop with Open ↗ in one always-visible Button, on the terminal in its line', async ($, on) => {
   await crew($, on)
-  const ui = await mountPane($, 'desktop')
-  const tree = await ui.drawn()
-  const btn = byKey(tree, `crew-open:${B}`)
-  expect(btn?.type).toBe('Button')
-  expect(wordsOf(btn)).toContain('researcher-1')
-  expect(wordsOf(btn)).toContain('↗')
-  // No part of the press target starts hidden.
-  walk(byKey(tree, `crew-member:${B}`), n => expect(n.props?.display).not.toBe('none'))
-  await ui.unmount()
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const tree = await ui.drawn()
+    const btn = byKey(tree, `crew-open:${B}`)
+    expect(btn?.type).toBe('Button')
+    expect(wordsOf(btn)).toContain('researcher-1')
+    if (surface === 'desktop') {
+      expect(wordsOf(btn)).toContain('↗')
+      // No part of the press target starts hidden.
+      walk(byKey(tree, `crew-member:${B}`), n => expect(n.props?.display).not.toBe('none'))
+    } else {
+      // The terminal: no member block, the name sits in its aligned line, no desktop hint.
+      expect(byKey(tree, `crew-member:${B}`)).toBeUndefined()
+      expect(byKey(tree, `crew-line:${B}`)).toBeTruthy()
+      expect(wordsOf(btn)).not.toContain('↗')
+    }
+    await ui.unmount()
+  }
 })
 
 test('a refused view says why and what to do; a member that left the tasks list says so', async ($, on) => {
@@ -181,12 +197,16 @@ test('a refused view says why and what to do; a member that left the tasks list 
   // The engine dropped C's task: the toast says it finished and left the list.
   delete h.status[C]
   deny = 'the tasks list shows no row for it'
-  toasts = []
-  const ui = await mountPane($, 'desktop')
-  await ui.press({ key: `crew-open:${C}` })
-  expect(toasts).toHaveLength(1)
-  expect(toasts[0]).toMatch(/tester-1 .*left the tasks list/)
-  await ui.unmount()
+  for (const surface of SURFACES) {
+    toasts = []
+    const ui = await mountPane($, surface)
+    // The terminal folds the finished: unfold to reach tester-1.
+    if (surface === 'terminal') await ui.press({ key: 'crew-finished' })
+    await ui.press({ key: `crew-open:${C}` })
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0]).toMatch(/tester-1 .*left the tasks list/)
+    await ui.unmount()
+  }
 })
 
 test('a view that switched says so on the desktop (the terminal shows it); a view that never answers is said after a wait', async ($, on) => {
@@ -206,26 +226,33 @@ test('a view that switched says so on the desktop (the terminal shows it); a vie
     await ui.unmount()
   }
   hang = true
-  toasts = []
-  const ui = await mountPane($, 'desktop')
-  const pressed = ui.press({ key: `crew-open:${B}` })
-  await clock.advance(5000)
-  // Answered late: the toast was already said, nothing more.
-  ;(release as unknown as () => void)?.()
-  await pressed
-  expect(toasts).toHaveLength(1)
-  expect(toasts[0]).toMatch(/did not switch|no answer/i)
-  await ui.unmount()
+  for (const surface of SURFACES) {
+    toasts = []
+    const ui = await mountPane($, surface)
+    const pressed = ui.press({ key: `crew-open:${B}` })
+    await clock.advance(5000)
+    // Answered late: the toast was already said, nothing more.
+    ;(release as unknown as () => void)?.()
+    await pressed
+    // A view that never answers is said on every surface, the terminal too.
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0]).toMatch(/did not switch|no answer/i)
+    await ui.unmount()
+  }
 })
 
 test('/glitch crew debug lists the crew rows against the engine\'s agent list and the last presses', async ($, on) => {
   on('ui.view', () => ({ value: { deny: 'the session draws no main view' } }) as never)
   const { h } = await crew($, on)
   h.status['ag-other'] = 'running'
-  const ui = await mountPane($, 'desktop', 40, { agentId: B })
-  await ui.press({ key: `crew-open:${B}` })
-  await ui.press({ key: 'crew-acc:finished' })
-  await ui.unmount()
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, 40, surface === 'desktop' ? { agentId: B } : {})
+    await ui.press({ key: `crew-open:${B}` })
+    // Each surface's own fold: the desktop's header line, the terminal's finished line.
+    await ui.press({ key: surface === 'desktop' ? 'crew-acc:finished' : 'crew-finished' })
+    if (surface === 'terminal') expect(await ui.find({ key: 'crew-acc:finished' })).toBeFalsy()
+    await ui.unmount()
+  }
   for (const command of ['glitch', 'glitch-pets'] as const) {
     const text = ((await $.command.run({ command, args: 'crew debug' } as never)) as { text: string }).text
     expect(text).toContain(B)
@@ -236,15 +263,18 @@ test('/glitch crew debug lists the crew rows against the engine\'s agent list an
     expect(text).toContain('ag-other')
     expect(text).toContain('the session draws no main view')
     expect(text).toContain('crew-acc:finished')
-    // The view in force where the pane last drew.
+    expect(text).toMatch(/terminal · crew-finished → opened/)
+    expect(text).toMatch(/terminal · crew-open:.*denied/)
+    // The view in force where the pane last drew, per surface.
     expect(text).toMatch(/desktop.*view.*Research/i)
+    expect(text).toMatch(/terminal pane: view = main conversation/)
   }
 })
 
 // ── 5. The desktop tree fits the pane's real width ──
 
 for (const cols of [28, 34, 40, 60]) {
-  test(`desktop at ${cols} cells: every text truncates, each member field keeps one line within the details column`, async ($, on) => {
+  test(`at ${cols} cells: every desktop text truncates, each member field keeps one line within the details column; the terminal truncates too`, async ($, on) => {
     await crew($, on)
     const ui = await mountPane($, 'desktop', cols)
     const tree = await ui.drawn()
@@ -253,7 +283,12 @@ for (const cols of [28, 34, 40, 60]) {
       if (n.type === 'Text') expect(['truncate-end', 'truncate']).toContain(n.props?.wrap)
     })
     // The header line fits inside its border and padding.
-    for (const kind of ['running', 'finished']) expect(wordsOf(byKey(tree, `crew-acc:${kind}`)).length).toBeLessThanOrEqual(cols - 4)
+    // ...with 2 cells of slack, so a native button's chrome or a wide glyph never cuts the chevron.
+    for (const kind of ['running', 'finished']) {
+      const words = wordsOf(byKey(tree, `crew-acc:${kind}`))
+      expect(words.length).toBeLessThanOrEqual(cols - 4 - 2)
+      expect(/[▾▸]$/.test(words)).toBe(true)
+    }
     // Each tally cell's words fit its third of the line.
     const third = Math.floor((cols - 2 - 2) / 3)
     for (const cell of kids(byKey(tree, 'crew-tally'))) expect(wordsOf(cell).length).toBeLessThanOrEqual(third)
@@ -263,7 +298,8 @@ for (const cols of [28, 34, 40, 60]) {
       const detail = cols - 2 - (mini ? mini + 1 : 0)
       const title = byKey(tree, `crew-title:${id}`)
       expect(Number(title?.props?.width ?? 0) <= detail || title === undefined).toBe(true)
-      expect(wordsOf(byKey(tree, `crew-open:${id}`)).length + 1 + wordsOf(byKey(tree, `crew-time:${id}`)).length).toBeLessThanOrEqual(detail)
+      // The title Button keeps 2 cells of slack beside the time.
+      expect(wordsOf(byKey(tree, `crew-open:${id}`)).length + 1 + wordsOf(byKey(tree, `crew-time:${id}`)).length).toBeLessThanOrEqual(detail - 2)
       // The pill row: the bar's cells and its words.
       const pillBox = byKey(tree, `crew-pill:${id}`)
       const label = wordsOf(byKey(tree, `crew-pill-label:${id}`))
@@ -284,22 +320,38 @@ for (const cols of [28, 34, 40, 60]) {
     const term = await mountPane($, 'terminal', cols)
     const tt = await term.drawn()
     for (const key of ['crew-head', 'crew-lead']) expect(JSON.stringify(byKey(tt, key))).toContain('truncate')
+    // The desktop's blocks are absent there; its own aligned line is drawn, its task truncating.
+    expect(byKey(tt, `crew-member:${B}`)).toBeUndefined()
+    expect(byKey(tt, 'crew-acc:running')).toBeUndefined()
+    expect(JSON.stringify(byKey(tt, `crew-line:${B}`))).toContain('truncate-end')
     await term.unmount()
   })
 }
 
-test('desktop: below 34 cells the tokens chip goes first, then the cost; the model stays', async ($, on) => {
+test('narrow: on the desktop the tokens chip goes first, then the cost, the model stays; the terminal drops its token column', async ($, on) => {
   await crew($, on)
-  const chipsAt = async (cols: number) => {
-    const ui = await mountPane($, 'desktop', cols)
-    const words = kids(byKey(await ui.drawn(), `crew-chips:${B}`)).map(wordsOf)
-    await ui.unmount()
-    return words
+  for (const surface of SURFACES) {
+    const at = async (cols: number) => {
+      const ui = await mountPane($, surface, cols)
+      const t = await ui.drawn()
+      await ui.unmount()
+      return t
+    }
+    if (surface === 'desktop') {
+      expect(kids(byKey(await at(60), `crew-chips:${B}`)).length).toBe(3)
+      const narrow = kids(byKey(await at(28), `crew-chips:${B}`)).map(wordsOf)
+      expect(narrow.length).toBeLessThan(3)
+      expect(narrow[0]).toMatch(/Opus/)
+    } else {
+      // No chips on the terminal: its line drops the token column when narrow, keeps the cost.
+      const wide = await at(100)
+      const narrow = await at(28)
+      expect(byKey(narrow, `crew-chips:${B}`)).toBeUndefined()
+      expect(byKey(wide, `crew-tok:${B}`)).toBeTruthy()
+      expect(byKey(narrow, `crew-tok:${B}`)).toBeUndefined()
+      expect(wordsOf(byKey(narrow, `crew-line:${B}`))).toContain('≈$')
+    }
   }
-  expect((await chipsAt(60)).length).toBe(3)
-  const narrow = await chipsAt(28)
-  expect(narrow.length).toBeLessThan(3)
-  expect(narrow[0]).toMatch(/Opus/)
 })
 
 // ── 7. The rows follow the engine's word ──
@@ -337,21 +389,34 @@ test('a finished helper woken by a message runs again in its row; the list sayin
   await spawn($, 'Probe', 'researcher-1')
   await agentEnd($, 'ag-Build')
   await clock.advance(1000)
-  const count = async () => wordsOf(await (async () => {
-    const ui = await mountPane($, 'terminal', 100)
-    const t = await ui.drawn()
-    await ui.unmount()
-    return t
-  })())
-  expect(await count()).toContain('Crew · 1 running · 1 done')
+  // Per surface: the terminal's header counts; the desktop's groups and builder-1's pill words.
+  const check = async (running: 1 | 2) => {
+    for (const surface of SURFACES) {
+      const ui = await mountPane($, surface, 100)
+      const t = await ui.drawn()
+      await ui.unmount()
+      if (surface === 'terminal') {
+        expect(wordsOf(t)).toContain(running === 2 ? 'Crew · 2 running · 0 done' : 'Crew · 1 running · 1 done')
+        expect(byKey(t, 'crew-acc:running')).toBeUndefined()
+      } else {
+        expect(wordsOf(byKey(t, 'crew-acc:running'))).toContain(`RUNNING ${running}`)
+        const pill = wordsOf(byKey(t, 'crew-pill-label:ag-Build'))
+        if (running === 2) expect(pill).toMatch(/steps|^\d/)
+        else expect(pill).toBe('Done')
+        if (running === 2) expect(byKey(t, 'crew-acc:finished')).toBeUndefined()
+        else expect(wordsOf(byKey(t, 'crew-acc:finished'))).toContain('FINISHED 1')
+      }
+    }
+  }
+  await check(1)
   // A message wakes it: its own turn starts.
   h.status['ag-Build'] = 'running'
   await agentStart($, 'ag-Build')
-  expect(await count()).toContain('Crew · 2 running · 0 done')
+  await check(2)
   await agentEnd($, 'ag-Build')
   // The list lags a second behind: the row stays done.
   await clock.advance(1000)
-  expect(await count()).toContain('Crew · 1 running · 1 done')
+  await check(1)
 })
 
 test('the HUD summary follows a status change at once, not a second later', async ($, on) => {
@@ -376,4 +441,146 @@ test('the 1 s status poll keeps running while the pane is closed', async ($, on)
   h.status['ag-Build'] = 'completed'
   await clock.advance(1000)
   expect(h.summaries[h.summaries.length - 1]).toMatchObject({ running: 0, done: 1 })
+})
+
+// ── Review fix: presses do not race a redraw every 100 ms ──
+
+test('the pane frame clock is floored at 250 ms on a rich surface (at most 4 frame redraws a second); the terminal times none', async ($, on) => {
+  const { h, clock } = await harness($, on)
+  const frames = h.frames
+  await $.turn.start({ turnId: 'm1' } as never)
+  // Two Haiku members at 8 beats a second, out of step: unfloored, a redraw nearly every tick.
+  for (const [d, n] of [['Quick one', 'builder-1'], ['Quick two', 'builder-2']] as const) {
+    await spawn($, d, n)
+    await clock.advance(60)
+    const stream = ($.turn.step as unknown as (e: object) => AsyncGenerator<unknown, unknown>)({ turnId: 's', index: 0, model: 'claude-haiku-4-5', effort: 'low', messageCount: 1, agentId: `ag-${d}` })
+    while (!(await stream.next()).done) {
+      // Read the stream to its end.
+    }
+  }
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    frames.length = 0
+    await clock.advance(2000)
+    if (surface === 'desktop') {
+      expect(frames.length).toBeGreaterThan(0)
+      expect(frames.length).toBeLessThanOrEqual(9)
+      for (let i = 1; i < frames.length; i++) expect((frames[i] as number) - (frames[i - 1] as number)).toBeGreaterThanOrEqual(250)
+    } else expect(frames).toEqual([])
+    await ui.unmount()
+  }
+})
+
+test('a very narrow header cuts its label, never its chevron; the terminal has no such header', async ($, on) => {
+  await crew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, 18)
+    const tree = await ui.drawn()
+    if (surface === 'desktop') {
+      for (const kind of ['running', 'finished'] as const) {
+        const words = wordsOf(byKey(tree, `crew-acc:${kind}`))
+        expect(words.length).toBeLessThanOrEqual(18 - 6)
+        expect(words.endsWith(' ▾')).toBe(true)
+        // The label gives way first; the count and the chevron stay.
+        if (kind === 'running') expect(words).toMatch(/RUN.*… 1 ▾$/)
+      }
+    } else {
+      expect(byKey(tree, 'crew-acc:running')).toBeUndefined()
+      expect(JSON.stringify(byKey(tree, 'crew-head'))).toContain('truncate')
+    }
+    await ui.unmount()
+  }
+})
+
+test('a status change in a fresh crew publishes its own cost, never the last crew\'s cached one; pane and pill agree', async ($, on) => {
+  const { h, clock } = await harness($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawn($, 'Old', 'builder-1')
+  h.usd = 3
+  await clock.advance(1100)
+  expect(h.summaries[h.summaries.length - 1]).toMatchObject({ cost: 2 })
+  await agentEnd($, 'ag-Old')
+  await $.turn.complete({ turnId: 'm1', reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
+  await $.turn.start({ turnId: 'm2' } as never)
+  await $.turn.complete({ turnId: 'm2', reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
+  // A fresh crew starts at $6 and its first member ends before any tick.
+  h.usd = 6
+  await $.turn.start({ turnId: 'm3' } as never)
+  await spawn($, 'New', 'builder-1')
+  await agentEnd($, 'ag-New')
+  expect(h.summaries[h.summaries.length - 1]).toMatchObject({ done: 1, cost: 0 })
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, 100)
+    const words = wordsOf(await ui.drawn())
+    expect(words).toContain('≈$0.00')
+    expect(words).not.toContain('≈$2.00')
+    await ui.unmount()
+  }
+})
+
+const BAND_PILL = {
+  name: 'glitch-hud',
+  register: ((on: On) => {
+    on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+      const { Button } = $.ui.resolve(e)
+      return <Button key="glitch-crew" label="Crew · 1 at work" onPress={() => undefined} />
+    })
+  }) as never,
+}
+const BAND_PROPS = { hasSurvey: false, isWorking: false, maxRows: 4, bodyColumns: 120, scroll: { offset: 0, bodyRows: 4 }, view: {} }
+
+test('a failed HUD pill press is said in a toast and logged for debug with its own time', { plugins: [BAND_PILL] }, async ($, on) => {
+  const { h, clock } = await harness($, on)
+  h.openFails = true
+  await clock.advance(5000)
+  for (const surface of SURFACES) {
+    toasts = []
+    const band = await $.ui.mount({ plugin: 'glitch-hud', surface, component: 'AbovePrompt', props: BAND_PROPS as never })
+    await band.press({ key: 'glitch-crew' })
+    expect(toasts).toEqual([expect.stringContaining('could not open or close the crew pane')])
+    await band.unmount()
+    const text = ((await $.command.run({ command: 'glitch', args: 'crew debug' } as never)) as { text: string }).text
+    const line = text.split('\n').find(l => l.includes(`${surface} · glitch-hud:glitch-crew → failed`))
+    // Logged at the press, not at the epoch.
+    expect(line).toMatch(/^  0\.0 s ago/)
+  }
+})
+
+const spawnCrew = ($: Engine, description: string, type: string, name: string) =>
+  $.agent.spawn({ tool_use_id: `tu-${name}-${description}`, prompt: 'p', description, subagentType: `glitch-pets:${type}`, name } as never)
+const submit = ($: Engine) => $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } } as never)
+const notes = (h: H) => h.contexts.flatMap(c => c ?? []).filter(t => t.startsWith('Glitch crew:') && t.includes('retry it'))
+
+test('a failed crew member woken by a message drops its queued step-up note; one left failed keeps it', async ($, on) => {
+  const { h } = await harness($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawnCrew($, 'A', 'crew-light', 'builder-1')
+  await spawnCrew($, 'B', 'crew-light', 'builder-2')
+  await spawnCrew($, 'C', 'crew-medium', 'builder-3')
+  await agentEnd($, 'ag-A', 'error')
+  await agentEnd($, 'ag-B', 'error')
+  // A message wakes builder-1: it is at work again, so no retry is asked for it.
+  await agentStart($, 'ag-A')
+  await submit($)
+  expect(notes(h)).toHaveLength(1)
+  expect(notes(h)[0]).toContain('builder-2')
+})
+
+test('a woken reviewer that ends again does not repeat the crewDone remark', { options: { voiceEveryMinutes: 0.01, tiredMinutes: 60, sleepyMinutes: 60 } }, async ($, on) => {
+  const { h, clock } = await harness($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawn($, 'R', 'reviewer-1')
+  await $.turn.complete({ turnId: 'm1', reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
+  const crewDone = ['The pack is done! I checked them all!', 'Everyone did great! Review done!', 'All checked! Good pack!'].map(l => `Bud: ${l}`)
+  const said = () => toasts.filter(t => crewDone.includes(t)).length
+  h.status['ag-R'] = 'completed'
+  await agentEnd($, 'ag-R')
+  expect(said()).toBe(1)
+  // Past the voice's own spacing, so only the rule under test can keep it quiet.
+  await clock.advance(2000)
+  h.status['ag-R'] = 'running'
+  await agentStart($, 'ag-R')
+  h.status['ag-R'] = 'completed'
+  await agentEnd($, 'ag-R')
+  expect(said()).toBe(1)
 })

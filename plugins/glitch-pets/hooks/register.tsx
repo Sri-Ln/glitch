@@ -84,6 +84,8 @@ let ticking = false
 let ticks = 0
 /** The reviewer finished while the main turn ran: crewDone waits for the turn's end (no remark mid-turn). */
 let crewDonePending = false
+/** Reviewer rows whose finish has had its crewDone moment (said, or held for the turn's end). */
+let crewDoneSaidFor = new Set<string>()
 /** The crew pane is open (drawn since its open, not closed since): only then does the frame clock run. */
 let paneShown = false
 /** Per surface: when the pane's drawing next changes (clock ms), from its last draw. */
@@ -92,13 +94,15 @@ const frameDue = new Map<string, number>()
 type Shown = { show: false } | { show: true; sig: string; geo: NonNullable<ReturnType<typeof rewardGeometry>> }
 const rewardShown = new Map<string, Shown>()
 /** The crew's cost as of a crew state: a frame-only redraw reads no usage. */
-let costCache: { sig: string; cost: number; at: number } | null = null
+let costCache: { sig: string; crewKey: string; cost: number; at: number } | null = null
 /** How long a read of the crew's cost stands (the pill's 1 s cadence). */
 const COST_FRESH_MS = 1000
 /** The crew's 2+ helpers finished with no reviewer: the next prompt carries the reminder. */
 let reviewMissed = false
 /** A prompt is carrying the reminder now: claimed before awaiting, so two prompts at once cannot both. */
 let reminderInFlight = false
+/** The pane's frame clock on a rich surface: at most one frame-driven redraw this often (≤ 4 a second). */
+const FRAME_FLOOR_MS = 250
 /** How long a member press waits for the view to switch before it says it did not. */
 const VIEW_WAIT_MS = 4000
 /** What `/glitch crew debug` shows: the engine's last list, the last presses, the view each surface drew under. */
@@ -178,8 +182,12 @@ async function changeCrew($: EngineInterface, now: number, fn: (c: CrewState) =>
   await update($, mood, m => onCrewChange(m, before, c, now))
   // The HUD pill follows the pane now, not at the next 1 s tick.
   await publishSummary($, true).catch(() => undefined)
-  const reviewerFinished = before.rows.some(r => r.role === 'reviewer' && r.status === 'running' && c.rows.find(x => x.id === r.id)?.status !== 'running')
-  if (!reviewerFinished || helpersRunning(c) > 0 || reviewerRunning(c)) return true
+  // A reviewer's first finish only: one woken by a message and ending again is not remarked twice.
+  const finishedNow = before.rows.filter(r => r.role === 'reviewer' && r.status === 'running' && c.rows.find(x => x.id === r.id)?.status !== 'running').map(r => r.id)
+  const firstFinish = finishedNow.filter(id => !crewDoneSaidFor.has(id))
+  for (const id of finishedNow) crewDoneSaidFor.add(id)
+  if (crewDoneSaidFor.size > 256) crewDoneSaidFor = new Set(finishedNow)
+  if (!firstFinish.length || helpersRunning(c) > 0 || reviewerRunning(c)) return true
   if ((await read($, mood)).turnSince !== null) crewDonePending = true
   else await say($, 'crewDone')
   return true
@@ -249,14 +257,17 @@ async function crewCostOf($: EngineInterface, c: CrewState): Promise<number> {
 }
 
 // The figures glitch-hud's crew pill shows, written only when they change. No crew, no reads.
-// `keepCost`: a status change publishes its counts at once with the cost as last read (no usage
-// read between the 1 s reads, so the pane and the pill keep one cost); the next tick reads it.
+// `keepCost`: a status change publishes its counts at once, with the cost last read for this same
+// crew (its start and starting cost) and no usage read; with no read of this crew yet (a fresh
+// crew) it is read now, as the pane reads it. The next 1 s tick reads it again for both.
 async function publishSummary($: EngineInterface, keepCost = false) {
   const c = await read($, crew)
   const before = await read($, crewSummary)
   if (c.rows.length === 0 && before === null) return
   const now = await $.clock.now()
-  const cost = !c.rows.length ? 0 : keepCost ? (costCache?.cost ?? before?.cost ?? 0) : await sharedCost($, c, now)
+  let cost = 0
+  if (c.rows.length && keepCost && costCache && costCache.crewKey === crewKeyOf(c)) cost = costCache.cost
+  else if (c.rows.length) cost = await sharedCost($, c, now)
   const next = crewSummaryOf(c, cost, now)
   if (JSON.stringify(before) !== JSON.stringify(next)) await update($, crewSummary, () => next)
 }
@@ -284,12 +295,16 @@ const nextFrameIn = (art: MoodArt, elapsedMs: number): number => {
  * the last read is a second old, so a frame-only redraw reads no usage.
  */
 async function sharedCost($: EngineInterface, c: CrewState, now: number): Promise<number> {
-  const sig = JSON.stringify([c.startedAt, c.costAtStart, c.rows.map(r => [r.id, r.status, r.tokens, r.weight])])
+  const sig = costSigOf(c)
   if (costCache && costCache.sig === sig && now - costCache.at < COST_FRESH_MS) return costCache.cost
   const cost = await crewCostOf($, c)
-  costCache = { sig, cost, at: now }
+  costCache = { sig, crewKey: crewKeyOf(c), cost, at: now }
   return cost
 }
+/** Which crew a cost was read for (its start and its starting cost). */
+const crewKeyOf = (c: CrewState) => JSON.stringify([c.startedAt, c.costAtStart])
+/** The crew state a cost read stands for. */
+const costSigOf = (c: CrewState) => JSON.stringify([c.startedAt, c.costAtStart, c.rows.map(r => [r.id, r.status, r.tokens, r.weight])])
 
 const openKey = (c: CrewState, group: CrewGroup, isTerminal: boolean) => `${c.startedAt ?? 0}:${group}${isTerminal && group === 'finished' ? ':terminal' : ''}`
 // Desktop groups start open; the terminal's finished members start folded.
@@ -568,6 +583,7 @@ export const register: Register = (on, options) => {
   ticking = false
   ticks = 0
   crewDonePending = false
+  crewDoneSaidFor = new Set()
   reviewMissed = false
   reminderInFlight = false
   paneShown = false
@@ -658,7 +674,9 @@ export const register: Register = (on, options) => {
       const agentId = (e as { agentId?: string }).agentId as string
       try {
         const now = await $.clock.now()
-        await changeCrew($, now, c => onAgentWake(c, agentId, now))
+        const woke = await changeCrew($, now, c => onAgentWake(c, agentId, now))
+        // At work again: a retry note queued for its failure is no longer wanted.
+        if (woke) stepUpsQueued = stepUpsQueued.filter(u => u.fromId !== agentId)
       } catch {
         // The list's poll still sees it.
       }
@@ -859,7 +877,9 @@ export const register: Register = (on, options) => {
         }
       }
       if (p && !isTerminal) for (const x of rows) if (x.row.id !== playing && (hasGift(m.reactions, x.row.id, now) || x.row.id === w?.rowId)) x.badge = rewardBadge(p, MINI_PIXEL)
-      if (due.length) frameDue.set(e.surface, Math.min(...due))
+      // Floored on a rich surface: at most FRAME_FLOOR_MS apart, so a press never races a redraw every
+      // tick (the minis and the reward frames are computed from the time, so coarser steps stay right).
+      if (due.length) frameDue.set(e.surface, Math.max(Math.min(...due), isTerminal ? 0 : now + FRAME_FLOOR_MS))
       else frameDue.delete(e.surface)
       // For /glitch crew debug: the view this surface draws under, and when it drew.
       const surface = e.surface
@@ -882,7 +902,7 @@ export const register: Register = (on, options) => {
           recordPress({ at: await $.clock.now(), surface, element, result: opened ? 'opened' : 'folded' })
         } catch (err) {
           const why = err instanceof Error ? err.message : String(err)
-          recordPress({ at: now, surface, element, result: `failed: ${why}` })
+          recordPress({ at: await $.clock.now().catch(() => now), surface, element, result: `failed: ${why}` })
           $.ui.toast(`Glitch pets: could not fold or open ${group === 'running' ? 'Running' : 'Finished'} (${why})`, { timeoutMs: 6000 })
         }
       }
@@ -948,7 +968,7 @@ export const register: Register = (on, options) => {
       recordPress({ at: await $.clock.now(), surface: e.surface, element: `glitch-hud:${HUD_PILL}`, result: said })
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err)
-      recordPress({ at: 0, surface: e.surface, element: `glitch-hud:${HUD_PILL}`, result: `failed: ${why}` })
+      recordPress({ at: await $.clock.now().catch(() => Date.now()), surface: e.surface, element: `glitch-hud:${HUD_PILL}`, result: `failed: ${why}` })
       $.ui.toast(`Glitch pets: could not open or close the crew pane (${why}). Try /glitch crew.`, { timeoutMs: 8000 })
     }
     return r

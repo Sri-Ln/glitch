@@ -254,6 +254,8 @@ const LEAD_TIME_MIN_COLUMNS = 34
 /** A progress pill's bar is drawn only with at least this many cells beside its words. */
 const PILL_MIN_CELLS = 4
 const PILL_MAX_PX = 260
+/** Cells left free beside a Button's words (desktop): a native button's chrome or a wide glyph. */
+const BUTTON_SLACK = 2
 
 export function crewTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   return v.isTerminal ? terminalTree(v, el, act) : desktopTree(v, el, act)
@@ -412,7 +414,8 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
     const from = rung ? (`↑ stepped up from ${rung}`.length <= detailCells ? `↑ stepped up from ${rung}` : `↑ from ${rung}`) : null
     // The title line: one Button (status glyph, name, Open ↗) and the time at the right edge.
     const took = tookOf(m.row, v.now)
-    const titleRoom = Math.max(1, detailCells - cells(took) - 1)
+    // 2 cells of slack: a native button's chrome or a wide glyph must not push the time off the line.
+    const titleRoom = Math.max(1, detailCells - cells(took) - 1 - BUTTON_SLACK)
     const mark = m.row.status === 'running' ? '' : `${glyph(m.row)} `
     const name = nameOf(m.row)
     const nameRoom = titleRoom - cells(mark)
@@ -484,8 +487,8 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
     )
   }
 
-  // A header's line inside its border and padding.
-  const headerCells = Math.max(1, cols - 4)
+  // A header's line inside its border and padding, less 2 cells of slack for a native button's chrome.
+  const headerCells = Math.max(1, cols - 4 - BUTTON_SLACK)
   const group = (kind: CrewGroup, items: CrewMember[]) => {
     const open = v.open[kind]
     const dot = kind === 'running' ? '● ' : ''

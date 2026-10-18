@@ -1666,7 +1666,7 @@ test('pane: a finish casts the reward from the lead to the receiver\'s row; the 
   }
 })
 
-test('pane: the reward plays frame by frame: static frames from the frame clock (about 10 fps on the line), then it stops; no usage per frame', async ($, on) => {
+test('pane: the reward plays frame by frame: static frames from the frame clock (floored at 250 ms, so at most 4 fps), then it stops; no usage per frame', async ($, on) => {
   const frames: number[] = []
   on('state.set', (_$, e, next) => {
     if ((e as { key?: string }).key === 'paneFrame') frames.push(Number((e as { value?: unknown }).value))
@@ -1695,13 +1695,14 @@ test('pane: the reward plays frame by frame: static frames from the frame clock 
     await clock.advance(100)
     await seen()
   }
-  // Many distinct frames, none animated, all in one box.
-  expect(sources.length).toBeGreaterThanOrEqual(20)
+  // Many distinct frames (the frame clock's 250 ms floor: about 4 a second), none animated, all in one box.
+  expect(sources.length).toBeGreaterThanOrEqual(Math.floor(T.end / 250) - 3)
+  expect(sources.length).toBeLessThanOrEqual(Math.ceil(T.end / 250) + 2)
   for (const src of sources) expect(/<(set|animate|animateTransform)\b/.test(src)).toBe(false)
   expect(new Set(sources.map(src => src.match(/viewBox="[^"]+"/)?.[0])).size).toBe(1)
-  // The line's travel redraws at about 10 fps.
+  // The line's travel still redraws several times.
   const during = frames.filter(f => f - startedAt >= T.cast && f - startedAt <= T.land)
-  expect(during.length).toBeGreaterThanOrEqual(4)
+  expect(during.length).toBeGreaterThanOrEqual(Math.floor((T.land - T.cast) / 250))
   // No usage read per frame (the shared cost is read again at most once a second).
   expect(h.usageCalls - calls).toBeLessThanOrEqual(Math.ceil(T.end / 1000) + 1)
   // The terminal draws none of it.
