@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, roleOf, shares, stepsOf, tierOf, tokenWeight } from './crew'
+import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, roleOf, shares, stepsOf, tierOf, tokenWeight } from './crew'
 
 test('roleOf reads <role>-<n> names first, then the description', () => {
   expect(roleOf('builder-2', 'whatever')).toBe('builder')
@@ -202,4 +202,24 @@ test('a killed row is marked killed; a failed one is not', () => {
   const s = onStatuses(spawn(spawn(), 'a2'), [{ id: 'a1', status: 'failed' }, { id: 'a2', status: 'killed' }], 9000)
   expect(s.rows[0]?.killed).toBeUndefined()
   expect(s.rows[1]?.killed).toBe(true)
+})
+
+test('onAgentRunEnd ends a running row by its turn\'s reason; an ended row is kept', () => {
+  const s = spawn(spawn(spawn(), 'a2'), 'a3')
+  let t = onAgentRunEnd(s, 'a1', 'answer', 5000)
+  t = onAgentRunEnd(t, 'a2', 'error', 5000)
+  t = onAgentRunEnd(t, 'a3', 'aborted', 5000)
+  expect(t.rows.map(r => [r.status, r.endedAt, r.killed ?? false])).toEqual([['done', 5000, false], ['failed', 5000, false], ['failed', 5000, true]])
+  expect(onAgentRunEnd(t, 'a1', 'error', 6000).rows[0]).toEqual(t.rows[0])
+  expect(onAgentRunEnd(t, 'nobody', 'answer', 6000)).toEqual(t)
+})
+
+test('onAgentWake sets an ended row running again (the crew open), counts kept; a running row is left', () => {
+  const s = onMainTurnEnd(onMainTurnStart(onAgentRunEnd(spawn(), 'a1', 'aborted', 5000)))
+  expect(s.closed).toBe(true)
+  const w = onAgentWake(s, 'a1', 7000)
+  expect(w.rows[0]).toMatchObject({ status: 'running', resumedAt: 7000, endedAt: null })
+  expect(w.rows[0]?.killed).toBeUndefined()
+  expect(w.closed).toBe(false)
+  expect(onAgentWake(w, 'a1', 8000)).toBe(w)
 })

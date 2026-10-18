@@ -132,6 +132,27 @@ export const onAgentTurnEnd = (s: CrewState, agentId: string, u: UsageLike | und
     endedAt: r.status === 'running' ? r.endedAt : r.endedAt ?? now,
   }))
 
+/**
+ * A helper's run ended (its own `turn.complete`: one run of a subagent's loop is one turn):
+ * its row ends at once by the turn's reason, without waiting for the list to catch up.
+ * An answer is done; an API error or a refusal failed; an interrupt stopped (killed).
+ */
+export const onAgentRunEnd = (s: CrewState, agentId: string, reason: string, now: number): CrewState =>
+  mapRow(s, agentId, r => {
+    if (r.status !== 'running') return r
+    if (reason === 'answer') return { ...r, status: 'done', endedAt: now }
+    if (reason === 'aborted') return { ...r, status: 'failed', killed: true, endedAt: now }
+    return { ...r, status: 'failed', endedAt: now }
+  })
+
+/** A message woke a finished helper (its own `turn.start`): its row runs again, its counts kept. */
+export function onAgentWake(s: CrewState, agentId: string, now: number): CrewState {
+  const row = s.rows.find(r => r.id === agentId)
+  if (!row || row.status === 'running') return s
+  const { killed: _k, ...rest } = row
+  return { ...mapRow(s, agentId, () => ({ ...rest, status: 'running', resumedAt: now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false }
+}
+
 /** A row missing from the agent list this long after its spawn has ended (the list drops a finished task soon). */
 export const LIST_GRACE_MS = 3000
 
