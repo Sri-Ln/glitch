@@ -5,6 +5,7 @@
 // same kind collapse into the one playing. The waiting slot is resolved lazily from the
 // clock, so nothing needs a timer: every reader asks "as of now".
 import type { Reaction, Reactions } from '../../types'
+import { memberName } from './crew'
 import type { CrewRow, CrewState } from './crew'
 
 export const JOY_MS = 2500
@@ -23,16 +24,8 @@ export const INITIAL_REACTIONS: Reactions = { current: null, pending: null, last
 
 const holdOf = (k: ReactionKind): number => (k === 'joy' ? JOY_MS : WORRY_MS)
 
-/** How the lead names a member: its crew name, else its task cut to about 24 chars. */
-export function crewName(r: Pick<CrewRow, 'name' | 'description'>): string {
-  if (r.name) return r.name
-  const d = r.description.trim()
-  if (d.length <= 24) return d
-  // Cut at a word when there is one in the second half, so the name stays readable.
-  const cut = d.slice(0, 24)
-  const space = cut.lastIndexOf(' ')
-  return `${(space >= 12 ? cut.slice(0, space) : cut.slice(0, 23)).trimEnd()}…`
-}
+/** How the lead names a member: as its row does (memberName), so an unnamed one reads the same in both. */
+export const crewName = (r: Pick<CrewRow, 'name' | 'role' | 'description' | 'task'>): string => memberName(r)
 
 /** The news between two crew states: rows that went from running to done or failed. */
 export function crewEvents(before: CrewState, after: CrewState, now: number): CrewEvent[] {

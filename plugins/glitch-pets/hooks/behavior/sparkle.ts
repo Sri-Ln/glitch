@@ -2,6 +2,7 @@
 // by its head, for HOP_MS. Each member that finishes gets its own, so several finishing
 // together each hop at once. Pure: the sparkle is laid into the mini's own image (same box,
 // same size), so nothing around it moves.
+import { GRID } from './types'
 import type { Frame, Sprite } from './types'
 
 /** How long a finished member hops (from its row's end). */
@@ -29,14 +30,21 @@ export const nextSparkIn = (t: number): number | null => (t >= HOP_MS ? null : M
 
 /**
  * The mini with the sparkle `t` ms into the hop laid over it, in its own viewBox (sprite pixels),
- * as an inert `data-part="sparkle"` group. Same width and height as the mini.
+ * as an inert `data-part="sparkle"` group. Same width and height as the mini. It stays inside the
+ * viewBox (a hats mini is 16 wide); rows a theme adds on top (a hat over `hatAnchor`) are kept clear.
  */
-export function withSparkle(mini: Sprite, palette: Readonly<Record<string, string>>, t: number): Sprite {
+export function withSparkle(mini: Sprite, palette: Readonly<Record<string, string>>, t: number, hatAnchor?: { x: number; y: number }): Sprite {
   const spark = SPARKS[Math.floor(Math.max(0, t) / SPARK_STEP_MS) % SPARKS.length] as Frame
   const h = spark.length
   const w = spark[0]?.length ?? 0
-  const x0 = SPARK_AT.x - Math.floor(w / 2)
-  const y0 = Math.max(0, SPARK_AT.y - Math.floor(h / 2))
+  const view = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(mini.source)
+  const vw = view ? Number(view[1]) : GRID.width
+  const vh = view ? Number(view[2]) : GRID.height
+  // Rows above the pet's own 13: a hat's, its brim just above the head (the anchor).
+  const added = Math.max(0, vh - GRID.height)
+  const below = added > 0 ? added + (hatAnchor?.y ?? 0) : 0
+  const x0 = Math.max(0, Math.min(SPARK_AT.x - Math.floor(w / 2), vw - w))
+  const y0 = Math.max(0, below, Math.min(added + SPARK_AT.y - Math.floor(h / 2), vh - h))
   let rects = ''
   spark.forEach((row, y) => {
     for (let x = 0; x < row.length; x++) {

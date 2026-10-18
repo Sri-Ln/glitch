@@ -476,9 +476,9 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
           ]
     return (
       <B key={`crew-acc-wrap:${kind}`} flexDirection="column" rowGap={R.gap}>
-        <B key={`crew-acc-box:${kind}`} flexDirection="row" alignItems="center" columnGap={1} paddingX={1} height={R.header} borderStyle="round" borderDimColor hover={{ backgroundColor: HOVER_BG }}>
-          {/* The toggle: one Button holding only its short words, at their natural width. */}
-          <B key={`crew-acc-press:${kind}`} flexShrink={0}>
+        <B key={`crew-acc-box:${kind}`} flexDirection="row" alignItems="center" columnGap={1} paddingX={1} height={R.header} borderStyle="round" borderDimColor>
+          {/* The toggle: one Button holding only its short words, at their natural width; only it lights on hover. */}
+          <B key={`crew-acc-press:${kind}`} flexShrink={0} hover={{ backgroundColor: HOVER_BG }}>
             <Btn key={`crew-acc:${kind}`} plain onPress={() => act.toggle(kind)}>
               <T bold>{label}</T>
             </Btn>

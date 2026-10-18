@@ -254,3 +254,15 @@ test('the name once: a description that only repeats the role or the name gives 
   expect(memberName(o)).toBe('Tidy the changelog…')
   expect(memberTask(o)).toBe('Tidy the changelog entries for the release')
 })
+
+test('taskOfPrompt skips a "You are…" opener and one that repeats the name, and never splits at e.g. or i.e.', () => {
+  expect(taskOfPrompt('You are researcher-1 on a crew. Find the date formats users type.')).toBe('Find the date formats users type.')
+  expect(taskOfPrompt('researcher-1.\nFind the date formats.', 'researcher-1')).toBe('Find the date formats.')
+  expect(taskOfPrompt('Researcher.\nFind the date formats.', 'researcher-1')).toBe('Find the date formats.')
+  expect(taskOfPrompt('Collect formats, e.g. ISO and US, from the logs. Then report.')).toBe('Collect formats, e.g. ISO and US, from the logs.')
+  expect(taskOfPrompt('List the parsers, i.e. the modules under src. More.')).toBe('List the parsers, i.e. the modules under src.')
+  // Only an opener: kept rather than nothing.
+  expect(taskOfPrompt('You are a helper.')).toBe('You are a helper.')
+  const s = onSpawn(INITIAL_CREW, { agentId: 'r', name: 'researcher-1', description: 'researcher', prompt: 'You are researcher-1. Find the formats.', model: null, now: 1, costNow: 0 })
+  expect(memberTask(s.rows[0]!)).toBe('Find the formats.')
+})

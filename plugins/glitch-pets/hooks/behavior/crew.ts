@@ -93,11 +93,17 @@ export function shortOf(text: string, n: number): string {
   return `${(space >= n / 2 ? cut.slice(0, space) : cut.slice(0, n - 1)).trimEnd()}…`
 }
 
-/** A prompt as a task line: its first non-empty line's first sentence, about 80 characters at most. */
-export function taskOfPrompt(prompt: string): string {
-  const first = prompt.split('\n').map(l => l.trim()).find(l => l.length > 0) ?? ''
-  const sentence = first.split(/(?<=[.!?])\s/)[0] ?? first
-  return shortOf(sentence, 80)
+/** A sentence's end: `.`, `!` or `?` and a space, never the dot of "e.g." or "i.e.". */
+const SENTENCE_END = /(?<=[.!?])(?<!\b(?:e\.g|i\.e)\.)\s+/i
+
+/**
+ * A prompt as a task line: its first sentence that says the task, about 80 characters at most. A
+ * "You are…" opener and one that only repeats the name or a role word are skipped (kept if nothing else).
+ */
+export function taskOfPrompt(prompt: string, name?: string): string {
+  const sentences = prompt.split('\n').map(l => l.trim()).filter(l => l.length > 0).flatMap(l => l.split(SENTENCE_END)).map(t => t.trim()).filter(Boolean)
+  const says = (t: string) => !/^you are\b/i.test(t) && !repeatsName(t, name, 'other')
+  return shortOf(sentences.find(says) ?? sentences[0] ?? '', 80)
 }
 
 /** A member's name, shown once: its crew name, else its role word, else a short form of its task. */
@@ -138,7 +144,7 @@ export function onSpawn(s: CrewState, a: { agentId: string; name?: string; descr
   const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
   // A row on the lean reviewer's type is the reviewer, whatever its name or description.
   const role: Role = a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description)
-  const task = repeatsName(a.description, a.name, role) && a.prompt ? taskOfPrompt(a.prompt) : ''
+  const task = repeatsName(a.description, a.name, role) && a.prompt ? taskOfPrompt(a.prompt, a.name) : ''
   const row: CrewRow = {
     id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description,
     ...(task ? { task } : {}),

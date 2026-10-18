@@ -818,3 +818,68 @@ test('a member shows its name once with its task below: a description that only 
     await ui.unmount()
   }
 })
+
+// ── Review polish (fix/pane-live-2) ──
+
+test('an older engine (no helper turn.start): a finished helper\'s next step wakes its row; a running row\'s step changes nothing', async ($, on) => {
+  const { h } = await harness($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await spawn($, 'Build', 'builder-1')
+  await spawn($, 'Probe', 'researcher-1')
+  h.status['ag-Build'] = 'completed'
+  await agentEnd($, 'ag-Build')
+  const stepOf = async (agentId: string) => {
+    const s = ($.turn.step as unknown as (e: object) => AsyncGenerator<unknown, unknown>)({ turnId: 's', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 1, agentId })
+    while (!(await s.next()).done) {
+      // Read the stream to its end.
+    }
+  }
+  const counts = async () => {
+    const out: string[] = []
+    for (const surface of SURFACES) {
+      const ui = await mountPane($, surface, 100)
+      const t = await ui.drawn()
+      await ui.unmount()
+      out.push(surface === 'terminal' ? (wordsOf(byKey(t, 'crew-head')).match(/\d+ running · \d+ done/)?.[0] ?? '') : wordsOf(byKey(t, 'crew-acc:running')))
+    }
+    return out
+  }
+  expect(await counts()).toEqual(['1 running · 1 done', '● RUNNING 1 ▾'])
+  // The running one's step: nothing changes.
+  await stepOf('ag-Probe')
+  expect(await counts()).toEqual(['1 running · 1 done', '● RUNNING 1 ▾'])
+  // A message woke builder-1: its first step is the only sign on such an engine.
+  h.status['ag-Build'] = 'running'
+  await stepOf('ag-Build')
+  expect(await counts()).toEqual(['2 running · 0 done', '● RUNNING 2 ▾'])
+})
+
+test('the header\'s hover sits on its pressable words, not on the bar or the whole box', async ($, on) => {
+  await crew($, on)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const tree = await ui.drawn()
+    if (surface === 'desktop') {
+      for (const kind of ['running', 'finished'] as const) {
+        expect(byKey(tree, `crew-acc-press:${kind}`)?.hover?.backgroundColor).toBeTruthy()
+        expect(byKey(tree, `crew-acc-box:${kind}`)?.hover).toBeUndefined()
+        expect(byKey(tree, `crew-acc-bar:${kind}`)?.hover).toBeUndefined()
+      }
+    } else expect(byKey(tree, 'crew-acc-press:running')).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('the lead and the row name an unnamed member the same way', async ($, on) => {
+  await harness($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-u', prompt: 'p', description: 'Look up the parser options and summarise them', subagentType: 'general-purpose' } as never)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface, 100)
+    const tree = await ui.drawn()
+    // One member at work: the lead's line names it as its row does ("researcher").
+    expect(wordsOf(byKey(tree, 'crew-lead'))).toContain('researcher')
+    expect(wordsOf(byKey(tree, 'crew-lead'))).not.toContain('Look up')
+    await ui.unmount()
+  }
+})

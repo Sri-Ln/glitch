@@ -821,6 +821,15 @@ export const register: Register = (on, options) => {
   on('turn.step', async function* ($, e, next) {
     const agentId = e.agentId
     if (agentId !== undefined) {
+      // An engine before 2.1.302 sends a helper no turn.start: a step of an ended row is its wake
+      // (a no-op for a running one, so the turn.start wake on newer engines stays the only one).
+      try {
+        const now = await $.clock.now()
+        const woke = await changeCrew($, now, c => onAgentWake(c, agentId, now))
+        if (woke) stepUpsQueued = stepUpsQueued.filter(u => u.fromId !== agentId)
+      } catch {
+        // The list's poll still sees it.
+      }
       const effort = e.effort === undefined ? null : String(e.effort)
       await update($, crew, c => onStep(c, agentId, e.model, effort)).catch(() => undefined)
     }
@@ -861,7 +870,7 @@ export const register: Register = (on, options) => {
         // A member that just finished hops with a sparkle on its own mini (each its own, at once).
         if (p && mini && isHopping(row, now)) {
           const since = now - (row.endedAt as number)
-          mini = withSparkle(happyMini(p, theme, row, since, now), p.palette, since)
+          mini = withSparkle(happyMini(p, theme, row, since, now), p.palette, since, p.hatAnchor)
           const spark = nextSparkIn(since)
           due.push(now + Math.min(nextFrameIn(p.moods.happy, since), spark ?? Infinity))
         }
@@ -918,7 +927,7 @@ export const register: Register = (on, options) => {
       const show = async (agentId: string) => {
         const row = c.rows.find(r => r.id === agentId)
         const who = row ? memberName(row) : 'that crew member'
-        let answer: { deny?: string } | 'late' | { error: string }
+        let answer: { deny?: string } | 'late' | { error: string } | { missing: true }
         let timer: { cancel: () => void } | null = null
         try {
           const asked = $.ui.view({ agentId })
@@ -931,7 +940,7 @@ export const register: Register = (on, options) => {
           // The engine has no view after all (its version said otherwise): no Open from now on.
           if (isMissingCall(err, 'ui.view')) {
             uiViewSupport = false
-            answer = { missing: true } as never
+            answer = { missing: true }
           }
         } finally {
           ;(timer as { cancel: () => void } | null)?.cancel()

@@ -30,9 +30,11 @@ test('neutral wording once the crew is back', () => {
   expect(leadStatus(neutral, crewOf(), none, T)).toBe('ready for a crew')
 })
 
-test('an unnamed member is named by its task, cut short', () => {
+test('an unnamed member is named as its row names it: its role word, else its task cut short', () => {
   const r = row('x', 'running', { name: undefined, description: 'write the date formatting helpers' })
-  expect(leadStatus(neutral, crewOf(r), none, T)).toBe('waiting on write the date…')
+  expect(leadStatus(neutral, crewOf(r), none, T)).toBe('waiting on builder')
+  const o = row('y', 'running', { name: undefined, role: 'other', description: 'tidy the release notes for today' })
+  expect(leadStatus(neutral, crewOf(o), none, T)).toBe('waiting on tidy the release notes…')
 })
 
 test('reactions: a snag, then looking into it while the crew works; a finish is done', () => {

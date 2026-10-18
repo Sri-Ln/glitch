@@ -31,10 +31,11 @@ test('crewEvents: a brand-new row and a resumed row are not news', () => {
   expect(crewEvents(before, after, T)).toEqual([])
 })
 
-test('crewName: the crew name, else the description cut to about 24 chars', () => {
+test('crewName is the row\'s own name (memberName): the crew name, else the role word, else the task cut to about 24 chars', () => {
   expect(crewName(row('builder-1'))).toBe('builder-1')
-  expect(crewName({ ...row('x'), name: undefined, description: 'short job' })).toBe('short job')
-  expect(crewName({ ...row('x'), name: undefined, description: 'a very long description of the whole task' })).toBe('a very long description…')
+  expect(crewName({ ...row('x'), name: undefined, role: 'researcher', description: 'Look up the parser options' })).toBe('researcher')
+  expect(crewName({ ...row('x'), name: undefined, role: 'other', description: 'short job' })).toBe('short job')
+  expect(crewName({ ...row('x'), name: undefined, role: 'other', description: 'a very long description of the whole task' })).toBe('a very long description…')
 })
 
 test('a finish is joy for 2.5 s; a failure is worry for 3 s', () => {
