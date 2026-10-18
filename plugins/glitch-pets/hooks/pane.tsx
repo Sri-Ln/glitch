@@ -6,8 +6,8 @@
 // one Button, its bar drawn in text), each member a block that lights on hover and opens
 // its transcript when its title line (one Button) is pressed. Every width comes from the
 // pane's real bodyColumns: texts are cut with an ellipsis, chips drop by priority. Every block has
-// a fixed height, so a row's top is known exactly: the reward overlay (one Svg laid
-// over the pane) lands on its receiver.
+// a fixed height, so a row's top is known exactly: the reward overlay (one Svg box laid
+// over the pane, redrawn frame by frame) lands on its receiver.
 // Terminal: one header line, the lead's line, one aligned line per running member,
 // and the finished members folded into one line a Button expands.
 import type { RenderElement, RenderNode } from 'claude-code'
@@ -133,7 +133,7 @@ const leadSlotOf = (miniColumns: number) => MEMBER_PAD + Math.max(1, miniColumns
 
 /**
  * Where the reward moment for row `rowId` is drawn on the desktop, in CSS px from the pane's
- * top-left (rewardOverlay's input): null when the row is not drawn (its group folded).
+ * top-left (rewardFrame's input): null when the row is not drawn (its group folded).
  */
 export function rewardGeometry(
   v: Pick<CrewView, 'rows' | 'open' | 'lead' | 'miniColumns'>,

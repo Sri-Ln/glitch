@@ -4,6 +4,8 @@ import type { On } from 'claude-code'
 import { statusText } from './behavior/lead-status'
 import { DESKTOP_CELL, desktopLayout } from './pane'
 import { PERSONAS } from './personas/index'
+import { REWARD_MS } from './behavior/reactions'
+import { rewardTimeline } from './behavior/reward'
 
 let toasts: string[] = []
 const START = Date.parse('2026-10-14T10:00:00Z')
@@ -1604,6 +1606,57 @@ test('pane: a finish casts the reward from the lead to the receiver\'s row; the 
   }
 })
 
+test('pane: the reward plays frame by frame: static frames from the frame clock (about 10 fps on the line), then it stops; no usage per frame', async ($, on) => {
+  const frames: number[] = []
+  on('state.set', (_$, e, next) => {
+    if ((e as { key?: string }).key === 'paneFrame') frames.push(Number((e as { value?: unknown }).value))
+    return next(e)
+  })
+  // One member, so no running mini keeps the clock going.
+  const { h, clock } = await crewHarness($, on)
+  await mainStart($, 'm1')
+  await spawnHelper($, 'A', 'Build A', 'builder-1')
+  await clock.advance(1000)
+  h.status['ag-Build A'] = 'completed'
+  await agentEnd($, 'ag-Build A')
+  const startedAt = START + 1000
+  const ui = await mountPane($, 'desktop')
+  const term = await mountPane($, 'terminal')
+  const sources: string[] = []
+  const calls = h.usageCalls
+  const T = rewardTimeline(0)
+  const seen = async () => {
+    const src = await overlaySource(ui)
+    if (src && sources[sources.length - 1] !== src) sources.push(src)
+  }
+  await seen()
+  frames.length = 0
+  for (let t = 0; t < T.end; t += 100) {
+    await clock.advance(100)
+    await seen()
+  }
+  // Many distinct frames, none animated, all in one box.
+  expect(sources.length).toBeGreaterThanOrEqual(20)
+  for (const src of sources) expect(/<(set|animate|animateTransform)\b/.test(src)).toBe(false)
+  expect(new Set(sources.map(src => src.match(/viewBox="[^"]+"/)?.[0])).size).toBe(1)
+  // The line's travel redraws at about 10 fps.
+  const during = frames.filter(f => f - startedAt >= T.cast && f - startedAt <= T.land)
+  expect(during.length).toBeGreaterThanOrEqual(4)
+  // No usage read per frame (the shared cost is read again at most once a second).
+  expect(h.usageCalls - calls).toBeLessThanOrEqual(Math.ceil(T.end / 1000) + 1)
+  // The terminal draws none of it.
+  expect(await svgs(term)).toEqual([])
+  // Past the slot: no overlay, the badge; and the frame clock stops writing.
+  await clock.advance(REWARD_MS - T.end + 200)
+  expect(await rewardBox(ui)).toBeUndefined()
+  expect(await ui.find({ key: 'crew-badge:ag-Build A' })).toBeTruthy()
+  frames.length = 0
+  await clock.advance(3000)
+  expect(frames).toEqual([])
+  await ui.unmount()
+  await term.unmount()
+})
+
 test('pane: a reward first drawn late (past ~300 ms) shows only the badge', async ($, on) => {
   const { clock } = await mixedCrew($, on)
   await clock.advance(500)
@@ -1762,6 +1815,10 @@ test('pane (terminal): the progress column is at most 40 cells', async ($, on) =
 // ── Integration review, fix round 1 ──
 
 const overlaySource = async (ui: Finder) => (await svgs(ui)).find(s => s.source.includes('data-moment'))?.source
+const overlayBox = async (ui: Finder) => {
+  const o = (await svgs(ui)).find(s => s.source.includes('data-moment'))
+  return o ? { moment: o.source.match(/data-moment="(\d+)"/)?.[1], width: o.width, height: o.height } : undefined
+}
 
 test('pane: a moment keeps its overlay while the layout holds; when the receiver moves, the gift becomes its badge (no restart)', async ($, on) => {
   const { h, clock: clockOf } = await crewHarness($, on)
@@ -1772,14 +1829,14 @@ test('pane: a moment keeps its overlay while the layout holds; when the receiver
   const ui = await mountPane($, 'desktop')
   h.status['ag-Build A'] = 'completed'
   await agentEnd($, 'ag-Build A')
-  const first = await overlaySource(ui)
+  const first = await overlayBox(ui)
   expect(first).toBeTruthy()
-  // B, above A in the list, finishes 500 ms later: the same overlay, or A's badge; never a new source.
+  // B, above A in the list, finishes 500 ms later: the same moment in the same box (a later frame), or A's badge.
   await clockOf.advance(500)
   h.status['ag-Build B'] = 'completed'
   await agentEnd($, 'ag-Build B')
-  const second = await overlaySource(ui)
-  if (second !== undefined) expect(second).toBe(first)
+  const second = await overlayBox(ui)
+  if (second !== undefined) expect(second).toEqual(first)
   else expect(await ui.find({ key: 'crew-badge:ag-Build A' })).toBeTruthy()
   // A new member starts: Running grows and A moves down; the overlay would miss it, so A shows its badge.
   await spawnHelper($, 'C', 'Build C', 'builder-4')
