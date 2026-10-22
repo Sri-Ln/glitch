@@ -3,14 +3,14 @@ import type { AgentInfo, EngineInterface, Register } from 'claude-code'
 
 import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
-import { INITIAL_CREW, crewSummaryOf, elapsedOf, helpersRunning, memberName, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, shares, stepsOf } from './behavior/crew'
+import { INITIAL_CREW, crewSummaryOf, elapsedOf, helpersRunning, memberName, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, onToolStart, reviewerRunning, shares, stepsOf } from './behavior/crew'
 import type { CrewState, CrewSummary } from './behavior/crew'
 import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
 import { leadStatus } from './behavior/lead-status'
 import { isCapReached } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
 import { createPlayer, frameIndex } from './behavior/player'
-import { UI_VIEW_SINCE, isMissingCall, versionAtLeast } from './behavior/engine-support'
+import { activityOf } from './behavior/activity'
 import { isHopping, nextSparkIn, withSparkle } from './behavior/sparkle'
 import { STORE_STREAK, advance, asStreak } from './behavior/streak'
 import { AGENT_PREFIX, REVIEWER_TYPE, agentSpecs, claimStepUp, isReviewerName, isReviewerSpawn, isReviewerType, ladderOf, reviewerSpec, rungOfType, stepUpNote, stepUpsFor } from './behavior/tiers'
@@ -22,7 +22,7 @@ import type { VoiceState } from './behavior/voice'
 import { PETS_USAGE, ROUTED_PETS, STORE_PET, parsePetArg, petArgsOf, petList } from './commands'
 import { parsePetsConfig } from './config'
 import type { PetsConfig } from './config'
-import { DESKTOP_CELL, MINI_PIXEL, crewTree } from './pane'
+import { DESKTOP_CELL, LEAD_POKE, MINI_PIXEL, crewTree } from './pane'
 import type { CrewGroup, CrewMember, CrewView } from './pane'
 import { PERSONAS } from './personas/index'
 import { onCrewChange, onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
@@ -53,7 +53,7 @@ const LEAD_PIXEL = 3
  * room inline for the lead and about three members on the rich surfaces; a dock wide
  * enough for the aligned rows and a few lines inline on the terminal.
  */
-const PANE_SIZE = { rich: { columns: 40, rows: 24 }, terminal: { columns: 90, rows: 10 } } as const
+const PANE_SIZE = { rich: { columns: 56, rows: 24 }, terminal: { columns: 90, rows: 10 } } as const
 type PaneSize = { columns: number; rows: number }
 /** A fullscreen terminal's dock leaves the transcript about half its columns, within these. */
 const DOCK_COLUMNS = { min: 40, max: 90 } as const
@@ -88,13 +88,6 @@ let crewDoneSaidFor = new Set<string>()
 let paneShown = false
 /** Per surface: when the pane's drawing next changes (clock ms), from its last draw. */
 const frameDue = new Map<string, number>()
-/**
- * Whether this engine has `$.ui.view` (a member's "Open ↗"): null until asked. A hooks module may
- * only call `$` (never read `$.ui.view` as a value), so it is known from the engine's version: 2.1.296's
- * API has no view, 2.1.302's has. An unreadable version counts as none; a view call that turns out not
- * to exist (not a function) sets it false too.
- */
-let uiViewSupport: boolean | null = null
 /** The crew's cost as of a crew state: a frame-only redraw reads no usage. */
 let costCache: { sig: string; crewKey: string; cost: number; at: number } | null = null
 /** How long a read of the crew's cost stands (the pill's 1 s cadence). */
@@ -105,8 +98,6 @@ let reviewMissed = false
 let reminderInFlight = false
 /** The pane's frame clock on a rich surface: at most one frame-driven redraw this often (≤ 4 a second). */
 const FRAME_FLOOR_MS = 250
-/** How long a member press waits for the view to switch before it says it did not. */
-const VIEW_WAIT_MS = 4000
 /** What `/glitch crew debug` shows: the engine's last list, the last presses, the view each surface drew under. */
 const freshDebug = (): CrewDebugState => ({ list: null, listError: null, presses: [], views: {}, draws: {} })
 let debug: CrewDebugState = freshDebug()
@@ -234,19 +225,6 @@ async function usdOf($: EngineInterface): Promise<number | null> {
     return null
   }
 }
-/** Whether this engine has `$.ui.view`, from its version (asked once per load). */
-async function hasUiView($: EngineInterface): Promise<boolean> {
-  if (uiViewSupport !== null) return uiViewSupport
-  try {
-    const v = await $.session.version()
-    uiViewSupport = versionAtLeast(v.base ?? v.version, UI_VIEW_SINCE)
-  } catch {
-    // No version to read (an engine older still, or a refusal): no Open for this load.
-    uiViewSupport = false
-  }
-  return uiViewSupport
-}
-
 // With no surface named (auto-open), a session the desktop or a phone draws gets the
 // narrow dock; a terminal-only one the wide dock.
 async function sessionSize($: EngineInterface): Promise<PaneSize> {
@@ -624,7 +602,6 @@ export const register: Register = (on, options) => {
   reminderInFlight = false
   paneShown = false
   frameDue.clear()
-  uiViewSupport = null
   costCache = null
   debug = freshDebug()
 
@@ -771,8 +748,10 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', async ($, e, next) => {
-    const ran = await next(e)
     const agentId = e.agentId
+    // A helper's row says what it is doing while the call runs.
+    if (agentId !== undefined) await update($, crew, c => onToolStart(c, agentId, activityOf(e as never))).catch(() => undefined)
+    const ran = await next(e)
     if (agentId === undefined) {
       const now = await $.clock.now().catch(() => 0)
       await update($, mood, m => onToolResult(m, e, ran, now)).catch(() => undefined)
@@ -874,7 +853,7 @@ export const register: Register = (on, options) => {
           const spark = nextSparkIn(since)
           due.push(now + Math.min(nextFrameIn(p.moods.happy, since), spark ?? Infinity))
         }
-        return { row, mini, cost: cost[row.id] ?? 0, steps: stepsOf(row, c.rows) }
+        return { row, mini, cost: cost[row.id] ?? 0, steps: stepsOf(row) }
       })
       const themeColumns = (CREW_THEMES[theme] ?? CREW_THEMES[DEFAULT_CREW_THEME])?.size.columns ?? 16
       // An engine that sends no bodyColumns: the size the pane asked for.
@@ -889,10 +868,9 @@ export const register: Register = (on, options) => {
         open: { running: isOpenIn(o, c, 'running', isTerminal), finished: isOpenIn(o, c, 'finished', isTerminal) },
         miniColumns: p ? Math.ceil((themeColumns * MINI_PIXEL) / DESKTOP_CELL.width) : 0,
       }
-      // The lead's flourish (pleased) after a finish is its mood: its next frame redraws the pane too.
-      if (p && !isTerminal && m.mood === 'pleased') due.push(now + nextFrameIn(p.moods.pleased, now - m.since))
-      // Open ↗ only where the engine can show a transcript.
-      const canView = await hasUiView($)
+      // The lead's flourish (pleased) after a finish, and its hop (happy) after a click, are its mood:
+      // its next frame redraws the pane too.
+      if (p && !isTerminal && (m.mood === 'pleased' || m.mood === 'happy')) due.push(now + nextFrameIn(p.moods[m.mood], now - m.since))
       // Floored on a rich surface: at most FRAME_FLOOR_MS apart, so a press never races a redraw every
       // tick (the minis and the hops are computed from the time, so coarser steps stay right).
       if (due.length) frameDue.set(e.surface, Math.max(Math.min(...due), isTerminal ? 0 : now + FRAME_FLOOR_MS))
@@ -922,60 +900,23 @@ export const register: Register = (on, options) => {
           $.ui.toast(`Glitch pets: could not fold or open ${group === 'running' ? 'Running' : 'Finished'} (${why})`, { timeoutMs: 6000 })
         }
       }
-      // Shows that member's transcript in the main view. The view is asked first, before any other
-      // call, while the press is the person's own input; whatever comes of it is said.
-      const show = async (agentId: string) => {
-        const row = c.rows.find(r => r.id === agentId)
-        const who = row ? memberName(row) : 'that crew member'
-        let answer: { deny?: string } | 'late' | { error: string } | { missing: true }
-        let timer: { cancel: () => void } | null = null
-        try {
-          const asked = $.ui.view({ agentId })
-          answer = await new Promise<{ deny?: string } | 'late'>((resolve, reject) => {
-            timer = $.clock.after(VIEW_WAIT_MS, () => resolve('late'))
-            asked.then(resolve, reject)
-          })
-        } catch (err) {
-          answer = { error: err instanceof Error ? err.message : String(err) }
-          // The engine has no view after all (its version said otherwise): no Open from now on.
-          if (isMissingCall(err, 'ui.view')) {
-            uiViewSupport = false
-            answer = { missing: true }
-          }
-        } finally {
-          ;(timer as { cancel: () => void } | null)?.cancel()
-        }
-        let text: string | null
-        let result: string
-        if (answer !== 'late' && 'missing' in answer) {
-          result = 'failed: this engine has no ui.view'
-          text = `this app cannot open ${who}'s transcript from the pane. Open it from the tasks list (background tasks).`
-          await update($, paneFrame, () => now + 1).catch(() => undefined)
-        } else if (answer === 'late') {
-          result = `no answer within ${VIEW_WAIT_MS / 1000} s`
-          text = `the app did not switch to ${who}'s transcript (no answer). Open it from the tasks list (background tasks).`
-        } else if ('error' in answer) {
-          result = `failed: ${answer.error}`
-          text = `could not show ${who}'s transcript (${answer.error}). Open it from the tasks list (background tasks).`
-        } else if (answer.deny) {
-          result = `denied: ${answer.deny}`
-          // Asked after the answer, so the view itself was the press's first call.
-          const listed = await $.agent.list().then(l => l.some(a => a.id === agentId)).catch(() => true)
-          text = listed
-            ? `could not show ${who}'s transcript: ${answer.deny}. Open it from the tasks list (background tasks).`
-            : `${who} has finished and left the tasks list, so its transcript cannot be opened (${answer.deny}). Its report is in the conversation.`
-        } else {
-          result = 'shown'
-          // The terminal's view visibly switches; elsewhere say so, so a press is never silent.
-          text = isTerminal ? null : `showing ${who}'s transcript. Back: pick the main conversation in the tasks list.`
-        }
-        recordPress({ at: await $.clock.now().catch(() => now), surface, element: `crew-open:${agentId}`, result })
-        if (text) $.ui.toast(`Glitch pets: ${text}`, { timeoutMs: 8000 })
-      }
-      return crewTree(v, { Box, Text, Button, Svg: 'Svg' in ui ? ui.Svg : null } as never, { toggle, view: canView ? show : null })
+      return crewTree(v, { Box, Text, Button, Svg: 'Svg' in ui ? ui.Svg : null, Client: 'Client' in ui ? ui.Client : null } as never, { toggle })
     } catch {
       return next(e)
     }
+  })
+
+  // A click on the pane's lead (its blank press target posts it): the same hop as a click on the HUD's pet.
+  on('ui.message', async ($, e, next) => {
+    if (e.element !== LEAD_POKE.key) return next(e)
+    try {
+      const now = await $.clock.now()
+      recordPress({ at: now, surface: e.surface, element: LEAD_POKE.key, result: 'poked' })
+      await update($, mood, x => onPoke(x, now, now))
+    } catch {
+      // No hop this time.
+    }
+    return {}
   })
 
   // The pane closed (the person's close mark, our own close, an unload): the frame clock stops.

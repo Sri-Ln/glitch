@@ -26,6 +26,10 @@ export type CrewRow = {
   turnTokens: number
   turnWeight: number
   tools: number
+  /** The steps the lead planned for it (its prompt's "Expected steps: N"); absent: its tier's default. */
+  planned?: number
+  /** What it is doing now: its latest tool call in words ("Reading pane.tsx"). */
+  doing?: string
   startedAt: number
   /** When a resume set it running again: the list grace counts from here, not from the first start. */
   resumedAt?: number
@@ -145,9 +149,11 @@ export function onSpawn(s: CrewState, a: { agentId: string; name?: string; descr
   // A row on the lean reviewer's type is the reviewer, whatever its name or description.
   const role: Role = a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description)
   const task = repeatsName(a.description, a.name, role) && a.prompt ? taskOfPrompt(a.prompt, a.name) : ''
+  const planned = a.prompt ? plannedOf(a.prompt) : null
   const row: CrewRow = {
     id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description,
     ...(task ? { task } : {}),
+    ...(planned ? { planned } : {}),
     role,
     tier: tierOf(a.model, null), model: a.model, effort: null, tokens: 0, weight: 0, turnTokens: 0, turnWeight: 0, tools: 0, startedAt: a.now, endedAt: null, status: 'running',
     ...(a.rung ? { rung: a.rung } : {}), ...(a.stepUps ? { stepUps: a.stepUps } : {}), ...(a.steppedUpFrom ? { steppedUpFrom: a.steppedUpFrom } : {}),
@@ -158,6 +164,10 @@ export function onSpawn(s: CrewState, a: { agentId: string; name?: string; descr
 export const onStep = (s: CrewState, agentId: string, model: string, effort: string | null): CrewState =>
   mapRow(s, agentId, r => ({ ...r, model, effort, tier: tierOf(model, effort) }))
 
+/** A tool call starts: the row says what it is doing. */
+export const onToolStart = (s: CrewState, agentId: string, doing: string): CrewState => mapRow(s, agentId, r => ({ ...r, doing }))
+
+/** A tool call ended: one more step. */
 export const onTool = (s: CrewState, agentId: string): CrewState => mapRow(s, agentId, r => ({ ...r, tools: r.tools + 1 }))
 
 /** One step's usage (per request), counted as it comes so a running row shows its tokens. */
@@ -237,15 +247,37 @@ export function elapsedOf(s: CrewState, now: number): number {
 export const helpersRunning = (s: CrewState): number => s.rows.filter(r => r.status === 'running' && r.role !== 'reviewer').length
 export const reviewerRunning = (s: CrewState): boolean => s.rows.some(r => r.status === 'running' && r.role === 'reviewer')
 
+/** A member's planned steps when its prompt names none: by tier, the reviewer its own. */
+export const DEFAULT_STEPS: Record<Tier | 'reviewer', number> = { light: 6, medium: 12, heavy: 20, reviewer: 10 }
+
+/** The lead's estimate in a prompt: a line "Expected steps: N" (1 to 999). */
+const PLANNED = /\bexpected steps:\s*(\d{1,3})\b/i
+export function plannedOf(prompt: string): number | null {
+  const n = Number(PLANNED.exec(prompt)?.[1] ?? 0)
+  return n > 0 ? n : null
+}
+
+const plannedFor = (r: CrewRow): number => r.planned ?? DEFAULT_STEPS[r.role === 'reviewer' ? 'reviewer' : r.tier]
+
 /**
- * A running row's steps (tool calls) against the most a finished non-reviewer row
- * took; the total is kept above the count, so a running pill never reads full.
- * Null when no row has finished yet (no yardstick).
+ * A running row's steps (tool calls) against its plan; past the plan the total stays one
+ * above the count, so a running pill never reads full. Null once it has ended.
  */
-export function stepsOf(row: CrewRow, rows: readonly CrewRow[]): { n: number; of: number } | null {
+export function stepsOf(row: CrewRow): { n: number; of: number } | null {
   if (row.status !== 'running') return null
-  const most = Math.max(0, ...rows.filter(r => r.status === 'done' && r.role !== 'reviewer').map(r => r.tools))
-  return most > 0 ? { n: row.tools, of: Math.max(most, row.tools + 1) } : null
+  return { n: row.tools, of: Math.max(plannedFor(row), row.tools + 1) }
+}
+
+/** The whole crew's steps: each running row against its plan, each ended row as its own count (all done). */
+export function crewSteps(rows: readonly CrewRow[]): { n: number; of: number } {
+  let n = 0
+  let of = 0
+  for (const r of rows) {
+    const st = stepsOf(r)
+    n += st ? st.n : r.tools
+    of += st ? st.of : r.tools
+  }
+  return { n, of }
 }
 
 /** What glitch-hud's crew pill shows (state key `glitch-pets.crewSummary`). */

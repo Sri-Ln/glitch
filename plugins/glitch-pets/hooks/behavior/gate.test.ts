@@ -52,6 +52,8 @@ test('a failed helper held for a step-up is not finished yet', () => {
 test('the crew rule names the crew tier types', () => {
   expect(CREW_RULE).toContain('glitch-pets:crew-<tier>')
   expect(CREW_RULE).toContain('no model or effort')
+  // The plan's step count reaches the pane through each prompt.
+  expect(CREW_RULE).toContain('Expected steps: N')
 })
 
 test('an unnamed row spawned on crew-reviewer satisfies the review (#45)', () => {

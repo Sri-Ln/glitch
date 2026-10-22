@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, memberName, memberTask, repeatsName, taskOfPrompt, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, roleOf, shares, stepsOf, tierOf, tokenWeight } from './crew'
+import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, memberName, memberTask, repeatsName, taskOfPrompt, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, onToolStart, reviewerRunning, roleOf, shares, stepsOf, tierOf, tokenWeight, DEFAULT_STEPS, crewSteps, plannedOf } from './crew'
 
 test('roleOf reads <role>-<n> names first, then the description', () => {
   expect(roleOf('builder-2', 'whatever')).toBe('builder')
@@ -117,20 +117,44 @@ test('shares split the crew cost by weight; no weight → equal parts', () => {
   expect(shares([{ id: 'a', weight: 0 }, { id: 'b', weight: 0 }] as never, 0.4)).toEqual({ a: 0.2, b: 0.2 })
 })
 
-test('steps are tools against the most any finished crew member took; none while finished or with no yardstick', () => {
-  const rows = [{ id: 'a', tools: 8, status: 'done' }, { id: 'b', tools: 2, status: 'running' }] as never
-  expect(stepsOf((rows as never[])[1] as never, rows)).toEqual({ n: 2, of: 8 })
-  expect(stepsOf((rows as never[])[0] as never, rows)).toBe(null)
-  expect(stepsOf({ id: 'c', tools: 3, status: 'running' } as never, [{ id: 'c', tools: 3, status: 'running' }] as never)).toBe(null)
-  // Past the yardstick the total stays one above the count: never full while running.
-  expect(stepsOf({ id: 'd', tools: 9, status: 'running' } as never, rows)).toEqual({ n: 9, of: 10 })
+test('a running member counts its steps against its plan, else its tier default; never full while running; none once ended', () => {
+  expect(stepsOf({ id: 'a', tools: 1, status: 'running', tier: 'medium', role: 'researcher', planned: 5 } as never)).toEqual({ n: 1, of: 5 })
+  // No plan: the tier's default, the reviewer its own; a fresh member starts at 0 of it, not 0 of nothing.
+  expect(stepsOf({ id: 'b', tools: 0, status: 'running', tier: 'light', role: 'builder' } as never)).toEqual({ n: 0, of: DEFAULT_STEPS.light })
+  expect(stepsOf({ id: 'c', tools: 0, status: 'running', tier: 'heavy', role: 'builder' } as never)).toEqual({ n: 0, of: DEFAULT_STEPS.heavy })
+  expect(stepsOf({ id: 'r', tools: 2, status: 'running', tier: 'medium', role: 'reviewer' } as never)).toEqual({ n: 2, of: DEFAULT_STEPS.reviewer })
+  // Past the plan the total grows, one above the count.
+  expect(stepsOf({ id: 'd', tools: 7, status: 'running', tier: 'medium', role: 'builder', planned: 5 } as never)).toEqual({ n: 7, of: 8 })
+  expect(stepsOf({ id: 'e', tools: 7, status: 'done', tier: 'medium', role: 'builder', planned: 5 } as never)).toBe(null)
 })
 
-test('the steps yardstick ignores a finished reviewer', () => {
-  const rows = [{ id: 'r', role: 'reviewer', tools: 20, status: 'done' }, { id: 'a', role: 'builder', tools: 4, status: 'done' }, { id: 'b', role: 'builder', tools: 2, status: 'running' }] as never
-  expect(stepsOf((rows as never[])[2] as never, rows)).toEqual({ n: 2, of: 4 })
-  const onlyReviewer = [{ id: 'r', role: 'reviewer', tools: 20, status: 'done' }, { id: 'b', role: 'builder', tools: 2, status: 'running' }] as never
-  expect(stepsOf((onlyReviewer as never[])[1] as never, onlyReviewer)).toBe(null)
+test("the crew's steps: done of planned across every member, an ended one all done", () => {
+  const rows = [
+    { id: 'a', tools: 1, status: 'running', tier: 'medium', role: 'researcher', planned: 5 },
+    { id: 'b', tools: 3, status: 'running', tier: 'medium', role: 'builder', planned: 10 },
+    { id: 'c', tools: 2, status: 'running', tier: 'medium', role: 'tester', planned: 5 },
+  ]
+  expect(crewSteps(rows as never)).toEqual({ n: 6, of: 20 })
+  const ended = [{ ...rows[0], status: 'done', tools: 4 }, rows[1], rows[2]] as never
+  expect(crewSteps(ended)).toEqual({ n: 9, of: 19 })
+  expect(crewSteps([{ id: 'x', tools: 4, status: 'done' }, { id: 'y', tools: 2, status: 'failed' }] as never)).toEqual({ n: 6, of: 6 })
+})
+
+test('a prompt with "Expected steps: N" is the plan; a spawn keeps it', () => {
+  expect(plannedOf('Research X.\nExpected steps: 8')).toBe(8)
+  expect(plannedOf('expected steps:12 tool calls')).toBe(12)
+  expect(plannedOf('Do it in steps')).toBe(null)
+  expect(plannedOf('Expected steps: 0')).toBe(null)
+  expect(spawn(INITIAL_CREW, 'a1', { prompt: 'Build it.\nExpected steps: 9' }).rows[0]?.planned).toBe(9)
+  expect(spawn().rows[0]?.planned).toBeUndefined()
+})
+
+test('a tool call start says what the member is doing; its end counts the step', () => {
+  let s = onToolStart(spawn(), 'a1', 'Reading pane.tsx')
+  expect(s.rows[0]?.doing).toBe('Reading pane.tsx')
+  expect(s.rows[0]?.tools).toBe(0)
+  s = onTool(s, 'a1')
+  expect(s.rows[0]?.tools).toBe(1)
 })
 
 test('roleOf takes word forms of the role words', () => {

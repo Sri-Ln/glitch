@@ -93,27 +93,29 @@ When Claude splits work across a crew of agents, the crew pane (`glitch-crew`) s
 ```
 Crew · 3 running · 1 done · 1 failed · ≈$0.31 · 74k tok · 0:37
 Bud · sniffing out builder-1
-● researcher-1 Research date formats         Haiku 5.5 low    9k ≈$0.04  0:37 ██████░░ 6/8
-● designer-1   Design the date picker        Opus 5.5 high   31k ≈$0.13  0:37 ██░░░░░░ 2/8
-● builder-1    ↑ Sonnet · medium · Build th… Sonnet 5.5 high  4k ≈$0.02  0:05 █░░░░░░░ 1/8
+● Researcher   Research date formats         Haiku 5.5 low    9k ≈$0.04  0:37 ██████░░ 6/8
+● Designer     Design the date picker        Opus 5.5 high   31k ≈$0.13  0:37 ██░░░░░░ 2/8
+● Builder      ↑ Sonnet · medium · Build th… Sonnet 5.5 high  4k ≈$0.02  0:05 █░░░░░░░ 1/8
 ✗ 2 finished · 1 completed · 1 failed [ Show ]
 ```
 
 - **Role:** builder, researcher, designer, tester or other. It comes from the member's name (`builder-1`, `researcher-2`, …), or failing that from the words in its task. With the default look (`busy-hands`) each mini acts its role out beside itself, at its model's tempo; with `hats` it wears its role's hat.
 - **Model and effort** are shown as words on each row. A member retried one step up says what it stepped up from (`↑ stepped up from Haiku · low`; on the terminal `↑ Haiku · low`).
-- **Name and task:** each member shows its name once (`researcher-1`) with its task below. A member started without a name shows its role word (or a short form of its task when it has no clear role). When Claude's description only repeats the role or the name, the task line comes from the first sentence of the member's instructions.
+- **Role, task and what it is doing:** on the desktop each member shows its role in a colored chip (`Researcher`) with its task cut short beside it, and below that what it is doing right now, from its latest tool call (`Searching the web: “…”`, `Editing cpu-notes.md`, `Running: npm test`). Once it has finished, that line shows its whole task. The terminal shows the role and the task on the member's line. A member of no clear role goes by its name. When Claude's description only repeats the role or the name, the task comes from the first sentence of the member's instructions.
+- **Steps:** each member counts its steps (tool calls) against the number Claude planned for it (an `Expected steps: N` line in its instructions; without one, a default for its tier: light 6, medium 12, heavy 20, the reviewer 10). It starts at `0/12`, not a bare `0`, and the total goes up if the member runs past it. The Running header's bar and its `6/20` are the whole crew's steps done out of those planned: blue while the crew works, full and green once the last member finishes.
 - **A member finishing:** your pet does a brief flourish, and on the desktop the member that finished does its own short happy hop with a small sparkle on its mini for about a second and a half, in the crew look you picked. Members that finish together each hop at once. A member failing makes your pet worried, then it looks into the failure while the crew works on.
-- **Open ↗:** where your Claude Code app can switch to a member's transcript from a plugin (engine 2.1.302 or later), the member's name is a button with `Open ↗` beside it. An older app shows the name only, with no button; open the transcript from the tasks list (background tasks) there. The button appears by itself once the app is updated.
+- **Transcripts:** open a member's transcript from the app's tasks list (background tasks). The desktop app can't switch to one from a pane.
+- **Poking the lead:** on the desktop, click your pet at the top of the pane for the same happy hop as clicking it in the HUD.
 - **≈cost** is an estimate. The session's own cost is split across the crew by how many tokens each used.
-- **Folding:** in the terminal the finished members always start folded into one line (`✓ 3 finished · 3 completed · 0 failed [ Show ]`); Show lists them, Hide folds them again. On the desktop, Running and Finished are accordion groups that start open; press a header's words (`● RUNNING 3 ▾`, `FINISHED 2 ▾`; `RUN 3 ▾` in a very narrow pane) to fold it to that line. The colored bar beside the words shows that group's share of the crew. Finished keeps its tally of tasks, completed and failed. The choice lasts for the current crew.
+- **Folding:** in the terminal the finished members always start folded into one line (`✓ 3 finished · 3 completed · 0 failed [ Show ]`); Show lists them, Hide folds them again. On the desktop, Running and Finished are accordion groups that start open; press a header's words (`● RUNNING 3 ▾`, `FINISHED 2 ▾`; `RUN 3 ▾` in a very narrow pane) to fold it to that line. The colored bar beside Running is the crew's steps done out of those planned; beside Finished, the share completed and failed. Finished keeps its tally of tasks, completed and failed. The choice lasts for the current crew.
 - In the terminal there are no sprites: the lead's line carries its reactions.
 - `/glitch crew` (or `/glitch-pets crew`) opens or closes the pane. With `crewPane: auto` it opens by itself when the first crew member starts.
-- `/glitch crew debug` (or `/glitch-pets crew debug`) prints the crew rows beside the engine's own agent list (ids and statuses), the pane's last presses and what came of them, and the view each surface drew under: for checking the pane live.
+- `/glitch crew debug` (or `/glitch-pets crew debug`) prints the crew rows beside the engine's own agent list (ids and statuses), the pane's last presses and what came of them, and the view each surface drew under, for checking the pane live.
 - `/glitch crew theme [id]` (or `/glitch-pets crew theme [id]`) lists the crew looks, or picks one and keeps it: `busy-hands` (default: each crew member acts its role out beside itself, and the model sets how much each beat makes and the tempo) or `hats`.
 
 The `crew` skill is the workflow Claude follows when work splits into 2 or more parts:
 
-1. **Plan:** a short task list, with a role and tier for each task.
+1. **Plan:** a short task list, with a role, a tier and an expected number of steps for each task.
 2. **Crew members:** role-named crew members run the independent tasks in parallel.
 3. **Review:** one quick reviewer verifies the whole result against the plan (see "The lean review" below).
 4. **Fix loop:** each finding goes back to the crew member that did that part, then the reviewer checks only what changed, at most 2 rounds. Whatever is still open is reported plainly.

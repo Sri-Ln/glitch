@@ -26,7 +26,7 @@ const session = async ($: Engine, on: On, store: Record<string, unknown> = {}, s
   })
   on('store.keys', () => ({ value: Object.keys(store) }) as never)
   on('session.surfaces', () => ({ value: surfaces }) as never)
-  // An engine with $.ui.view (2.1.302 has it).
+  // The engine version (2.1.302).
   on('session.version', () => ({ value: { version: '2.1.302', base: '2.1.302' } }) as never)
   on('command.register', () => ({ value: { command: 'glitch-pets' } }) as never)
   on('turn.start', () => ({ turnId: 't' }) as never)
@@ -127,8 +127,10 @@ test('a broken streak resets to 1 at the first turn of the day', async ($, on) =
   expect((store.streak as { count: number }).count).toBe(1)
 })
 
-const spawnHelper = async ($: Engine, id: string, description: string, name?: string) =>
-  $.agent.spawn({ tool_use_id: `tu-${id}`, prompt: 'p', description, subagentType: 'general-purpose', ...(name ? { name } : {}) } as never)
+const spawnHelper = async ($: Engine, id: string, description: string, name?: string, prompt = 'p') =>
+  $.agent.spawn({ tool_use_id: `tu-${id}`, prompt, description, subagentType: 'general-purpose', ...(name ? { name } : {}) } as never)
+/** A prompt whose plan is `n` steps. */
+const planned = (n: number) => `Do the task.\nExpected steps: ${n}`
 
 const usageAt = (usd: number) => () => ({ value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd } } }) as never
 
@@ -149,14 +151,15 @@ test('the first helper opens the crew pane (auto) and the pane lists it', async 
     const ui = await $.ui.mount({ plugin: 'glitch-pets', surface, component: 'Pane', props: { title: 'Crew', isFocused: false, bodyColumns: 120 } as never, requestId: 'glitch-crew' })
     const text = (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button').map(t => String(t.text ?? '')).join(' ')
     expect(text).toContain('Build the landing page')
-    expect(text).toContain('builder-1')
+    expect(text).toContain('Builder')
     expect(text).toContain(surface === 'terminal' ? 'Opus 5.5' : 'Opus')
     // Desktop: the lead, the member's mini, its progress pill and the Running bar; none on the terminal.
     const alts = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt))
     if (surface === 'terminal') expect(alts).toEqual([])
     else {
       expect(alts.some(a => a.startsWith('Bud'))).toBe(true)
-      expect(alts).toContain('0 steps')
+      // A fresh member starts at 0 of its tier's planned steps, never a bare "0 steps".
+      expect(alts).toContain('0/12 steps')
     }
     await ui.unmount()
   }
@@ -316,11 +319,11 @@ test('a crew spans main turns: the reviewer spawned later joins the same crew', 
     const text = await paneText($, surface)
     // costAtStart (1) and startedAt (m1) are the crew's own: $4 over 2 s.
     if (surface === 'terminal') {
-      expect(text).toContain('reviewer-1')
+      expect(text).toContain('Reviewer')
       expect(text).toContain('2 finished · 2 completed · 0 failed')
       expect(text).toContain('Crew · 1 running · 2 done · ≈$4.00 · 0 tok · 0:02')
     } else {
-      for (const d of ['builder-1', 'builder-2', 'reviewer-1', '≈$4.00', '0:02']) expect(text).toContain(d)
+      for (const d of ['Builder', 'Reviewer', '≈$4.00', '0:02']) expect(text).toContain(d)
       expect(text).toContain('2 completed')
     }
   }
@@ -393,7 +396,7 @@ test('a helper\'s steps set its model, effort and tier; its tool calls drive pro
   const { h } = await crewHarness($, on)
   await mainStart($, 'm1')
   await spawnHelper($, 'A', 'A', 'builder-1')
-  await spawnHelper($, 'B', 'B', 'builder-2')
+  await spawnHelper($, 'B', 'B', 'builder-2', planned(4))
   const stream = ($.turn.step as unknown as (e: object) => AsyncGenerator<unknown, unknown>)({ turnId: 's', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 1, agentId: 'ag-B' })
   while (!(await stream.next()).done) {
     // Read the stream to its end.
@@ -404,7 +407,7 @@ test('a helper\'s steps set its model, effort and tier; its tool calls drive pro
   await agentEnd($, 'ag-A')
   const text = await paneText($, 'terminal')
   expect(text).toContain('Opus 5.5 | high')
-  // B made 1 of the 4 tool calls A took: 1 of 4 steps, a quarter of the bar.
+  // B made 1 of its 4 planned tool calls: 1 of 4 steps, a quarter of the bar.
   expect(text).toContain('██░░░░░░ 1/4')
 })
 
@@ -642,7 +645,7 @@ const mixedCrew = async ($: Engine, on: Parameters<typeof session>[1]) => {
   h.usd = 1
   await mainStart($, 'm1')
   await spawnHelper($, 'A', 'Build the date utils', 'builder-1')
-  await spawnHelper($, 'B', 'Research date formats', 'researcher-1')
+  await spawnHelper($, 'B', 'Research date formats', 'researcher-1', planned(4))
   await spawnHelper($, 'C', 'Write the tests', 'tester-1')
   const stream = ($.turn.step as unknown as (e: object) => AsyncGenerator<unknown, unknown>)({ turnId: 's', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 1, agentId: B_ID })
   while (!(await stream.next()).done) {
@@ -781,23 +784,7 @@ test('pane: the finished tally reads N tasks · N completed · N failed', async 
   }
 })
 
-test('pane: pressing a crew member opens its transcript with ui.view', async ($, on) => {
-  const viewed: (string | undefined)[] = []
-  on('ui.view', (_$, e) => {
-    viewed.push((e as { agentId?: string }).agentId)
-    return { value: {} } as never
-  })
-  await mixedCrew($, on)
-  for (const surface of SURFACES) {
-    viewed.length = 0
-    const ui = await mountPane($, surface)
-    await ui.press({ key: `crew-open:${B_ID}` })
-    expect(viewed).toEqual([B_ID])
-    await ui.unmount()
-  }
-})
-
-test('pane: each crew member block has a hover style and an Open ↗ hint two cells after the name, in the name\'s own Button (desktop)', async ($, on) => {
+test('pane: each crew member block has a hover style and its role in a chip, no Open (desktop)', async ($, on) => {
   await mixedCrew($, on)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
@@ -806,8 +793,9 @@ test('pane: each crew member block has a hover style and an Open ↗ hint two ce
       const tree = await ui.drawn()
       const block = drawnByKey(tree, `crew-member:${B_ID}`)
       expect(block?.hover?.backgroundColor).toBeTruthy()
-      // #45: the hint is part of the name's press target and always shown (a hover-only reveal is no press target).
-      expect((await ui.find({ key: `crew-open:${B_ID}` }))?.text).toBe('researcher-1\u00a0\u00a0Open ↗')
+      // #47: the role in a chip; the desktop cannot show a transcript from a pane, so no Open.
+      expect(textIn(drawnByKey(tree, `crew-role:${B_ID}`))).toBeTruthy()
+      expect(await ui.find({ key: `crew-open:${B_ID}` })).toBeFalsy()
       // A little more space between members.
       expect((await ui.find({ key: 'crew-members:finished' }))?.props.rowGap).toBeTruthy()
     } else {
@@ -850,7 +838,7 @@ test('pane (terminal): one aligned line per member: glyph, name, task, model + e
       const line = await ui.find({ key: `crew-line:${B_ID}` })
       expect(line?.props.flexDirection).toBe('row')
       const joined = (await textsOf(ui)).join(' | ')
-      for (const p of ['●', 'researcher-1', 'Research date formats', 'Opus 5.5', 'high', '0 tok', '≈$', '0:01', '1/4']) expect(joined).toContain(p)
+      for (const p of ['●', 'Researcher', 'Research date formats', 'Opus 5.5', 'high', '0 tok', '≈$', '0:01', '1/4']) expect(joined).toContain(p)
       // The tier is gone: model and effort say it.
       expect(joined).not.toContain('heavy')
       // Header, lead, one running line, the folded finished line: four rows.
@@ -879,7 +867,7 @@ test('the pane asks for a narrow dock where the desktop draws it, and inline roo
   expect(asked.length).toBe(2)
   for (const a of asked) {
     expect(Number(a.columns)).toBeGreaterThanOrEqual(36)
-    expect(Number(a.columns)).toBeLessThanOrEqual(44)
+    expect(Number(a.columns)).toBeLessThanOrEqual(60)
     // A rich inline pane (the phone) shows the lead and about three members.
     expect(Number(a.rows)).toBeGreaterThanOrEqual(20)
     expect(Number(a.rows)).toBeLessThanOrEqual(28)
@@ -945,7 +933,7 @@ test('a press on the HUD band\'s crew pill toggles the pane', { plugins: [BAND_P
   // Each open is sized for the surface the press came from.
   expect(asked.map(a => a.id)).toEqual(['glitch-crew', 'glitch-crew'])
   expect(Number(asked[0]?.columns)).toBeGreaterThanOrEqual(84)
-  expect(Number(asked[1]?.columns)).toBeLessThanOrEqual(44)
+  expect(Number(asked[1]?.columns)).toBeLessThanOrEqual(60)
 })
 
 test('glitch-pets publishes a crew summary for the HUD pill while a crew is open or recent', async ($, on) => {
@@ -1349,7 +1337,10 @@ test('pane (terminal): at 100 cells the full row; at 40 cells tokens and bar gly
           expect(JSON.stringify(head)).toContain('truncate')
           expect(joined).not.toContain('0 tok')
         }
-      } else expect(joined).toContain('Research date formats')
+      } else {
+        // The desktop: the topic beside the role chip, cut short in a narrow pane (its live step is below).
+        expect(joined).toContain(columns === 100 ? 'Research date formats' : 'Research')
+      }
       await ui.unmount()
     }
   }
@@ -1402,25 +1393,6 @@ test('pane (desktop): an accordion header has a border, a live dot on Running an
   }
 })
 
-test('pane: a refused or failed ui.view is said in a toast', async ($, on) => {
-  let answer: 'deny' | 'throw' = 'deny'
-  on('ui.view', () => {
-    if (answer === 'throw') throw new Error('view refused')
-    return { value: { deny: 'not now' } } as never
-  })
-  await mixedCrew($, on)
-  for (const surface of SURFACES) {
-    for (const a of ['deny', 'throw'] as const) {
-      answer = a
-      toasts = []
-      const ui = await mountPane($, surface)
-      await ui.press({ key: `crew-open:${B_ID}` })
-      expect(toasts.filter(t => t.startsWith('Glitch pets: '))).toHaveLength(1)
-      if (a === 'deny') expect(toasts[0]).toContain(': not now')
-      await ui.unmount()
-    }
-  }
-})
 
 test('the HUD pill and the pane header show one crew cost', async ($, on) => {
   const summaries: { cost?: number }[] = []
@@ -1685,7 +1657,7 @@ test('a command typed at the terminal gets the terminal dock, sized from its col
   await runCrew($, { kind: 'composer' }, { isFullscreen: true, columns: 120 })
   expect(asked.length).toBe(3)
   expect(asked[0]?.columns).toBe(90)
-  expect(Number(asked[1]?.columns)).toBeLessThanOrEqual(44)
+  expect(Number(asked[1]?.columns)).toBeLessThanOrEqual(60)
   expect(asked[2]?.columns).toBe(60)
   for (const a of asked) expect(Number(a.rows)).toBeGreaterThan(0)
 })
