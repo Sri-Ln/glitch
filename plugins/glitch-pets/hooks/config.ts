@@ -2,6 +2,9 @@
 // are reported, never thrown.
 import { PET_IDS } from './behavior/types'
 import type { PetId } from './behavior/types'
+import { parseCrewTiers } from './behavior/tiers'
+import type { CrewTiers } from './behavior/tiers'
+import { CREW_THEMES, DEFAULT_CREW_THEME, crewThemeIds } from './crew-themes/index'
 
 export type PetsConfig = {
   pet: PetId | 'off'
@@ -11,6 +14,10 @@ export type PetsConfig = {
   sleepyMs: number
   crewPane: 'auto' | 'manual'
   crewReview: boolean
+  /** Each crew tier's model and effort (the `crewTiers` JSON setting). */
+  crewTiers: CrewTiers
+  /** A crew-themes registry id. */
+  crewTheme: string
 }
 
 const MIN = 60_000
@@ -41,6 +48,13 @@ export function parsePetsConfig(o: Record<string, unknown>): { config: PetsConfi
     if (o.crewPane === 'auto' || o.crewPane === 'manual') crewPane = o.crewPane
     else problems.push('crewPane must be auto or manual')
   }
+  const tiers = parseCrewTiers(o.crewTiers)
+  problems.push(...tiers.problems)
+  let crewTheme = DEFAULT_CREW_THEME
+  if (o.crewTheme !== undefined) {
+    if (typeof o.crewTheme === 'string' && Object.hasOwn(CREW_THEMES, o.crewTheme)) crewTheme = o.crewTheme
+    else problems.push(`crewTheme must be one of ${crewThemeIds().join(', ')}`)
+  }
   return {
     config: {
       pet,
@@ -50,6 +64,8 @@ export function parsePetsConfig(o: Record<string, unknown>): { config: PetsConfi
       sleepyMs: minutes('sleepyMinutes', 10),
       crewPane,
       crewReview: flag('crewReview', true),
+      crewTiers: tiers.tiers,
+      crewTheme,
     },
     problems,
   }

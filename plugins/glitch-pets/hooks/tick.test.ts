@@ -3,7 +3,10 @@ import { expect, test } from 'claude-code/testing'
 import { createPlayer } from './behavior/player'
 import { PERSONAS } from './personas/index'
 import { CHEER_MS, CRY_MS, HAPPY_MS, OOPS_MS, POKE_MS } from './behavior/moods'
-import { POKE_FRESH_MS, failTick, isMainLoopError, onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
+import { INITIAL_CREW } from './behavior/crew'
+import type { CrewRow, CrewState } from './behavior/crew'
+import { INVESTIGATE_MS, JOY_MS, WORRY_MS } from './behavior/reactions'
+import { POKE_FRESH_MS, failTick, isMainLoopError, onCrewChange, onPoke, onToolResult, onTurnEnd, onTurnStartStreak, tickOnce } from './tick'
 import type { TickInputs } from './tick'
 
 const bud = PERSONAS.bud as NonNullable<typeof PERSONAS.bud>
@@ -21,6 +24,38 @@ const base = (over: Partial<TickInputs> = {}): TickInputs => ({
   tiredMs: 600_000,
   sleepyMs: 900_000,
   ...over,
+})
+
+const member = (id: string, status: 'running' | 'done' | 'failed'): CrewRow => ({
+  id, name: id, named: true, description: id, role: 'builder', tier: 'medium', model: null, effort: null, tokens: 0, weight: 0,
+  turnTokens: 0, turnWeight: 0, tools: 0, startedAt: 0, endedAt: null, status,
+})
+const crewOf = (...rows: CrewRow[]): CrewState => ({ ...INITIAL_CREW, closed: false, startedAt: 0, rows })
+
+test('a crew member finishing: the lead is pleased for 2.5 s, then back to leading', () => {
+  const before = crewOf(member('builder-1', 'running'), member('tester-2', 'running'))
+  const after = crewOf(member('builder-1', 'done'), member('tester-2', 'running'))
+  const state = onCrewChange(base().state, before, after, 1000)
+  expect(tickOnce(base({ state, crew: after, helpersRunning: 1, now: 1000 })).mood).toBe('pleased')
+  expect(tickOnce(base({ state, crew: after, helpersRunning: 1, now: 1000 + JOY_MS })).mood).toBe('leading')
+})
+
+test('a crew member failing: worried for 3 s, then investigating while the crew works', () => {
+  const before = crewOf(member('builder-1', 'running'), member('tester-2', 'running'))
+  const after = crewOf(member('builder-1', 'failed'), member('tester-2', 'running'))
+  const state = onCrewChange(base().state, before, after, 1000)
+  expect(tickOnce(base({ state, crew: after, helpersRunning: 1, now: 1000 })).mood).toBe('worried')
+  // Its worry is crew news, so the budget remark must not follow.
+  expect(tickOnce(base({ state, crew: after, helpersRunning: 1, now: 1000 })).fromCrew).toBe(true)
+  expect(tickOnce(base({ state, crew: after, helpersRunning: 1, now: 1000, cacheSecondsLeft: 30 })).fromCrew).toBe(false)
+  expect(tickOnce(base({ state, crew: after, helpersRunning: 1, now: 1000 + WORRY_MS })).mood).toBe('investigating')
+  expect(tickOnce(base({ state, crew: after, helpersRunning: 1, now: 1000 + INVESTIGATE_MS })).mood).toBe('leading')
+})
+
+test('no news leaves the mood state as it was', () => {
+  const c = crewOf(member('builder-1', 'running'))
+  const m = base().state
+  expect(onCrewChange(m, c, c, 1000)).toBe(m)
 })
 
 test('an idle pet draws its idle frame', () => {

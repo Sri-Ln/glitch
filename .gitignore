@@ -4,3 +4,7 @@ node_modules/
 plugins/*/.claude-plugin/types/
 plugins/*/tsconfig.json
 .superpowers/
+
+# Agent worktrees and local review screenshots
+.claude/worktrees/
+test/

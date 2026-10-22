@@ -17,6 +17,26 @@ const good = (): Persona => ({
   voice: Object.fromEntries(VOICE_MOMENTS.map(v => [v, ['one', 'two', 'three']])) as unknown as Persona['voice'],
 })
 
+test('leadStatus wording is optional, but only for known situations and never empty', () => {
+  const p = good()
+  expect(personaProblems({ ...p, leadStatus: { many: 'juggling {n}', joy: '{who} is done' } })).toEqual([])
+  expect(personaProblems({ ...p, leadStatus: { nonsense: 'x' } as never }).join()).toContain('not a lead situation')
+  expect(personaProblems({ ...p, leadStatus: { worry: ' ' } }).join()).toContain('leadStatus worry')
+  // A pair is the wording for one, then for more than one.
+  expect(personaProblems({ ...p, leadStatus: { joy: ['{who} is done', '{who} are done'] } })).toEqual([])
+  expect(personaProblems({ ...p, leadStatus: { joy: ['{who} is done'] as never } }).join()).toContain('leadStatus joy')
+})
+
+test('the contract covers the lead moods investigating and pleased', () => {
+  const p = good()
+  const moods = { ...p.moods } as Record<string, unknown>
+  delete moods.investigating
+  delete moods.pleased
+  const problems = personaProblems({ ...p, moods: moods as unknown as Persona['moods'] }).join()
+  expect(problems).toContain('mood investigating is missing')
+  expect(problems).toContain('mood pleased is missing')
+})
+
 test('a complete persona has no problems', () => {
   expect(personaProblems(good())).toEqual([])
 })
@@ -53,6 +73,13 @@ test('the hat anchor must be inside the grid', () => {
 test('a persona may not use a laptop palette key of its own', () => {
   const p = good()
   expect(personaProblems({ ...p, palette: { ...p.palette, '4': '#000000' } }).join()).toContain('reserved for the laptop')
+})
+
+test('a persona keeps to letter keys: digits and punctuation are reserved for crew themes and the laptop', () => {
+  const p = good()
+  for (const key of ['0', '9', '^', '~', '(']) {
+    expect(personaProblems({ ...p, palette: { ...p.palette, [key]: '#000000' } }).join()).toContain('reserved for crew themes')
+  }
 })
 
 test('the laptop paw must be a palette key', () => {
