@@ -26,6 +26,10 @@ export type CrewRow = {
   turnTokens: number
   turnWeight: number
   tools: number
+  /** The steps the lead planned for it (its prompt's "Expected steps: N"); absent: its tier's default. */
+  planned?: number
+  /** What it is doing now: its latest tool call in words ("Reading pane.tsx"). */
+  doing?: string
   startedAt: number
   /** When a resume set it running again: the list grace counts from here, not from the first start. */
   resumedAt?: number
@@ -61,16 +65,26 @@ const ROLE_NAME = /^(builder|researcher|designer|tester|reviewer)-\d+$/i
 // Stems take any word form (reviews, reviewer, researching, tests, builds…). The reviewer rule stays first.
 const ROLE_WORDS: [Role, RegExp][] = [
   ['reviewer', /\b(review\w*|audit\w*|check the whole)\b/i],
-  ['researcher', /\b(research\w*|find\w*|investigat\w*|explor\w*|look(s|ed|ing)? up|survey\w*)\b/i],
+  ['researcher', /\b(research\w*|find\w*|investigat\w*|explor\w*|look(s|ed|ing)? up|survey\w*|explain\w*|summar\w*|describ\w*|answer\w*|analy[sz]\w*|compar\w*)\b/i],
   ['tester', /\b(test\w*|verif\w*|validat\w*|qa)\b/i],
   ['designer', /\b(design\w*|draw\w*|drew|mock(s|ed|ing)? ?ups?|styl\w*|layouts?)\b/i],
   ['builder', /\b(build\w*|built|implement\w*|writ\w*|wrote|creat\w*|fix\w*|add(s|ed|ing)?|cod(e|es|ed|ing)|refactor\w*)\b/i],
 ]
 
-export function roleOf(name: string | undefined, description: string): Role {
+/** A task put as a question ("how a CPU works", "Why X?"): finding out, so a researcher. */
+const QUESTION = /(^|[:\s])(how|why|what|when|where|which|who)\b|\?\s*$/i
+/** How much of a prompt the role words are read in: its opening says the task. */
+const PROMPT_HEAD = 400
+
+/**
+ * A member's role: its crew name (`builder-1`), else the role words in its description, then in
+ * its prompt's opening, then a question-shaped task or the Explore type (a researcher); else other.
+ */
+export function roleOf(name: string | undefined, description: string, prompt = '', type = ''): Role {
   const m = name ? ROLE_NAME.exec(name) : null
   if (m) return (m[1] as string).toLowerCase() as Role
-  for (const [role, re] of ROLE_WORDS) if (re.test(description)) return role
+  for (const text of [description, prompt.slice(0, PROMPT_HEAD)]) for (const [role, re] of ROLE_WORDS) if (re.test(text)) return role
+  if (QUESTION.test(description) || /^explore$/i.test(type)) return 'researcher'
   return 'other'
 }
 
@@ -137,17 +151,19 @@ export const onMainTurnEnd = (s: CrewState): CrewState => ({ ...s, closed: s.clo
 const usageTokens = (u: UsageLike): number => u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens
 
 /** A spawn: a new row, or, for an agent already in the crew (a resume), its row running again with its counts kept. */
-export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; prompt?: string; model: string | null; now: number; costNow: number; rung?: string; stepUps?: number; steppedUpFrom?: CrewRow['steppedUpFrom'] }): CrewState {
+export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; prompt?: string; type?: string; model: string | null; now: number; costNow: number; rung?: string; stepUps?: number; steppedUpFrom?: CrewRow['steppedUpFrom'] }): CrewState {
   if (s.rows.some(r => r.id === a.agentId)) {
-    return { ...mapRow(s, a.agentId, r => ({ ...r, status: 'running', resumedAt: a.now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
+    return { ...mapRow(s, a.agentId, ({ doing: _d, ...r }) => ({ ...r, status: 'running', resumedAt: a.now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
   }
   const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
   // A row on the lean reviewer's type is the reviewer, whatever its name or description.
-  const role: Role = a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description)
+  const role: Role = a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description, a.prompt, a.type)
   const task = repeatsName(a.description, a.name, role) && a.prompt ? taskOfPrompt(a.prompt, a.name) : ''
+  const planned = a.prompt ? plannedOf(a.prompt) : null
   const row: CrewRow = {
     id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description,
     ...(task ? { task } : {}),
+    ...(planned ? { planned } : {}),
     role,
     tier: tierOf(a.model, null), model: a.model, effort: null, tokens: 0, weight: 0, turnTokens: 0, turnWeight: 0, tools: 0, startedAt: a.now, endedAt: null, status: 'running',
     ...(a.rung ? { rung: a.rung } : {}), ...(a.stepUps ? { stepUps: a.stepUps } : {}), ...(a.steppedUpFrom ? { steppedUpFrom: a.steppedUpFrom } : {}),
@@ -158,6 +174,11 @@ export function onSpawn(s: CrewState, a: { agentId: string; name?: string; descr
 export const onStep = (s: CrewState, agentId: string, model: string, effort: string | null): CrewState =>
   mapRow(s, agentId, r => ({ ...r, model, effort, tier: tierOf(model, effort) }))
 
+/** A tool call starts: the row says what it is doing. */
+export const onToolStart = (s: CrewState, agentId: string, doing: string): CrewState =>
+  s.rows.some(r => r.id === agentId && r.doing !== doing) ? mapRow(s, agentId, r => ({ ...r, doing })) : s
+
+/** A tool call ended: one more step. */
 export const onTool = (s: CrewState, agentId: string): CrewState => mapRow(s, agentId, r => ({ ...r, tools: r.tools + 1 }))
 
 /** One step's usage (per request), counted as it comes so a running row shows its tokens. */
@@ -196,7 +217,7 @@ export const onAgentRunEnd = (s: CrewState, agentId: string, reason: string, now
 export function onAgentWake(s: CrewState, agentId: string, now: number): CrewState {
   const row = s.rows.find(r => r.id === agentId)
   if (!row || row.status === 'running') return s
-  const { killed: _k, ...rest } = row
+  const { killed: _k, doing: _d, ...rest } = row
   return { ...mapRow(s, agentId, () => ({ ...rest, status: 'running', resumedAt: now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false }
 }
 
@@ -237,15 +258,37 @@ export function elapsedOf(s: CrewState, now: number): number {
 export const helpersRunning = (s: CrewState): number => s.rows.filter(r => r.status === 'running' && r.role !== 'reviewer').length
 export const reviewerRunning = (s: CrewState): boolean => s.rows.some(r => r.status === 'running' && r.role === 'reviewer')
 
+/** A member's planned steps when its prompt names none: by tier, the reviewer its own. */
+export const DEFAULT_STEPS: Record<Tier | 'reviewer', number> = { light: 6, medium: 12, heavy: 20, reviewer: 10 }
+
+/** The lead's estimate in a prompt: a line "Expected steps: N" (1 to 999). */
+const PLANNED = /\bexpected steps:\s*(\d{1,3})\b/i
+export function plannedOf(prompt: string): number | null {
+  const n = Number(PLANNED.exec(prompt)?.[1] ?? 0)
+  return n > 0 ? n : null
+}
+
+const plannedFor = (r: CrewRow): number => r.planned ?? DEFAULT_STEPS[r.role === 'reviewer' ? 'reviewer' : r.tier]
+
 /**
- * A running row's steps (tool calls) against the most a finished non-reviewer row
- * took; the total is kept above the count, so a running pill never reads full.
- * Null when no row has finished yet (no yardstick).
+ * A running row's steps (tool calls) against its plan; past the plan the total stays one
+ * above the count, so a running pill never reads full. Null once it has ended.
  */
-export function stepsOf(row: CrewRow, rows: readonly CrewRow[]): { n: number; of: number } | null {
+export function stepsOf(row: CrewRow): { n: number; of: number } | null {
   if (row.status !== 'running') return null
-  const most = Math.max(0, ...rows.filter(r => r.status === 'done' && r.role !== 'reviewer').map(r => r.tools))
-  return most > 0 ? { n: row.tools, of: Math.max(most, row.tools + 1) } : null
+  return { n: row.tools, of: Math.max(plannedFor(row), row.tools + 1) }
+}
+
+/** The whole crew's steps: each running row against its plan, each ended row as its own count (all done). */
+export function crewSteps(rows: readonly CrewRow[]): { n: number; of: number } {
+  let n = 0
+  let of = 0
+  for (const r of rows) {
+    const st = stepsOf(r)
+    n += st ? st.n : r.tools
+    of += st ? st.of : r.tools
+  }
+  return { n, of }
 }
 
 /** What glitch-hud's crew pill shows (state key `glitch-pets.crewSummary`). */

@@ -1,6 +1,6 @@
 {
   "name": "glitch-pets",
-  "version": "0.4.2",
+  "version": "0.5.1",
   "description": "Glitch pets: pick one of six pixel critters; it sits at the end of the HUD row, shows moods and says a word now and then; leads the crew pane when Claude splits work across a crew of agents.",
   "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
   "license": "MIT",

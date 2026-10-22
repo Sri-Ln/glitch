@@ -1,6 +1,6 @@
-// Fixes from the first live check (#45 items 1, 4, 5, 7): the header line is one press,
-// a member press is never silent, the desktop tree fits the pane's real bodyColumns, and
-// the rows follow the engine's own word on each helper's status.
+// Fixes from the live checks (#45, #47): the header line is one press, a member row says its
+// role and what it is doing, the desktop tree fits the pane's real bodyColumns, the rows follow
+// the engine's own word on each helper's status, and a click on the lead hops.
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
@@ -11,6 +11,9 @@ const SURFACES = ['terminal', 'desktop'] as const
 type Surface = (typeof SURFACES)[number]
 
 type H = { status: Record<string, string>; usd: number; summaries: unknown[]; listCalls: number; frames: number[]; openFails: boolean; contexts: (readonly string[] | undefined)[] }
+
+/** Runs inside the engine's own tool call, while it is in flight (a test sets it; the harness clears it). */
+const midCall: { probe: (() => Promise<void>) | null } = { probe: null }
 
 /** The engine version the harness answers (an Error: the version cannot be read). Read at the pane's first draw. */
 const engine = { version: '2.1.302' as string | Error }
@@ -61,7 +64,11 @@ const harness = async ($: Engine, on: On) => {
   on('ui.panes', () => ({ value: [] }) as never)
   on('ui.close', () => ({ value: undefined }) as never)
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd: h.usd } } }) as never)
-  on('tool.call', () => ({ result: 'ok' }) as never)
+  midCall.probe = null
+  on('tool.call', async () => {
+    await midCall.probe?.()
+    return { result: 'ok' } as never
+  })
   on('turn.step', async function* () {
     return { turnId: 's', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: null } as never
   })
@@ -127,99 +134,136 @@ const wordsOf = (node: unknown): string => {
   return (n.children ?? []).map(wordsOf).join('')
 }
 const kids = (n: Drawn | undefined) => ((n?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
+/** The alt of the first Svg under a node (the role chip is an image). */
+const altOf = (node: unknown): string => {
+  let alt = ''
+  walk(node, n => {
+    if (!alt && n.type === 'Svg') alt = String(n.props?.alt ?? '')
+  })
+  return alt
+}
 
-// ── 4. A member press opens its transcript, or says why not ──
+// ── 4. A member row: its role and topic, then what it is doing; no Open (#47) ──
 
-test('a member\'s name is its press target: on the desktop with Open ↗ in one always-visible Button, on the terminal in its line', async ($, on) => {
+test('no Open anywhere and no view is ever asked: the desktop cannot show a transcript from a pane (#47)', async ($, on) => {
+  let views = 0
+  on('ui.view', () => {
+    views += 1
+    return { value: {} } as never
+  })
   await crew($, on)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
     const tree = await ui.drawn()
-    const btn = byKey(tree, `crew-open:${B}`)
-    expect(btn?.type).toBe('Button')
-    expect(wordsOf(btn)).toContain('researcher-1')
-    if (surface === 'desktop') {
-      expect(wordsOf(btn)).toContain('↗')
-      // No part of the press target starts hidden.
-      walk(byKey(tree, `crew-member:${B}`), n => expect(n.props?.display).not.toBe('none'))
-    } else {
-      // The terminal: no member block, the name sits in its aligned line, no desktop hint.
-      expect(byKey(tree, `crew-member:${B}`)).toBeUndefined()
-      expect(byKey(tree, `crew-line:${B}`)).toBeTruthy()
-      expect(wordsOf(btn)).not.toContain('↗')
-    }
+    expect(byKey(tree, `crew-open:${B}`)).toBeUndefined()
+    expect(JSON.stringify(tree)).not.toContain('Open')
+    expect(JSON.stringify(tree)).not.toContain('↗')
+    // Only the badges are Buttons (a native button's look; a press does nothing).
+    let buttons = 0
+    walk(byKey(tree, surface === 'desktop' ? `crew-member:${B}` : `crew-line:${B}`), n => {
+      buttons += n.type === 'Button' && !String(n.props?.key ?? '').endsWith(':badge') ? 1 : 0
+    })
+    expect(buttons).toBe(0)
     await ui.unmount()
   }
+  expect(views).toBe(0)
 })
 
-test('a refused view says why and what to do; a member that left the tasks list says so', async ($, on) => {
-  let deny = 'no agent holds the id'
-  on('ui.view', () => ({ value: { deny } }) as never)
-  const { h } = await crew($, on)
-  for (const surface of SURFACES) {
-    toasts = []
-    const ui = await mountPane($, surface)
-    await ui.press({ key: `crew-open:${B}` })
-    expect(toasts).toHaveLength(1)
-    expect(toasts[0]).toContain('researcher-1')
-    expect(toasts[0]).toContain('no agent holds the id')
-    expect(toasts[0]).toMatch(/tasks list/i)
-    await ui.unmount()
+test('a desktop row: the role in a colored chip and the topic cut short, then what it is doing now; once ended, its whole topic', async ($, on) => {
+  await crew($, on)
+  // Read while the call still runs: the row says it from the call's start.
+  let during = ''
+  midCall.probe = async () => {
+    const mid = await mountPane($, 'desktop', 56)
+    during = wordsOf(byKey(await mid.drawn(), `crew-task:${B}`))
+    await mid.unmount()
   }
-  // The engine dropped C's task: the toast says it finished and left the list.
-  delete h.status[C]
-  deny = 'the tasks list shows no row for it'
-  for (const surface of SURFACES) {
-    toasts = []
-    const ui = await mountPane($, surface)
-    // The terminal folds the finished: unfold to reach tester-1.
-    if (surface === 'terminal') await ui.press({ key: 'crew-finished' })
-    await ui.press({ key: `crew-open:${C}` })
-    expect(toasts).toHaveLength(1)
-    expect(toasts[0]).toMatch(/tester-1 .*left the tasks list/)
-    await ui.unmount()
-  }
-})
-
-test('a view that switched says so on the desktop (the terminal shows it); a view that never answers is said after a wait', async ($, on) => {
-  let release: (() => void) | null = null
-  let hang = false
-  on('ui.view', async () => {
-    if (hang) await new Promise<void>(r => (release = r))
-    return { value: {} } as never
+  await $.tool.call({ tool: 'WebSearch', query: 'ISO 8601 date formats', agentId: B } as never)
+  expect(during).toBe('Searching the web: “ISO 8601 date formats”')
+  const ui = await mountPane($, 'desktop', 56)
+  const tree = await ui.drawn()
+  // The chip: a rounded rectangle in the role's color with its word in white.
+  const chip = byKey(tree, `crew-role:${B}`)
+  expect(altOf(chip)).toBe('Researcher')
+  let source = ''
+  walk(chip, n => {
+    source ||= n.type === 'Svg' ? String(n.props?.source) : ''
   })
+  expect(source).toMatch(/rx="\d+" fill="#2f6fd0"/)
+  expect(source).toContain('fill="#ffffff"')
+  const title = wordsOf(byKey(tree, `crew-title:${B}`))
+  expect(title).toMatch(/^Research date formats/)
+  expect(title).not.toContain('researcher-1')
+  expect(wordsOf(byKey(tree, `crew-task:${B}`))).toBe('Searching the web: “ISO 8601 date formats”')
+  // Ended: the chip alone on the title, the whole topic once, below it.
+  expect(wordsOf(byKey(tree, `crew-task:${C}`))).toBe('Write the tests')
+  expect(wordsOf(byKey(tree, `crew-title:${C}`))).not.toContain('Write the tests')
+  expect(altOf(byKey(tree, `crew-role:${C}`))).toBe('Tester')
+  // Each member has a row of padding above and below; none between members.
+  expect(byKey(tree, `crew-member:${B}`)?.props?.paddingY).toBe(1)
+  expect(byKey(tree, 'crew-members:running')?.props?.rowGap).toBeUndefined()
+  await ui.unmount()
+  // The terminal: the role word in its name column, the topic beside it.
+  const term = await mountPane($, 'terminal', 100)
+  const line = wordsOf(byKey(await term.drawn(), `crew-line:${B}`))
+  expect(line).toContain('Researcher')
+  expect(line).toContain('Research date formats')
+  await term.unmount()
+})
+
+test('a fresh member starts at 0 of its planned steps, never a bare "0 steps"; the Running bar is the crew\'s steps done of planned', async ($, on) => {
+  await harness($, on)
+  await $.turn.start({ turnId: 'm1' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-1', prompt: 'Find X.\nExpected steps: 5', description: 'Find X', subagentType: 'general-purpose', name: 'researcher-1' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-2', prompt: 'Build Y.\nExpected steps: 10', description: 'Build Y', subagentType: 'general-purpose', name: 'builder-1' } as never)
+  await $.agent.spawn({ tool_use_id: 'tu-3', prompt: 'Test Z.\nExpected steps: 5', description: 'Test Z', subagentType: 'general-purpose', name: 'tester-1' } as never)
+  const ui = await mountPane($, 'desktop', 56)
+  let tree = await ui.drawn()
+  expect(wordsOf(byKey(tree, 'crew-pill-label:ag-Find X'))).toBe('0/5 steps')
+  expect(wordsOf(byKey(tree, 'crew-acc-steps'))).toBe('0/20')
+  for (let i = 0; i < 1; i++) await $.tool.call({ tool: 'Read', file_path: 'a.ts', agentId: 'ag-Find X' } as never)
+  for (let i = 0; i < 3; i++) await $.tool.call({ tool: 'Read', file_path: 'b.ts', agentId: 'ag-Build Y' } as never)
+  for (let i = 0; i < 2; i++) await $.tool.call({ tool: 'Read', file_path: 'c.ts', agentId: 'ag-Test Z' } as never)
+  tree = await ui.drawn()
+  expect(wordsOf(byKey(tree, 'crew-pill-label:ag-Build Y'))).toBe('3/10 steps')
+  expect(wordsOf(byKey(tree, 'crew-acc-steps'))).toBe('6/20')
+  let svg: Drawn | undefined
+  walk(byKey(tree, 'crew-acc-bar:running'), n => {
+    svg ??= n.type === 'Svg' ? n : undefined
+  })
+  expect(String(svg?.props?.alt)).toBe('6 of 20 steps')
+  // 30% filled: the blue fill is about 0.3 of the bar's width.
+  const w = Number(svg?.props?.width)
+  const fill = Number(/<rect x="0" width="(\d+)"[^>]*#2f7cf6/.exec(String(svg?.props?.source))?.[1] ?? 0)
+  expect(Math.abs(fill / w - 0.3)).toBeLessThan(0.03)
+  await ui.unmount()
+})
+
+test('a click on the lead plays its happy hop, as a click on the HUD pet does; the terminal draws no lead to click', async ($, on) => {
   const { clock } = await crew($, on)
-  for (const surface of SURFACES) {
-    toasts = []
-    const ui = await mountPane($, surface)
-    await ui.press({ key: `crew-open:${B}` })
-    if (surface === 'desktop') expect(toasts).toEqual([expect.stringContaining('researcher-1')])
-    else expect(toasts).toEqual([])
-    await ui.unmount()
-  }
-  hang = true
-  for (const surface of SURFACES) {
-    toasts = []
-    const ui = await mountPane($, surface)
-    const pressed = ui.press({ key: `crew-open:${B}` })
-    await clock.advance(5000)
-    // Answered late: the toast was already said, nothing more.
-    ;(release as unknown as () => void)?.()
-    await pressed
-    // A view that never answers is said on every surface, the terminal too.
-    expect(toasts).toHaveLength(1)
-    expect(toasts[0]).toMatch(/did not switch|no answer/i)
-    await ui.unmount()
-  }
+  const term = await mountPane($, 'terminal', 100)
+  expect(byKey(await term.drawn(), 'crew-lead-poke')).toBeUndefined()
+  await term.unmount()
+  const ui = await mountPane($, 'desktop', 56)
+  const tree = await ui.drawn()
+  const target = byKey(tree, 'crew-lead-poke')
+  expect(target?.type).toBe('Client')
+  expect(String(target?.props?.module)).toMatch(/lead-poke\.tsx$/)
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'crew-lead-poke' })
+  await clock.advance(200)
+  let alt = ''
+  walk(byKey(await ui.drawn(), 'crew-lead-sprite'), n => {
+    alt = n.type === 'Svg' ? String(n.props?.alt) : alt
+  })
+  expect(alt).toMatch(/happy/i)
+  await ui.unmount()
 })
 
 test('/glitch crew debug lists the crew rows against the engine\'s agent list and the last presses', async ($, on) => {
-  on('ui.view', () => ({ value: { deny: 'the session draws no main view' } }) as never)
   const { h } = await crew($, on)
   h.status['ag-other'] = 'running'
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface, 40, surface === 'desktop' ? { agentId: B } : {})
-    await ui.press({ key: `crew-open:${B}` })
     // Each surface's own fold: the desktop's header line, the terminal's finished line.
     await ui.press({ key: surface === 'desktop' ? 'crew-acc:finished' : 'crew-finished' })
     if (surface === 'terminal') expect(await ui.find({ key: 'crew-acc:finished' })).toBeFalsy()
@@ -233,10 +277,8 @@ test('/glitch crew debug lists the crew rows against the engine\'s agent list an
     // The engine's own word for each, and the list entry no row holds.
     expect(text).toContain('completed')
     expect(text).toContain('ag-other')
-    expect(text).toContain('the session draws no main view')
     expect(text).toContain('crew-acc:finished')
     expect(text).toMatch(/terminal · crew-finished → opened/)
-    expect(text).toMatch(/terminal · crew-open:.*denied/)
     // The view in force where the pane last drew, per surface.
     expect(text).toMatch(/desktop.*view.*Research/i)
     expect(text).toMatch(/terminal pane: view = main conversation/)
@@ -274,11 +316,12 @@ for (const cols of [28, 34, 40, 60]) {
       const title = byKey(tree, `crew-title:${id}`)
       expect(Number(title?.props?.width ?? 0) <= detail || title === undefined).toBe(true)
       // The title Button keeps 2 cells of slack beside the time.
-      expect(wordsOf(byKey(tree, `crew-open:${id}`)).length + 1 + wordsOf(byKey(tree, `crew-time:${id}`)).length).toBeLessThanOrEqual(detail - 2)
+      expect(wordsOf(byKey(tree, `crew-name:${id}`)).length + 2 + 1 + wordsOf(byKey(tree, `crew-time:${id}`)).length).toBeLessThanOrEqual(detail)
       // The pill row: the bar's cells and its words.
       const pillBox = byKey(tree, `crew-pill:${id}`)
       const label = wordsOf(byKey(tree, `crew-pill-label:${id}`))
-      expect(Number(pillBox?.props?.width ?? 0) + (pillBox ? 1 : 0) + label.length).toBeLessThanOrEqual(detail)
+      // ...with 2 cells of slack at the line's end, so bold words in a proportional font are never cut.
+      expect(Number(pillBox?.props?.width ?? 0) + (pillBox ? 1 : 0) + label.length).toBeLessThanOrEqual(detail - 2)
       // The chips: padding 1 each side, a gap between.
       const chips = kids(byKey(tree, `crew-chips:${id}`))
       const cells = chips.reduce((t, c) => t + wordsOf(c).length + 2, 0) + Math.max(0, chips.length - 1)
@@ -574,7 +617,8 @@ test('desktop header: a Button holding only short Text ("● RUNNING n ▾"), ne
           svg ??= n.type === 'Svg' ? n : undefined
         })
         const src = String(svg?.props?.source)
-        expect(src).toContain(kind === 'running' ? '#2f7cf6' : '#1f9d55')
+        if (kind === 'running') expect(String(svg?.props?.alt)).toBe(`0 of ${wordsOf(byKey(tree, 'crew-acc-steps')).split('/')[1]} steps`)
+        else expect(src).toContain('#1f9d55')
         expect(Number(svg?.props?.width)).toBeGreaterThan(0)
       }
       // Toggling still works and the chevron stays visible.
@@ -741,59 +785,9 @@ test('the hop drives the frame clock while it plays, then the clock stops; the h
   await ui2.unmount()
 })
 
-// ── 3/4. Open ↗ only where the engine has $.ui.view; a 2-cell gap before it ──
+// ── 5. The role once, the task beside it ──
 
-test('an engine that predates $.ui.view: no Open ↗, the name is plain Text (no Button), and no view is ever asked, on both surfaces', async ($, on) => {
-  let views = 0
-  on('ui.view', () => {
-    views += 1
-    return { value: {} } as never
-  })
-  await crew($, on)
-  engine.version = '2.1.296'
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface)
-    const tree = await ui.drawn()
-    expect(byKey(tree, `crew-open:${B}`)).toBeUndefined()
-    expect(JSON.stringify(tree)).not.toContain('Open')
-    expect(JSON.stringify(tree)).not.toContain('↗')
-    const holder = byKey(tree, surface === 'desktop' ? `crew-title:${B}` : `crew-line:${B}`)
-    expect(wordsOf(holder)).toContain('researcher-1')
-    let buttons = 0
-    walk(holder, n => {
-      buttons += n.type === 'Button' ? 1 : 0
-    })
-    expect(buttons).toBe(0)
-    await ui.unmount()
-  }
-  expect(views).toBe(0)
-})
-
-test('an engine whose version cannot be read is treated as one without $.ui.view', async ($, on) => {
-  await crew($, on)
-  engine.version = new Error('no such op')
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface)
-    expect(byKey(await ui.drawn(), `crew-open:${B}`)).toBeUndefined()
-    await ui.unmount()
-  }
-})
-
-test('with $.ui.view: the name Button keeps "Open ↗" two cells after the name (non-breaking, so the desktop keeps the gap)', async ($, on) => {
-  await crew($, on)
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface)
-    const btn = byKey(await ui.drawn(), `crew-open:${B}`)
-    expect(btn?.type).toBe('Button')
-    if (surface === 'desktop') expect(wordsOf(btn)).toBe('researcher-1  Open ↗')
-    else expect(wordsOf(btn)).toBe('researcher-1')
-    await ui.unmount()
-  }
-})
-
-// ── 5. The name once, the task below ──
-
-test('a member shows its name once with its task below: a description that only repeats the role or name gives way to the task from the prompt', async ($, on) => {
+test('a member shows its role once with its task: a description that only repeats the role or name gives way to the task from the prompt', async ($, on) => {
   await harness($, on)
   await $.turn.start({ turnId: 'm1' } as never)
   await $.agent.spawn({ tool_use_id: 'tu-r', prompt: 'Find the date formats our users type most often.\nList the top five with examples.', description: 'researcher', subagentType: 'general-purpose', name: 'researcher-1' } as never)
@@ -802,17 +796,18 @@ test('a member shows its name once with its task below: a description that only 
     const ui = await mountPane($, surface, surface === 'desktop' ? 40 : 100)
     const tree = await ui.drawn()
     if (surface === 'desktop') {
-      expect(wordsOf(byKey(tree, 'crew-title:ag-researcher'))).toMatch(/^researcher-1/)
-      expect(wordsOf(byKey(tree, 'crew-task:ag-researcher'))).toMatch(/^Find the date formats/)
-      // The unnamed one: its role word as its name, its task below.
-      expect(wordsOf(byKey(tree, 'crew-title:ag-Look up the parser options'))).toMatch(/^researcher/)
-      expect(wordsOf(byKey(tree, 'crew-task:ag-Look up the parser options'))).toBe('Look up the parser options')
+      expect(altOf(byKey(tree, 'crew-role:ag-researcher'))).toBe('Researcher')
+      expect(wordsOf(byKey(tree, 'crew-title:ag-researcher'))).toMatch(/^Find the/)
+      // Running and no tool call yet: it is starting.
+      expect(wordsOf(byKey(tree, 'crew-task:ag-researcher'))).toBe('Starting…')
+      // The unnamed one: its role word too, its task beside it.
+      expect(altOf(byKey(tree, 'crew-role:ag-Look up the parser options'))).toBe('Researcher')
+      expect(wordsOf(byKey(tree, 'crew-title:ag-Look up the parser options'))).toMatch(/^Look up/)
     } else {
       const line = wordsOf(byKey(tree, 'crew-line:ag-researcher'))
-      expect(line).toContain('researcher-1')
+      expect(line).toContain('Researcher')
+      expect(line).not.toContain('researcher-1')
       expect(line).toContain('Find the date formats')
-      // "researcher" appears only inside the name.
-      expect(line.split('researcher').length - 1).toBe(1)
       expect(wordsOf(byKey(tree, 'crew-line:ag-Look up the parser options'))).toContain('Look up the parser options')
     }
     await ui.unmount()

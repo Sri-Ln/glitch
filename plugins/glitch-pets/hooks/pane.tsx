@@ -1,21 +1,22 @@
 // The crew pane's drawing, from plain data. register.tsx hands it the elements and
 // the two actions (open or close a group, show a member's transcript).
 //
-// Desktop: a lead row (the pet at 2×, its status, the crew's time on the right),
-// cost and token chips, then Running and Finished as accordion groups (each header a Button of
-// short words, natural width, beside its colored bar as an Svg), each member a block that lights
-// on hover; where the engine can show a transcript ($.ui.view), its name is a Button with
-// "Open ↗". Every width comes from the pane's real bodyColumns: texts are cut with an ellipsis,
-// chips drop by priority. Every block has a fixed height.
+// Desktop: a lead row (the pet at 2×, a press target over it, its status, the crew's time on the
+// right), rounded cost and token badges, then Running and Finished as accordion groups (each header
+// a Button of short words, natural width, beside its colored bar as an Svg; Running's bar is the
+// crew's steps done of those planned), each member a block that lights on hover. Every width comes
+// from the pane's real bodyColumns: texts are cut with an ellipsis, chips drop by priority. Every
+// block has a fixed height.
 // Terminal: one header line, the lead's line, one aligned line per running member,
 // and the finished members folded into one line a Button expands.
-// A member shows its name once (memberName) and its task below (memberTask).
+// A member shows its role (roleLabel) with its topic, and below what it is doing now (its
+// latest tool call), or its whole topic once it has ended.
 import type { RenderElement, RenderNode } from 'claude-code'
 
-import { memberName, memberTask } from './behavior/crew'
+import { crewSteps, memberTask } from './behavior/crew'
 import type { CrewRow } from './behavior/crew'
 import { rungLabel } from './behavior/tiers'
-import type { Sprite } from './behavior/types'
+import type { Role, Sprite } from './behavior/types'
 
 export type CrewGroup = 'running' | 'finished'
 
@@ -24,7 +25,7 @@ export type CrewMember = {
   /** The member's small picture (its crew theme's frame; hopping with a sparkle just after it finished); null draws none (and never on the terminal). */
   mini: Sprite | null
   cost: number
-  /** Steps done of the expected total while running; null without a yardstick. */
+  /** Steps done of the planned total while running; null once it has ended. */
   steps: { n: number; of: number } | null
 }
 
@@ -46,12 +47,14 @@ export type CrewView = {
 
 export type CrewActions = {
   toggle: (group: CrewGroup) => unknown
-  /** Shows a member's transcript; null where the engine has no $.ui.view: then no "Open ↗" and the name is plain text. */
-  view: ((agentId: string) => unknown) | null
 }
 
 type Ctor = (p: never) => RenderNode
-type El = { Box: Ctor; Text: Ctor; Button: Ctor; Svg: Ctor | null }
+/** `Client` draws the press target over the lead (a blank region posting each press); null draws none. */
+type El = { Box: Ctor; Text: Ctor; Button: Ctor; Svg: Ctor | null; Client: Ctor | null }
+
+/** The lead's press target's element key (its module is ./lead-poke.tsx; register.tsx hears its posts). */
+export const LEAD_POKE = { key: 'crew-lead-poke' } as const
 
 /**
  * Fill colors of the progress pill and the group bars: mid shades that read on light
@@ -82,7 +85,11 @@ export const DESKTOP_CELL = { width: 7, height: 18 } as const
 const CELL_PX = DESKTOP_CELL.width
 
 /** Fixed heights (cells) of the desktop's blocks, so a row's top is exact. */
-export const DESKTOP_ROWS = { lead: 3, totals: 1, header: 2, tally: 1, member: 4, steppedUp: 1, gap: 1 } as const
+/**
+ * `header` is one line in a round border (2 rows, its live look). A member is its 4 lines and a row of
+ * padding above and below (`memberPad`), with no gap between members: the padding spaces them.
+ */
+export const DESKTOP_ROWS = { lead: 3, totals: 1, header: 2, tally: 1, member: 4, memberPad: 1, steppedUp: 1, gap: 1 } as const
 /** A member block's left padding (cells): where its mini starts. */
 const MEMBER_PAD = 1
 
@@ -95,7 +102,7 @@ export type DesktopLayoutInput = { rows: readonly CrewRow['status'][]; open: Rec
  */
 export function desktopLayout(i: DesktopLayoutInput): { tops: (number | null)[]; heights: number[]; order: number[] } {
   const R = DESKTOP_ROWS
-  const heights = i.rows.map((_, n) => R.member + (i.steppedUp[n] ? R.steppedUp : 0))
+  const heights = i.rows.map((_, n) => R.member + 2 * R.memberPad + (i.steppedUp[n] ? R.steppedUp : 0))
   const tops: (number | null)[] = i.rows.map(() => null)
   const order: number[] = []
   let y = R.lead + R.gap + R.totals
@@ -106,8 +113,7 @@ export function desktopLayout(i: DesktopLayoutInput): { tops: (number | null)[];
     if (kind === 'finished') y += R.gap + R.tally
     if (!i.open[kind]) continue
     y += R.gap
-    ids.forEach((n, j) => {
-      if (j > 0) y += R.gap
+    ids.forEach(n => {
       tops[n] = y
       order.push(n)
       y += heights[n] as number
@@ -130,7 +136,31 @@ export const clock = (ms: number) => {
 const usd = (n: number) => `≈$${n.toFixed(2)}`
 const shortModel = (m: string | null) =>
   m ? m.replace(/^claude-/, '').replace(/-(\d+)-(\d+).*$/, ' $1.$2').replace(/^\w/, c => c.toUpperCase()) : '—'
-const nameOf = memberName
+/** A member's role in a word ("Researcher"); "Helper" when nothing says which. */
+const ROLE_LABEL: Record<Role, string> = { builder: 'Builder', researcher: 'Researcher', designer: 'Designer', tester: 'Tester', reviewer: 'Reviewer', other: 'Helper' }
+export const roleLabel = (r: Pick<CrewRow, 'role'>): string => ROLE_LABEL[r.role]
+/** The role chip's fill (white words on it), one per role: mid shades that read on light and dark. */
+export const ROLE_COLOR: Record<Role, string> = { builder: '#b86e0f', researcher: '#2f6fd0', designer: '#a8448f', tester: '#0f8780', reviewer: '#6a55c8', other: '#5b6b82' }
+
+const ROLE_CHIP = { height: 16, font: 11, padX: 6, glyph: 6.6, radius: 4 } as const
+/**
+ * The role chip: a rounded rectangle in the role's color with its word in white, drawn as an image
+ * (a Box has no rounded corners); the word is fitted to its width, so the chip never cuts it.
+ */
+export function roleChipSvg(r: Pick<CrewRow, 'role'>): Sprite {
+  const word = roleLabel(r)
+  const C = ROLE_CHIP
+  const text = Math.ceil(cells(word) * C.glyph)
+  const width = text + 2 * C.padX
+  const source =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${C.height}" viewBox="0 0 ${width} ${C.height}">` +
+    `<rect width="${width}" height="${C.height}" rx="${C.radius}" fill="${ROLE_COLOR[r.role]}"/>` +
+    `<text x="${C.padX}" y="${C.height / 2}" dominant-baseline="central" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="${C.font}" font-weight="600" fill="#ffffff" textLength="${text}" lengthAdjust="spacingAndGlyphs">${word}</text>` +
+    `</svg>`
+  return { source, alt: word, width, height: C.height }
+}
+/** What a member is doing now while it runs, else its whole topic. */
+export const doingOf = (r: CrewRow): string => (r.status === 'running' ? (r.doing ?? 'Starting…') : memberTask(r))
 const tookOf = (r: CrewRow, now: number) => clock((r.endedAt ?? now) - r.startedAt)
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 /** A hover group name: 1 to 64 plain characters. */
@@ -149,13 +179,14 @@ export function pillLabel(m: CrewMember): string {
 /** The pill's words in the fewest cells: "1/4", else as pillLabel. */
 const shortPillLabel = (m: CrewMember): string => (m.row.status === 'running' ? (m.steps ? `${m.steps.n}/${m.steps.of}` : `${m.row.tools}`) : pillLabel(m))
 
+const cells = (s: string) => Array.from(s).length
+
 /** `s` in at most `n` cells: cut with an ellipsis, never wrapped. */
 export function fit(s: string, n: number): string {
   const chars = Array.from(s)
   if (n <= 0) return ''
   return chars.length <= n ? s : `${chars.slice(0, Math.max(0, n - 1)).join('')}…`
 }
-const cells = (s: string) => Array.from(s).length
 
 const fractionOf = (m: CrewMember): number =>
   m.row.status !== 'running' ? 1 : m.steps ? clamp(m.steps.n / m.steps.of, 0, 1) : 0.5
@@ -213,9 +244,8 @@ const PILL_MIN_CELLS = 4
 const PILL_MAX_PX = 260
 /** Cells left free beside a Button's words (desktop): a native button's chrome or a wide glyph. */
 const BUTTON_SLACK = 2
-/** The hint after a member's name, 2 cells after it: non-breaking spaces, which a native button does not collapse. */
-export const OPEN_HINT = '\u00a0\u00a0Open ↗'
-const OPEN_SHORT = '\u00a0\u00a0↗'
+/** Cells left free at a desktop line's end: its font is proportional, so bold words run wider than their count. */
+const LINE_SLACK = 2
 /** A group bar is drawn only with at least this many cells beside the header's words. */
 const BAR_MIN_CELLS = 4
 
@@ -229,7 +259,6 @@ function terminalTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   const B = el.Box as unknown as Make
   const T = el.Text as unknown as Make
   const Btn = el.Button as unknown as Make
-  const view = act.view
   const running = v.rows.filter(m => m.row.status === 'running')
   const finished = v.rows.filter(m => m.row.status !== 'running')
   const done = finished.filter(m => m.row.status === 'done').length
@@ -239,7 +268,7 @@ function terminalTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   // time and the step count; the token column and the bar glyphs go.
   const narrow = v.bodyColumns < NARROW_COLUMNS
   const tight = v.bodyColumns < TIGHT_COLUMNS
-  const nameW = Math.min(tight ? 10 : narrow ? 12 : 16, Math.max(4, ...shown.map(m => nameOf(m.row).length)))
+  const nameW = Math.min(tight ? 10 : narrow ? 12 : 16, Math.max(4, ...shown.map(m => roleLabel(m.row).length)))
   const modelW = Math.min(narrow ? 10 : 18, Math.max(4, ...shown.map(m => (narrow ? shortModel(m.row.model) : modelEffort(m.row, ' ')).length)))
   const tokW = Math.max(3, ...shown.map(m => k(m.row.tokens).length))
   const costW = Math.max(5, ...shown.map(m => usd(m.cost).length))
@@ -259,8 +288,9 @@ function terminalTree(v: CrewView, el: El, act: CrewActions): RenderElement {
           <T color={statusColor(m.row)}>{glyph(m.row)}</T>
         </B>
         <B width={nameW} flexShrink={0} overflow="hidden">
-          {/* A press target only where the engine can show the transcript; else the name as text. */}
-          {view ? <Btn key={`crew-open:${m.row.id}`} plain label={nameOf(m.row)} onPress={() => view(m.row.id)} /> : <T wrap="truncate-end">{nameOf(m.row)}</T>}
+          <T color={ROLE_COLOR[m.row.role]} bold wrap="truncate-end">
+            {roleLabel(m.row)}
+          </T>
         </B>
         <B flexGrow={1} flexShrink={1} minWidth={0}>
           {/* A retry says, compactly, the rung it stepped up from. */}
@@ -330,7 +360,7 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
   const T = el.Text as unknown as Make
   const Btn = el.Button as unknown as Make
   const S = el.Svg as unknown as Make | null
-  const view = act.view
+  const Client = el.Client as unknown as Make | null
   const R = DESKTOP_ROWS
   const cols = Math.max(1, Math.floor(v.bodyColumns))
   const running = v.rows.filter(m => m.row.status === 'running')
@@ -350,19 +380,22 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
       {text}
     </T>
   )
+  // A badge: a native Button is a small rounded pill with even padding (the HUD's crew pill look); a press does nothing.
   const chip = (text: string, dim = false, key?: string) => (
-    <B key={key} backgroundColor={CHIP_BG} paddingX={1} flexShrink={0}>
-      {line(text, { dimColor: dim })}
+    <B key={key} flexShrink={0}>
+      <Btn key={key ? `${key}:badge` : undefined} label={text} dimColor={dim || undefined} onPress={() => undefined} />
     </B>
   )
-  /** Chips in priority order, as many as fit `room` cells (padding 1 each side, a gap between); the first is cut to fit. */
+  /** Badges in priority order, as many as fit `room` cells (each its words and a button's chrome, a gap between); the first is cut to fit. */
   const chipsFit = (items: { text: string; dim?: boolean; key?: string }[], room: number) => {
     const out: RenderElement[] = []
+    // A native button's chrome: the HUD crew pill's live-checked 2 cells.
+    const edge = 2
     let used = 0
     for (const c of items) {
       const gap = out.length ? 1 : 0
-      const text = out.length ? c.text : fit(c.text, room - 2)
-      const w = cells(text) + 2 + gap
+      const text = out.length ? c.text : fit(c.text, room - edge)
+      const w = cells(text) + edge + gap
       if (!text || used + w > room) break
       used += w
       out.push(chip(text, c.dim, c.key))
@@ -377,36 +410,34 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
     const scope = scopeOf(id)
     const rung = fromLabel(m.row)
     const from = rung ? (`↑ stepped up from ${rung}`.length <= detailCells ? `↑ stepped up from ${rung}` : `↑ from ${rung}`) : null
-    // The title line: the status glyph and the name (a Button with Open ↗ where the engine can show
-    // the transcript, else plain text), and the time at the right edge.
+    // The title line: the role chip, the topic cut short while it runs, and the time at the right edge.
+    // Once it has ended its whole topic is the line below, so the title shows none (never twice).
     const took = tookOf(m.row, v.now)
-    // 2 cells of slack: a native button's chrome or a wide glyph must not push the time off the line.
-    const titleRoom = Math.max(1, detailCells - cells(took) - 1 - (view ? BUTTON_SLACK : 0))
-    const mark = m.row.status === 'running' ? '' : `${glyph(m.row)} `
-    const name = nameOf(m.row)
-    const nameRoom = titleRoom - cells(mark)
-    // The name first: the hint takes only the room the whole name leaves, 2 cells after it.
-    const hint = !view ? '' : nameRoom - cells(name) >= cells(OPEN_HINT) ? OPEN_HINT : nameRoom - cells(name) >= cells(OPEN_SHORT) ? OPEN_SHORT : ''
-    const shownName = fit(name, nameRoom - cells(hint))
+    const lineCells = Math.max(1, detailCells - LINE_SLACK)
+    const titleRoom = Math.max(1, lineCells - cells(took) - 1)
+    const chipSprite = roleChipSvg(m.row)
+    const chipCells = Math.ceil(chipSprite.width / CELL_PX)
+    const topicRoom = titleRoom - chipCells - 1
+    const topic = m.row.status === 'running' && topicRoom >= 4 ? fit(memberTask(m.row), topicRoom) : ''
     // The pill: its bar takes what its words leave; a narrow column drops to the short words, then the bar.
     let label = pillLabel(m)
-    let pillCells = detailCells - cells(label) - 1
+    let pillCells = lineCells - cells(label) - 1
     if (pillCells < PILL_MIN_CELLS) {
       label = shortPillLabel(m)
-      pillCells = detailCells - cells(label) - 1
+      pillCells = lineCells - cells(label) - 1
     }
     const withPill = pillCells >= PILL_MIN_CELLS
-    label = fit(label, detailCells)
+    label = fit(label, lineCells)
     const chips = chipsFit(
       [
-        { text: chipModel(m.row) },
-        { text: usd(m.cost), dim: true },
+        { text: chipModel(m.row), key: `crew-chip-model:${id}` },
+        { text: usd(m.cost), dim: true, key: `crew-chip-cost:${id}` },
         { text: k(m.row.tokens), dim: true, key: `crew-chip-tok:${id}` },
       ],
-      detailCells,
+      lineCells,
     )
     return (
-      <B key={`crew-member:${id}`} flexDirection="row" columnGap={1} paddingX={MEMBER_PAD} height={heightOf(m)} overflow="hidden" hover={{ backgroundColor: HOVER_BG, scope }}>
+      <B key={`crew-member:${id}`} flexDirection="row" columnGap={1} paddingX={MEMBER_PAD} paddingY={R.memberPad} height={heightOf(m)} overflow="hidden" hover={{ backgroundColor: HOVER_BG, scope }}>
         {/* The sprite column and the details column are two Boxes, so the details keep their width. */}
         {miniCols > 0 ? (
           <B key={`crew-mini:${id}`} flexShrink={0} width={miniCols}>
@@ -415,30 +446,25 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
         ) : null}
         <B flexDirection="column" width={detailCells} flexShrink={0} overflow="hidden">
           <B key={`crew-title:${id}`} flexDirection="row" justifyContent="space-between" columnGap={1} height={1} width={detailCells}>
-            {view ? (
-              // Always shown, never revealed on hover only: the press lands wherever on the name or the hint.
-              <Btn key={`crew-open:${id}`} plain onPress={() => view(id)}>
-                {mark ? line(mark, { color: statusColor(m.row), bold: true }) : null}
-                {line(shownName)}
-                {hint ? line(hint, { dimColor: true }) : null}
-              </Btn>
-            ) : (
-              <B key={`crew-name:${id}`} flexDirection="row" flexShrink={1} minWidth={0}>
-                {mark ? line(mark, { color: statusColor(m.row), bold: true }) : null}
-                {line(shownName)}
+            <B key={`crew-name:${id}`} flexDirection="row" alignItems="center" columnGap={1} flexShrink={1} minWidth={0} overflow="hidden">
+              <B key={`crew-role:${id}`} flexShrink={0} width={chipCells} alignItems="center">
+                {S ? img(chipSprite) : line(chipSprite.alt, { color: ROLE_COLOR[m.row.role], bold: true })}
               </B>
-            )}
+              {topic ? <B flexShrink={1} minWidth={0}>{line(topic, { dimColor: true })}</B> : null}
+            </B>
             <B key={`crew-time:${id}`} flexShrink={0}>
               {line(took, { dimColor: true })}
             </B>
           </B>
+          {/* While it runs, what it is doing now (its latest tool call); once ended, its whole topic. */}
           <B key={`crew-task:${id}`} height={1}>
-            {line(fit(memberTask(m.row), detailCells))}
+            {line(fit(doingOf(m.row), lineCells), m.row.status === 'running' ? { italic: true } : {})}
           </B>
-          {from ? <B height={1}>{line(fit(from, detailCells), { dimColor: true })}</B> : null}
-          <B flexDirection="row" columnGap={1} alignItems="center" height={1}>
+          {from ? <B height={1}>{line(fit(from, lineCells), { dimColor: true })}</B> : null}
+          <B flexDirection="row" columnGap={1} alignItems="center" height={1} width={lineCells}>
+            {/* The bar gives way first (it shrinks and clips), so the words beside it are never cut. */}
             {withPill ? (
-              <B key={`crew-pill:${id}`} width={pillCells} flexShrink={0} overflow="hidden">
+              <B key={`crew-pill:${id}`} width={pillCells} flexShrink={1} minWidth={0} overflow="hidden">
                 {img(pillSvg(m, Math.min(PILL_MAX_PX, pillCells * CELL_PX - 2)))}
               </B>
             ) : null}
@@ -465,11 +491,14 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
     const count = `${items.length} ${chev}`
     const forms = kind === 'running' ? [`● RUNNING ${count}`, `● RUN ${count}`, `RUN ${count}`] : [`FINISHED ${count}`, `FIN ${count}`]
     const label = forms.find(f => cells(f) + BUTTON_SLACK <= headerCells) ?? (forms[forms.length - 1] as string)
+    // Running's bar is the whole crew's steps: done of planned, the ended members' all done.
+    const steps = kind === 'running' ? crewSteps(v.rows.map(m => m.row)) : null
+    const stepsText = steps ? `${steps.n}/${steps.of}` : ''
     // The colored bar beside the Button (an Svg, not pressable) takes the room the words leave.
-    const barCells = headerCells - cells(label) - BUTTON_SLACK - 1
+    const barCells = headerCells - cells(label) - BUTTON_SLACK - 1 - (steps ? cells(stepsText) + 1 + LINE_SLACK : 0)
     const shares =
-      kind === 'running'
-        ? [{ share: items.length / Math.max(1, total), color: PILL_COLOR.running }]
+      steps
+        ? [{ share: steps.n / Math.max(1, steps.of), color: PILL_COLOR.running }]
         : [
             { share: done / Math.max(1, total), color: PILL_COLOR.done },
             { share: failed / Math.max(1, total), color: PILL_COLOR.failed },
@@ -485,13 +514,18 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
           </B>
           {barCells >= BAR_MIN_CELLS && S ? (
             <B key={`crew-acc-bar:${kind}`} flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-              {img(groupBarSvg(shares, barCells * CELL_PX - 2, kind === 'running' ? `${items.length} of ${total} at work` : `${done} completed, ${failed} failed of ${total}`))}
+              {img(groupBarSvg(shares, barCells * CELL_PX - 2, steps ? `${steps.n} of ${steps.of} steps` : `${done} completed, ${failed} failed of ${total}`))}
+            </B>
+          ) : null}
+          {steps ? (
+            <B key="crew-acc-steps" flexShrink={0}>
+              {line(stepsText, { color: 'suggestion', bold: true })}
             </B>
           ) : null}
         </B>
         {kind === 'finished' ? tally() : null}
         {open ? (
-          <B key={`crew-members:${kind}`} flexDirection="column" rowGap={R.gap}>
+          <B key={`crew-members:${kind}`} flexDirection="column">
             {items.map(member)}
           </B>
         ) : null}
@@ -533,7 +567,15 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
       <B key="crew-lead" flexDirection="row" alignItems="flex-start" columnGap={1} height={R.lead}>
         {lead ? (
           <B key="crew-lead-sprite" flexShrink={0} width={leadSlot} flexDirection="row" justifyContent="flex-end">
-            {img(lead)}
+            <B key="crew-lead-pet" flexShrink={0}>
+              {img(lead)}
+              {/* A click on the lead plays its happy hop, as a click on the HUD's pet does. */}
+              {Client ? (
+                <B key="crew-lead-target" position="absolute" top={0} left={0}>
+                  <Client key="crew-lead-poke" module="./lead-poke.tsx" width={Math.max(1, Math.ceil(lead.width / CELL_PX))} height={R.lead} />
+                </B>
+              ) : null}
+            </B>
           </B>
         ) : null}
         {/* The words have their own width and truncate, so they never run into the time. */}
@@ -549,7 +591,7 @@ function desktopTree(v: CrewView, el: El, act: CrewActions): RenderElement {
         ) : null}
       </B>
       <B key="crew-totals" flexDirection="row" columnGap={1} flexWrap="nowrap" overflow="hidden" height={R.totals}>
-        {chipsFit([{ text: usd(v.header.cost) }, { text: `${k(v.header.tokens)} tok` }, ...(timeCells ? [] : [{ text: clock(v.header.elapsedMs), dim: true }])], cols)}
+        {chipsFit([{ text: usd(v.header.cost), key: 'crew-total-cost' }, { text: `${k(v.header.tokens)} tok`, key: 'crew-total-tok' }, ...(timeCells ? [] : [{ text: clock(v.header.elapsedMs), dim: true }])], cols - LINE_SLACK)}
       </B>
       {running.length ? group('running', running) : null}
       {finished.length ? group('finished', finished) : null}
