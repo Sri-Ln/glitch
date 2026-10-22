@@ -33,6 +33,12 @@ export type MoodInputs = {
   reviewerRunning: boolean
   tiredMs: number
   sleepyMs: number
+  /** A crew member just finished: `pleased` until then (reactionMoodInputs). */
+  crewJoyUntil?: number
+  /** A crew member just failed: `worried` until then. */
+  crewWorryUntil?: number
+  /** After a failure, `investigating` until then while helpers still run. */
+  investigateUntil?: number
 }
 
 export function budgetFraction(b: BudgetLike | null, sessionTotal: number): number | null {
@@ -54,7 +60,11 @@ export function moodOf(i: MoodInputs): MoodId {
   if (i.oopsUntil > i.now) return 'oops'
   if ((i.budget !== null && i.budget >= WORRY_BUDGET) || (i.cacheSecondsLeft !== null && i.cacheSecondsLeft > 0 && i.cacheSecondsLeft < WORRY_CACHE_S)) return 'worried'
   if (i.cheerUntil > i.now) return 'cheering'
+  // Crew news (behavior/reactions.ts) ranks under the session's own trouble and over the steady crew moods.
+  if ((i.crewWorryUntil ?? 0) > i.now) return 'worried'
+  if ((i.crewJoyUntil ?? 0) > i.now) return 'pleased'
   if (i.reviewerRunning) return 'reviewing'
+  if (i.helpersRunning > 0 && (i.investigateUntil ?? 0) > i.now) return 'investigating'
   if (i.helpersRunning > 0) return 'leading'
   if (i.happyUntil > i.now) return 'happy'
   if (running && i.now - (i.turnSince as number) >= i.tiredMs) return 'tired'

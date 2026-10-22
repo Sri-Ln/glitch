@@ -29,7 +29,26 @@ for (const [id, persona] of Object.entries(PERSONAS)) {
       for (const y of [7, 8, 9, 10, 11]) expect(f[y]!.slice(3, 13)).toMatch(/^[46]+$/)
     }
   })
+  test(`${id}'s pleased is its signature flourish: 6 frames at 5 fps, at most its first one a happy frame (no hop)`, () => {
+    const art = persona!.moods.pleased
+    expect(art.frames).toHaveLength(6)
+    expect(art.fps).toBe(5)
+    const happy = new Set(persona!.moods.happy.frames.map(f => f.join('\n')))
+    for (const f of art.frames.slice(1)) expect(happy.has(f.join('\n'))).toBe(false)
+    expect(new Set(art.frames.map(f => f.join('\n'))).size).toBeGreaterThanOrEqual(3)
+  })
 }
+
+test("Fork's smile has no dark seam under the mouth's ends (it read as dripping)", () => {
+  const smile = PERSONAS.fork!.moods.happy.frames[1]!
+  expect(smile[10]![6]).toBe('o')
+  expect(smile[10]![9]).toBe('o')
+  for (const f of PERSONAS.fork!.moods.cheering.frames) {
+    const y = f.findIndex(r => r.includes('eeee'))
+    expect(f[y + 1]![6]).toBe('o')
+    expect(f[y + 1]![9]).toBe('o')
+  }
+})
 
 test('every persona has a distinct name', () => {
   const names = Object.values(PERSONAS).map(p => p!.name)
@@ -44,4 +63,11 @@ test('a broken persona file is left out, never fatal; a good one still composes'
   expect(composeSafely(empty)).toBeUndefined()
   expect(composeSafely(noMoods)).toBeUndefined()
   expect(composeSafely(bud)?.moods.working.frames).toHaveLength(6)
+})
+
+test('no pet says "helper": every remark and lead status speaks of the crew', () => {
+  for (const p of [blob, bud, dot, fork, pixel, screenhead]) {
+    const said = [...Object.values(p.voice).flat(), ...Object.values(p.leadStatus ?? {}).flat()]
+    for (const line of said) expect(`${p.id}: ${line}`).not.toMatch(/helper/i)
+  }
 })

@@ -1,7 +1,7 @@
 {
   "name": "glitch-pets",
-  "version": "0.3.0",
-  "description": "Glitch pets: pick one of six pixel critters; it sits at the end of the HUD row, shows moods and says a word now and then; leads a crew pane when Claude runs helper agents.",
+  "version": "0.4.2",
+  "description": "Glitch pets: pick one of six pixel critters; it sits at the end of the HUD row, shows moods and says a word now and then; leads the crew pane when Claude splits work across a crew of agents.",
   "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
   "license": "MIT",
   "types": "./types/index.d.ts",
@@ -12,7 +12,9 @@
     "voiceEveryMinutes": { "type": "number", "title": "Minutes between remarks", "description": "At most one remark per this many minutes", "default": 3 },
     "tiredMinutes": { "type": "number", "title": "Tired after (minutes)", "description": "A turn this long makes the pet tired", "default": 10 },
     "sleepyMinutes": { "type": "number", "title": "Sleepy after (minutes)", "description": "This long without a prompt makes the pet sleepy", "default": 10 },
-    "crewPane": { "type": "string", "title": "Crew pane", "description": "auto: open when helpers start; manual: /glitch crew", "default": "auto", "options": ["auto", "manual"] },
-    "crewReview": { "type": "boolean", "title": "Crew review gate", "description": "The crew rule in the system prompt, and a reminder when 2+ helpers finished without a reviewer", "default": true }
+    "crewPane": { "type": "string", "title": "Crew pane", "description": "auto: open when a crew starts; manual: only from the HUD crew pill or /glitch crew", "default": "auto", "options": ["auto", "manual"] },
+    "crewReview": { "type": "boolean", "title": "Crew review gate", "description": "The crew rule in the system prompt, and a reminder when 2+ crew members finished without a reviewer", "default": true },
+    "crewTiers": { "type": "string", "title": "Crew tiers", "description": "JSON: the model and effort each crew member of a tier runs at (low, medium or high), e.g. {\"light\":{\"model\":\"claude-haiku-5-5\",\"effort\":\"low\"}}, plus a reviewer entry for the crew reviewer; empty: Haiku low, Sonnet medium, Opus high, reviewer Sonnet low", "default": "" },
+    "crewTheme": { "type": "string", "title": "Crew look", "description": "How crew members look in the crew pane; /glitch crew theme <id> overrides it", "default": "busy-hands", "options": ["busy-hands", "hats"] }
   }
 }

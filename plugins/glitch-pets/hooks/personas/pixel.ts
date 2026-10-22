@@ -82,6 +82,36 @@ const cryBase = (rows: Frame): Frame => rows.map((r, y) => (y === 1 ? '.........
 const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[4, 6], [5, 6], [8, 6], [9, 6]], 'v'))),
 )
+// Investigating: the tail curls up into a "?" (its pink tip blinks), one ear droops, one eye narrows,
+// and the open eye glances aside. Pixel would never scratch its head in public.
+const curl = patch(BASE, { 9: '...dvvvvvvd.....', 10: '...dvvvvvvdd....', 11: '...dvvvvvvvdd...' })
+const QTAIL: Pt[] = [[13, 5], [14, 5], [15, 6], [15, 7], [14, 8], [14, 9], [13, 10]]
+const askTail = (rows: Frame, tip: string): Frame => at(put(rows, QTAIL, 't'), 12, 6, tip)
+const doubtful = put(put(curl, [[8, 6], [9, 6]], 'v'), [[8, 7], [9, 7]], 'k')
+const droop = (rows: Frame): Frame => patch(rows, { 1: '..d.............', 2: '..dd.......d....' })
+const glance = (rows: Frame): Frame => put(put(rows, [[4, 7]], 'w'), [[5, 7]], 'k')
+const investigating = [askTail(droop(doubtful), 'c'), askTail(doubtful, 't'), askTail(droop(glance(doubtful)), 'c'), askTail(glance(doubtful), 't')]
+// Pleased (a crew member finished): the signature flourish, dry but secretly proud. A smug blink, the
+// tail draws a heart that floats off, then Pixel looks away, blushing. Never a hop.
+const content = put(put(smile, [[4, 6], [5, 6], [8, 6], [9, 6]], 'v'), [[4, 7], [5, 7], [8, 7], [9, 7]], 'k')
+const sideEye = put(put(BASE, [[4, 6], [5, 6], [8, 6], [9, 6], [4, 7], [8, 7]], 'v'), [[5, 7], [9, 7]], 'k')
+const blush = (f: Frame): Frame => put(f, [[4, 8], [9, 8]], 'c')
+const tailless = (f: Frame): Frame => patch(f, { 9: '...dvvvvvvd.....', 10: '...dvvvvvvdd....', 11: '...dvvvvvvvdd...' })
+const body = (f: Frame): Frame => shift(f, -1)
+const tailUp = (f: Frame): Frame => put(body(tailless(f)), [[11, 10], [12, 9], [13, 8], [13, 7]], 't')
+/** Paints a small block at (x, y) on empty pixels only; '.' in the block is see-through. */
+const stamp = (rows: Frame, x: number, y: number, block: readonly string[]): Frame =>
+  block.reduce((r, line, dy) => [...line].reduce((rr, ch, dx) => (ch === '.' ? rr : spark(rr, x + dx, y + dy, ch)), r), rows)
+const HEART = ['CC.CC', 'CCCCC', '.CCC.', '..C..']
+const HEART_S = ['C.C', 'CCC', '.C.']
+const pleased = [
+  body(smile),
+  stamp(tailUp(content), 12, 4, HEART_S),
+  stamp(tailUp(blush(content)), 11, 3, HEART),
+  stamp(body(blush(content)), 12, 1, HEART_S),
+  at(body(blush(sideEye)), 13, 0, 'C'),
+  body(blush(smile)),
+]
 
 const pixel: Persona = {
   id: 'pixel',
@@ -105,6 +135,18 @@ const pixel: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, 1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 3 },
+    pleased: { frames: pleased, fps: 5 },
+  },
+  leadStatus: {
+    many: 'supervising {n}. Barely.',
+    one: 'waiting on {who}',
+    reviewing: 'inspecting their work',
+    worry: '{who} broke something',
+    investigating: 'looking into {who}',
+    joy: ['{who} done. Fine.', '{who} are done. Fine.'],
+    allDone: ['done. All of it.', 'all {n} done'],
+    someFailed: '{d} done, {f} not',
   },
   hatAnchor: { x: 6, y: 4 },
   laptopPaw: 'v',

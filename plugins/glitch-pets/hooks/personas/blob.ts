@@ -85,6 +85,34 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[4, 8], [5, 8], [10, 8], [11, 8]], 'p'))),
 )
 
+// A "?" (Y), 3 wide and 5 tall, painted only on empty pixels.
+const qmark = (rows: Frame, x: number, y: number): Frame =>
+  ([[x, y], [x + 1, y], [x + 2, y + 1], [x + 1, y + 2], [x + 1, y + 4]] as Pt[]).reduce((r, [px, py]) => spark(r, px, py, 'Y'), rows)
+// Investigating: one eye narrowed, mouth slid to the side, a pseudopod scratching the top of its head, a "?" bobbing.
+const puzzled = put(put(BASE, [[10, 8], [11, 8], [7, 10], [8, 10]], 'p'), [[9, 10]], 'e')
+const scratch = (rows: Frame, n: number): Frame => put(rows, n ? [[14, 7], [14, 6], [15, 5], [14, 4], [13, 3]] : [[14, 7], [14, 6], [14, 5], [13, 4], [12, 3]], 'p')
+const investigating = [0, 1, 0, 1].map((n, i) => qmark(scratch(i === 2 ? shift(puzzled, -1) : puzzled, n), 1, n))
+// Pleased (a crew member finished): the signature flourish. A squish, a spring back with stubby arms
+// up, and bubbles fizz up and pop. No hop: that is happy's.
+const squashSmile = patch(put(SQUASH, [[5, 9], [6, 9], [9, 9], [10, 9]], 'p'), { 10: 'opppppeeeepppppo' })
+const squint = put(put(smile, [[4, 9], [5, 9], [10, 9], [11, 9]], 'p'), [[4, 9], [5, 8], [6, 9], [9, 9], [10, 8], [11, 9]], 'e')
+const blush = (f: Frame): Frame => put(f, [[3, 10], [12, 10]], 'C')
+const armsUp = (f: Frame): Frame => put(f, [[1, 7], [0, 6], [0, 5], [14, 7], [15, 6], [15, 5]], 'p')
+/** Paints a small block at (x, y) on empty pixels only; '.' in the block is see-through. */
+const stamp = (rows: Frame, x: number, y: number, block: readonly string[]): Frame =>
+  block.reduce((r, line, dy) => [...line].reduce((rr, ch, dx) => (ch === '.' ? rr : spark(rr, x + dx, y + dy, ch)), r), rows)
+const bubbles = (f: Frame, n: number): Frame =>
+  ([[0, 4 - n], [12, 3 - n], [7, 2 - n]] as Pt[]).reduce((r, [x, y], i) => (i < 2 ? stamp(r, x, y, ['.U.', 'U.U', '.U.']) : spark(r, x, y, 'U')), f)
+const burst = (f: Frame): Frame => stamp(f, 11, -1, ['Y...Y', '.....', '.....', '.....', 'Y...Y'])
+const pleased = [
+  smile,
+  blush(squashSmile),
+  bubbles(armsUp(blush(squint)), 0),
+  bubbles(armsUp(blush(squint)), 1),
+  bubbles(blush(squashSmile), 2),
+  burst(armsUp(blush(smile))),
+]
+
 const blob: Persona = {
   id: 'blob',
   name: 'Byte blob',
@@ -107,6 +135,18 @@ const blob: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 3 },
+    pleased: { frames: pleased, fps: 5 },
+  },
+  leadStatus: {
+    many: ['a buddy busy!', '{n} buddies busy!'],
+    one: 'waiting on {who}…',
+    reviewing: 'checking it all!',
+    worry: 'eep, {who}!',
+    investigating: 'peeking at {who}',
+    joy: ['{who} done! Bloop!', '{who} are done! Bloop!'],
+    allDone: "everyone's done!",
+    someFailed: '{d} done, {f} wobbly',
   },
   hatAnchor: { x: 7, y: 3 },
   laptopPaw: 'p',

@@ -2,6 +2,7 @@
 // A crew spans main turns (background helpers finish in later turns, the reviewer
 // is spawned after them): it stays open until a quiet main turn ends, one where no
 // helper ran at its start, none was spawned and none runs at its end.
+import { REVIEWER_TYPE } from './tiers'
 import type { Role, Tier } from './types'
 
 export type UsageLike = { input_tokens: number; output_tokens: number; cache_creation_input_tokens: number; cache_read_input_tokens: number }
@@ -12,6 +13,8 @@ export type CrewRow = {
   /** Spawned under a crew name (`<role>-<n>`): only these count for the review reminder. */
   named: boolean
   description: string
+  /** What the pane shows as the task when the description only repeats the role or the name: the prompt's first sentence. */
+  task?: string
   role: Role
   tier: Tier
   model: string | null
@@ -28,6 +31,14 @@ export type CrewRow = {
   resumedAt?: number
   endedAt: number | null
   status: 'running' | 'done' | 'failed'
+  /** Failed because it was stopped (killed), not by its own error: no step-up. */
+  killed?: true
+  /** The crew agent type it runs as (`crew-light`, `crew-light-high`, …), when it is one. */
+  rung?: string
+  /** How many step-ups led to this row (0 or absent for a first try). */
+  stepUps?: number
+  /** The failed row this one retries, and the rung it failed on (for "stepped up from Haiku · low"). */
+  steppedUpFrom?: { id: string; rung: string; model: string; effort: string }
 }
 
 export type CrewState = {
@@ -63,6 +74,45 @@ export function roleOf(name: string | undefined, description: string): Role {
   return 'other'
 }
 
+const ROLE_WORD = /^(builder|researcher|designer|tester|reviewer)$/
+const squash = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+/** True when a description says no more than the role or the name ("researcher" for researcher-1). */
+export function repeatsName(description: string, name: string | undefined, role: Role): boolean {
+  const d = squash(description)
+  if (!d || d === role || ROLE_WORD.test(d)) return true
+  return !!name && (d === squash(name) || d === squash(name.replace(/-\d+$/, '')))
+}
+
+/** `text` in about `n` characters: cut at a word in its second half when there is one, with an ellipsis. */
+export function shortOf(text: string, n: number): string {
+  const t = text.trim().replace(/\s+/g, ' ')
+  if (t.length <= n) return t
+  const cut = t.slice(0, n)
+  const space = cut.lastIndexOf(' ')
+  return `${(space >= n / 2 ? cut.slice(0, space) : cut.slice(0, n - 1)).trimEnd()}…`
+}
+
+/** A sentence's end: `.`, `!` or `?` and a space, never the dot of "e.g." or "i.e.". */
+const SENTENCE_END = /(?<=[.!?])(?<!\b(?:e\.g|i\.e)\.)\s+/i
+
+/**
+ * A prompt as a task line: its first sentence that says the task, about 80 characters at most. A
+ * "You are…" opener and one that only repeats the name or a role word are skipped (kept if nothing else).
+ */
+export function taskOfPrompt(prompt: string, name?: string): string {
+  const sentences = prompt.split('\n').map(l => l.trim()).filter(l => l.length > 0).flatMap(l => l.split(SENTENCE_END)).map(t => t.trim()).filter(Boolean)
+  const says = (t: string) => !/^you are\b/i.test(t) && !repeatsName(t, name, 'other')
+  return shortOf(sentences.find(says) ?? sentences[0] ?? '', 80)
+}
+
+/** A member's name, shown once: its crew name, else its role word, else a short form of its task. */
+export const memberName = (r: Pick<CrewRow, 'name' | 'role' | 'description' | 'task'>): string =>
+  r.name ?? (r.role !== 'other' ? r.role : shortOf(memberTask(r), 24))
+
+/** A member's task line: its description, or the prompt's first sentence when the description only repeats the role or name. */
+export const memberTask = (r: Pick<CrewRow, 'description' | 'task'>): string => r.task || r.description
+
 export function tierOf(model: string | null, effort: string | null): Tier {
   const mdl = (model ?? '').toLowerCase()
   const eff = (effort ?? '').toLowerCase()
@@ -87,14 +137,20 @@ export const onMainTurnEnd = (s: CrewState): CrewState => ({ ...s, closed: s.clo
 const usageTokens = (u: UsageLike): number => u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens
 
 /** A spawn: a new row, or, for an agent already in the crew (a resume), its row running again with its counts kept. */
-export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; model: string | null; now: number; costNow: number }): CrewState {
+export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; prompt?: string; model: string | null; now: number; costNow: number; rung?: string; stepUps?: number; steppedUpFrom?: CrewRow['steppedUpFrom'] }): CrewState {
   if (s.rows.some(r => r.id === a.agentId)) {
     return { ...mapRow(s, a.agentId, r => ({ ...r, status: 'running', resumedAt: a.now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
   }
   const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
+  // A row on the lean reviewer's type is the reviewer, whatever its name or description.
+  const role: Role = a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description)
+  const task = repeatsName(a.description, a.name, role) && a.prompt ? taskOfPrompt(a.prompt, a.name) : ''
   const row: CrewRow = {
-    id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description, role: roleOf(a.name, a.description),
+    id: a.agentId, ...(a.name ? { name: a.name } : {}), named: !!a.name && ROLE_NAME.test(a.name), description: a.description,
+    ...(task ? { task } : {}),
+    role,
     tier: tierOf(a.model, null), model: a.model, effort: null, tokens: 0, weight: 0, turnTokens: 0, turnWeight: 0, tools: 0, startedAt: a.now, endedAt: null, status: 'running',
+    ...(a.rung ? { rung: a.rung } : {}), ...(a.stepUps ? { stepUps: a.stepUps } : {}), ...(a.steppedUpFrom ? { steppedUpFrom: a.steppedUpFrom } : {}),
   }
   return { ...base, turnBusy: true, rows: [...base.rows.filter(r => r.id !== a.agentId), row] }
 }
@@ -123,6 +179,27 @@ export const onAgentTurnEnd = (s: CrewState, agentId: string, u: UsageLike | und
     endedAt: r.status === 'running' ? r.endedAt : r.endedAt ?? now,
   }))
 
+/**
+ * A helper's run ended (its own `turn.complete`: one run of a subagent's loop is one turn):
+ * its row ends at once by the turn's reason, without waiting for the list to catch up.
+ * An answer is done; an API error or a refusal failed; an interrupt stopped (killed).
+ */
+export const onAgentRunEnd = (s: CrewState, agentId: string, reason: string, now: number): CrewState =>
+  mapRow(s, agentId, r => {
+    if (r.status !== 'running') return r
+    if (reason === 'answer') return { ...r, status: 'done', endedAt: now }
+    if (reason === 'aborted') return { ...r, status: 'failed', killed: true, endedAt: now }
+    return { ...r, status: 'failed', endedAt: now }
+  })
+
+/** A message woke a finished helper (its own `turn.start`): its row runs again, its counts kept. */
+export function onAgentWake(s: CrewState, agentId: string, now: number): CrewState {
+  const row = s.rows.find(r => r.id === agentId)
+  if (!row || row.status === 'running') return s
+  const { killed: _k, ...rest } = row
+  return { ...mapRow(s, agentId, () => ({ ...rest, status: 'running', resumedAt: now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false }
+}
+
 /** A row missing from the agent list this long after its spawn has ended (the list drops a finished task soon). */
 export const LIST_GRACE_MS = 3000
 
@@ -137,7 +214,8 @@ export function onStatuses(s: CrewState, list: readonly { id: string; status: st
       // A teammate waiting for a message has done its part.
       if (st === 'completed' || st === 'idle') return { ...r, status: 'done', endedAt: now }
       if (st === undefined && now - (r.resumedAt ?? r.startedAt) >= LIST_GRACE_MS) return { ...r, status: 'done', endedAt: now }
-      if (st === 'failed' || st === 'killed') return { ...r, status: 'failed', endedAt: now }
+      if (st === 'failed') return { ...r, status: 'failed', endedAt: now }
+      if (st === 'killed') return { ...r, status: 'failed', killed: true, endedAt: now }
       return r
     }),
   }
@@ -149,12 +227,6 @@ export function shares(rows: readonly CrewRow[], crewCost: number): Record<strin
   return Object.fromEntries(rows.map(r => [r.id, round(total > 0 ? (crewCost * r.weight) / total : crewCost / Math.max(1, rows.length))]))
 }
 
-export function progressOf(row: CrewRow, rows: readonly CrewRow[]): number {
-  if (row.status !== 'running') return 1
-  const most = Math.max(0, ...rows.filter(r => r.status === 'done' && r.role !== 'reviewer').map(r => r.tools))
-  return most > 0 ? Math.min(0.95, row.tools / most) : 0.5
-}
-
 /** The crew's elapsed time: up to now while a row runs, else up to the last row's end. */
 export function elapsedOf(s: CrewState, now: number): number {
   if (s.startedAt === null) return 0
@@ -164,3 +236,29 @@ export function elapsedOf(s: CrewState, now: number): number {
 
 export const helpersRunning = (s: CrewState): number => s.rows.filter(r => r.status === 'running' && r.role !== 'reviewer').length
 export const reviewerRunning = (s: CrewState): boolean => s.rows.some(r => r.status === 'running' && r.role === 'reviewer')
+
+/**
+ * A running row's steps (tool calls) against the most a finished non-reviewer row
+ * took; the total is kept above the count, so a running pill never reads full.
+ * Null when no row has finished yet (no yardstick).
+ */
+export function stepsOf(row: CrewRow, rows: readonly CrewRow[]): { n: number; of: number } | null {
+  if (row.status !== 'running') return null
+  const most = Math.max(0, ...rows.filter(r => r.status === 'done' && r.role !== 'reviewer').map(r => r.tools))
+  return most > 0 ? { n: row.tools, of: Math.max(most, row.tools + 1) } : null
+}
+
+/** What glitch-hud's crew pill shows (state key `glitch-pets.crewSummary`). */
+export type CrewSummary = { running: number; done: number; failed: number; cost: number; elapsedMs: number }
+
+/** A closed crew keeps its pill this long after its last member ended. */
+export const RECENT_MS = 120_000
+
+/** The pill's figures while a crew is open, or closed less than RECENT_MS ago; else null. */
+export function crewSummaryOf(s: CrewState, cost: number, now: number): CrewSummary | null {
+  if (s.rows.length === 0) return null
+  const lastEnd = Math.max(0, ...s.rows.map(r => r.endedAt ?? now))
+  if (s.closed && !anyRunning(s) && now - lastEnd >= RECENT_MS) return null
+  const count = (st: CrewRow['status']) => s.rows.filter(r => r.status === st).length
+  return { running: count('running'), done: count('done'), failed: count('failed'), cost: Math.round(Math.max(0, cost) * 1e4) / 1e4, elapsedMs: elapsedOf(s, now) }
+}

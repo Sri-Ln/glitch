@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, onAgentTurnEnd, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, progressOf, reviewerRunning, roleOf, shares, tierOf, tokenWeight } from './crew'
+import { INITIAL_CREW, LIST_GRACE_MS, elapsedOf, helpersRunning, memberName, memberTask, repeatsName, taskOfPrompt, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, reviewerRunning, roleOf, shares, stepsOf, tierOf, tokenWeight } from './crew'
 
 test('roleOf reads <role>-<n> names first, then the description', () => {
   expect(roleOf('builder-2', 'whatever')).toBe('builder')
@@ -35,6 +35,17 @@ test('a spawn starts a crew and a row', () => {
   expect(s.costAtStart).toBe(2)
   expect(s.rows[0]).toMatchObject({ id: 'a1', role: 'builder', status: 'running', tier: 'medium', tokens: 0 })
   expect(helpersRunning(s)).toBe(1)
+})
+
+test('a row on the crew-reviewer type is a reviewer whatever its name or description (#45)', () => {
+  let s = spawn(INITIAL_CREW, 'a1', { name: 'builder-1' })
+  s = spawn(s, 'a2', { name: 'builder-2' })
+  s = spawn(s, 'r1', { description: 'Build a summary', rung: 'crew-reviewer' })
+  expect(s.rows[2]?.role).toBe('reviewer')
+  expect(helpersRunning(s)).toBe(2)
+  expect(reviewerRunning(s)).toBe(true)
+  s = spawn(s, 'x', { name: 'helper', description: 'Build it', rung: 'crew-light' })
+  expect(s.rows[3]?.role).toBe('builder')
 })
 
 test('a spawn while the crew is open joins it, in any later main turn', () => {
@@ -106,18 +117,20 @@ test('shares split the crew cost by weight; no weight → equal parts', () => {
   expect(shares([{ id: 'a', weight: 0 }, { id: 'b', weight: 0 }] as never, 0.4)).toEqual({ a: 0.2, b: 0.2 })
 })
 
-test('progress is tools against the most any finished helper took; done is full', () => {
+test('steps are tools against the most any finished crew member took; none while finished or with no yardstick', () => {
   const rows = [{ id: 'a', tools: 8, status: 'done' }, { id: 'b', tools: 2, status: 'running' }] as never
-  expect(progressOf((rows as never[])[1] as never, rows)).toBe(0.25)
-  expect(progressOf((rows as never[])[0] as never, rows)).toBe(1)
-  expect(progressOf({ id: 'c', tools: 3, status: 'running' } as never, [{ id: 'c', tools: 3, status: 'running' }] as never)).toBe(0.5)
+  expect(stepsOf((rows as never[])[1] as never, rows)).toEqual({ n: 2, of: 8 })
+  expect(stepsOf((rows as never[])[0] as never, rows)).toBe(null)
+  expect(stepsOf({ id: 'c', tools: 3, status: 'running' } as never, [{ id: 'c', tools: 3, status: 'running' }] as never)).toBe(null)
+  // Past the yardstick the total stays one above the count: never full while running.
+  expect(stepsOf({ id: 'd', tools: 9, status: 'running' } as never, rows)).toEqual({ n: 9, of: 10 })
 })
 
-test('the progress yardstick ignores a finished reviewer', () => {
+test('the steps yardstick ignores a finished reviewer', () => {
   const rows = [{ id: 'r', role: 'reviewer', tools: 20, status: 'done' }, { id: 'a', role: 'builder', tools: 4, status: 'done' }, { id: 'b', role: 'builder', tools: 2, status: 'running' }] as never
-  expect(progressOf((rows as never[])[2] as never, rows)).toBe(0.5)
+  expect(stepsOf((rows as never[])[2] as never, rows)).toEqual({ n: 2, of: 4 })
   const onlyReviewer = [{ id: 'r', role: 'reviewer', tools: 20, status: 'done' }, { id: 'b', role: 'builder', tools: 2, status: 'running' }] as never
-  expect(progressOf((onlyReviewer as never[])[1] as never, onlyReviewer)).toBe(0.5)
+  expect(stepsOf((onlyReviewer as never[])[1] as never, onlyReviewer)).toBe(null)
 })
 
 test('roleOf takes word forms of the role words', () => {
@@ -183,4 +196,73 @@ test('a resumed agent gets a fresh list grace: missing just after the resume is 
   s = spawn(s, 'a1', { now: 9000 })
   expect(onStatuses(s, [], 9000 + LIST_GRACE_MS - 1).rows[0]?.status).toBe('running')
   expect(onStatuses(s, [], 9000 + LIST_GRACE_MS).rows[0]?.status).toBe('done')
+})
+
+test('a crew-type spawn keeps its rung, and a retry where it stepped up from', () => {
+  let s = spawn(INITIAL_CREW, 'a1', { rung: 'crew-light' })
+  expect(s.rows[0]?.rung).toBe('crew-light')
+  expect(s.rows[0]?.stepUps).toBeUndefined()
+  expect('steppedUpFrom' in (s.rows[0] as object)).toBe(false)
+  s = spawn(s, 'a2', { rung: 'crew-light-high', stepUps: 1, steppedUpFrom: { id: 'a1', rung: 'crew-light', model: 'claude-haiku-5-5', effort: 'low' } })
+  expect(s.rows[1]?.rung).toBe('crew-light-high')
+  expect(s.rows[1]?.stepUps).toBe(1)
+  expect(s.rows[1]?.steppedUpFrom).toEqual({ id: 'a1', rung: 'crew-light', model: 'claude-haiku-5-5', effort: 'low' })
+})
+
+test('a killed row is marked killed; a failed one is not', () => {
+  const s = onStatuses(spawn(spawn(), 'a2'), [{ id: 'a1', status: 'failed' }, { id: 'a2', status: 'killed' }], 9000)
+  expect(s.rows[0]?.killed).toBeUndefined()
+  expect(s.rows[1]?.killed).toBe(true)
+})
+
+test('onAgentRunEnd ends a running row by its turn\'s reason; an ended row is kept', () => {
+  const s = spawn(spawn(spawn(), 'a2'), 'a3')
+  let t = onAgentRunEnd(s, 'a1', 'answer', 5000)
+  t = onAgentRunEnd(t, 'a2', 'error', 5000)
+  t = onAgentRunEnd(t, 'a3', 'aborted', 5000)
+  expect(t.rows.map(r => [r.status, r.endedAt, r.killed ?? false])).toEqual([['done', 5000, false], ['failed', 5000, false], ['failed', 5000, true]])
+  expect(onAgentRunEnd(t, 'a1', 'error', 6000).rows[0]).toEqual(t.rows[0])
+  expect(onAgentRunEnd(t, 'nobody', 'answer', 6000)).toEqual(t)
+})
+
+test('onAgentWake sets an ended row running again (the crew open), counts kept; a running row is left', () => {
+  const s = onMainTurnEnd(onMainTurnStart(onAgentRunEnd(spawn(), 'a1', 'aborted', 5000)))
+  expect(s.closed).toBe(true)
+  const w = onAgentWake(s, 'a1', 7000)
+  expect(w.rows[0]).toMatchObject({ status: 'running', resumedAt: 7000, endedAt: null })
+  expect(w.rows[0]?.killed).toBeUndefined()
+  expect(w.closed).toBe(false)
+  expect(onAgentWake(w, 'a1', 8000)).toBe(w)
+})
+
+test('the name once: a description that only repeats the role or the name gives way to the prompt\'s first sentence (#45 round 2)', () => {
+  expect(repeatsName('researcher', 'researcher-1', 'researcher')).toBe(true)
+  expect(repeatsName('Researcher 1', 'researcher-1', 'researcher')).toBe(true)
+  expect(repeatsName('researcher-1', 'researcher-1', 'researcher')).toBe(true)
+  expect(repeatsName('tester', undefined, 'other')).toBe(true)
+  expect(repeatsName('', 'builder-2', 'builder')).toBe(true)
+  expect(repeatsName('Research date formats', 'researcher-1', 'researcher')).toBe(false)
+  expect(taskOfPrompt('\n  Find the date formats users type most. List the top five.\nMore.')).toBe('Find the date formats users type most.')
+  expect(taskOfPrompt('x'.repeat(200)).length).toBeLessThanOrEqual(80)
+  const s = onSpawn(INITIAL_CREW, { agentId: 'r', name: 'researcher-1', description: 'researcher', prompt: 'Find the formats. Then report.', model: null, now: 1, costNow: 0 })
+  const r = s.rows[0]!
+  expect([memberName(r), memberTask(r)]).toEqual(['researcher-1', 'Find the formats.'])
+  // A real description is kept; an unnamed member is named by its role word, else a short form of its task.
+  const t = onSpawn(s, { agentId: 'u', description: 'Look up the parser options', prompt: 'p', model: null, now: 1, costNow: 0 }).rows[1]!
+  expect([memberName(t), memberTask(t)]).toEqual(['researcher', 'Look up the parser options'])
+  const o = onSpawn(s, { agentId: 'o', description: 'Tidy the changelog entries for the release', prompt: 'p', model: null, now: 1, costNow: 0 }).rows[1]!
+  expect(memberName(o)).toBe('Tidy the changelog…')
+  expect(memberTask(o)).toBe('Tidy the changelog entries for the release')
+})
+
+test('taskOfPrompt skips a "You are…" opener and one that repeats the name, and never splits at e.g. or i.e.', () => {
+  expect(taskOfPrompt('You are researcher-1 on a crew. Find the date formats users type.')).toBe('Find the date formats users type.')
+  expect(taskOfPrompt('researcher-1.\nFind the date formats.', 'researcher-1')).toBe('Find the date formats.')
+  expect(taskOfPrompt('Researcher.\nFind the date formats.', 'researcher-1')).toBe('Find the date formats.')
+  expect(taskOfPrompt('Collect formats, e.g. ISO and US, from the logs. Then report.')).toBe('Collect formats, e.g. ISO and US, from the logs.')
+  expect(taskOfPrompt('List the parsers, i.e. the modules under src. More.')).toBe('List the parsers, i.e. the modules under src.')
+  // Only an opener: kept rather than nothing.
+  expect(taskOfPrompt('You are a helper.')).toBe('You are a helper.')
+  const s = onSpawn(INITIAL_CREW, { agentId: 'r', name: 'researcher-1', description: 'researcher', prompt: 'You are researcher-1. Find the formats.', model: null, now: 1, costNow: 0 })
+  expect(memberTask(s.rows[0]!)).toBe('Find the formats.')
 })

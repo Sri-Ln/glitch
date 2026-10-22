@@ -78,6 +78,27 @@ const crying = [0, 1, 2, 3, 4, 5].map(n =>
   CRY_PATHS.reduce((f, path) => mark(mark(f, path, 'U'), (path.length >= 4 ? [n % path.length, (n + 3) % path.length] : [n % path.length]).map(i => path[i] as Px), 'T'), cryBase(mark(BASE, [[5, 3], [10, 3]], 'K'))),
 )
 
+// A "?" (Y), 3 wide and 5 tall, painted only on empty pixels.
+const qmark = (rows: Frame, x: number, y: number): Frame =>
+  ([[x, y], [x + 1, y], [x + 2, y + 1], [x + 1, y + 2], [x + 1, y + 4]] as Pt[]).reduce((r, [px, py]) => spark(r, px, py, 'Y'), rows)
+// Investigating: the classic dog head tilt, one way then the other, eyes rolled up to think,
+// a "?" on the side the head tilts away from. Rows 0-8 are the head.
+const tilt = (rows: Frame, d: number): Frame => rows.map((r, y) => (y <= 8 ? (d < 0 ? r.slice(1) + '.' : '.' + r.slice(0, -1)) : r))
+const lookUp = put(put(BASE, EYES, 'b'), [[5, 2], [10, 2]], 'e')
+const investigating = [qmark(tilt(lookUp, 1), 0, 0), qmark(tilt(BASE, 1), 0, 0), qmark(tilt(lookUp, -1), 13, 0), qmark(tilt(BASE, -1), 13, 0)]
+// Pleased (a crew member finished): the signature flourish, eager and loyal. The whole dog wiggles side
+// to side, back end the other way, tail going like a propeller. No hop: that is happy's.
+// His own tail is one dark pixel; here it is drawn 3 long in coat colour so the wag carries.
+const PROPELLER: Pt[][] = [[[13, 8], [14, 7], [15, 6]], [[13, 9], [14, 9], [15, 8]], [[13, 10], [14, 11], [15, 11]]]
+const tail = (f: Frame, n: number): Frame =>
+  put(put(f, ([[14, 8], [14, 9]] as Pt[]).filter(([x, y]) => f[y]?.[x] === 'K'), '.'), PROPELLER[n] as Pt[], 'b')
+const blush = (f: Frame): Frame => put(f, [[4, 4], [11, 4]], 't')
+const shiftRows = (f: Frame, from: number, to: number, d: number): Frame =>
+  f.map((r, y) => (y >= from && y <= to ? (d < 0 ? r.slice(1) + '.' : '.' + r.slice(0, -1)) : r))
+const beaming = blush(smile)
+const wiggle = (d: number, n: number): Frame => shiftRows(shift(tail(beaming, n), d), 9, 12, -d)
+const pleased = [tail(smile, 1), wiggle(-1, 0), wiggle(1, 2), wiggle(-1, 0), wiggle(1, 2), tail(beaming, 1)]
+
 const bud: Persona = {
   id: 'bud',
   name: 'Bud',
@@ -106,6 +127,18 @@ const bud: Persona = {
     leading: { frames: [0, 1, 0, 1].map(n => board(BASE, n)), fps: 4 },
     reviewing: { frames: [0, 1, 0, -1].map(n => lens(BASE, n)), fps: 4 },
     crying: { frames: crying, fps: 6 },
+    investigating: { frames: investigating, fps: 2 },
+    pleased: { frames: pleased, fps: 5 },
+  },
+  leadStatus: {
+    many: 'watching the pack ({n})',
+    one: 'waiting for {who}!',
+    reviewing: 'sniffing over the work',
+    worry: 'uh oh, {who}!',
+    investigating: 'sniffing out {who}',
+    joy: '{who} did it!',
+    allDone: "whole pack's done!",
+    someFailed: ['{d} done, {f} needs help', '{d} done, {f} need help'],
   },
   hatAnchor: { x: 7, y: 0 },
   laptopPaw: 'b',
