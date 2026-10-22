@@ -785,7 +785,7 @@ export const register: Register = (on, options) => {
       let fresh = false
       await update($, crew, c => {
         fresh = c.closed
-        return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, prompt: e.prompt, model: r.model, now, costNow, ...pre.step })
+        return onSpawn(c, { agentId, ...(e.name ? { name: e.name } : {}), description: e.description, prompt: e.prompt, type: e.subagentType, model: r.model, now, costNow, ...pre.step })
       })
       if (fresh && config.crewPane === 'auto' && !(await panesOf($)).some(x => x.id === PANE)) {
         const size = await sessionSize($)

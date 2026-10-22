@@ -13,6 +13,15 @@ test('roleOf reads <role>-<n> names first, then the description', () => {
   expect(roleOf(undefined, 'Tidy up')).toBe('other')
 })
 
+test('roleOf reads the opening of the prompt, a question-shaped task and the Explore type when the description says no role', () => {
+  // The person's live crew (#47): topic descriptions, the role in the instructions.
+  expect(roleOf(undefined, 'Science: how earthquakes happen', 'Explain how earthquakes happen.')).toBe('researcher')
+  expect(roleOf(undefined, 'Engineering: how refrigerators cool')).toBe('researcher')
+  expect(roleOf(undefined, 'Date utils', 'Implement the date utils in src/date.ts.')).toBe('builder')
+  expect(roleOf(undefined, 'Parser', 'p', 'Explore')).toBe('researcher')
+  expect(roleOf(undefined, 'Tidy up', 'p', 'general-purpose')).toBe('other')
+})
+
 test('tierOf', () => {
   expect(tierOf('claude-haiku-5-5', 'high')).toBe('light')
   expect(tierOf('claude-opus-5-5', 'low')).toBe('light')

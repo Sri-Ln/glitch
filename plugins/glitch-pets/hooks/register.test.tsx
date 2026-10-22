@@ -149,7 +149,7 @@ test('the first helper opens the crew pane (auto) and the pane lists it', async 
   expect(opened).toEqual(['glitch-crew'])
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'glitch-pets', surface, component: 'Pane', props: { title: 'Crew', isFocused: false, bodyColumns: 120 } as never, requestId: 'glitch-crew' })
-    const text = (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button').map(t => String(t.text ?? '')).join(' ')
+    const text = (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button' || t.type === 'Svg').map(t => String(t.type === 'Svg' ? t.props.alt : (t.text ?? ''))).join(' ')
     expect(text).toContain('Build the landing page')
     expect(text).toContain('Builder')
     expect(text).toContain(surface === 'terminal' ? 'Opus 5.5' : 'Opus')
@@ -242,7 +242,8 @@ const mainEnd = ($: Engine, id: string) => $.turn.complete({ turnId: id, reason:
 const agentEnd = ($: Engine, agentId: string) => $.turn.complete({ turnId: `s-${agentId}`, agentId, reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
 const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
   const ui = await $.ui.mount({ plugin: 'glitch-pets', surface, component: 'Pane', props: { title: 'Crew', isFocused: false, bodyColumns: 120 } as never, requestId: 'glitch-crew' })
-  const text = (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button').map(t => String(t.text ?? '')).join(' | ')
+  // The role chip is an image: its word is its alt.
+  const text = (await ui.findAll({})).filter(t => t.type === 'Text' || t.type === 'Button' || t.type === 'Svg').map(t => String(t.type === 'Svg' ? t.props.alt : (t.text ?? ''))).join(' | ')
   await ui.unmount()
   return text
 }
@@ -794,10 +795,11 @@ test('pane: each crew member block has a hover style and its role in a chip, no 
       const block = drawnByKey(tree, `crew-member:${B_ID}`)
       expect(block?.hover?.backgroundColor).toBeTruthy()
       // #47: the role in a chip; the desktop cannot show a transcript from a pane, so no Open.
-      expect(textIn(drawnByKey(tree, `crew-role:${B_ID}`))).toBeTruthy()
+      // The chip is an image (a rounded rectangle and its word); its alt is the role.
+      expect((((drawnByKey(tree, `crew-role:${B_ID}`)?.children ?? []) as Drawn[])[0]?.props as { alt?: string } | undefined)?.alt).toBe('Researcher')
       expect(await ui.find({ key: `crew-open:${B_ID}` })).toBeFalsy()
-      // A little more space between members.
-      expect((await ui.find({ key: 'crew-members:finished' }))?.props.rowGap).toBeTruthy()
+      // Space between members: each block's own padding above and below.
+      expect(block?.props?.paddingY).toBe(1)
     } else {
       expect(await ui.find({ key: `crew-member:${B_ID}` })).toBeFalsy()
     }
@@ -815,7 +817,8 @@ test('pane: model · effort, tokens and ≈cost sit on one line; the progress pi
       expect(chips?.props.flexWrap).toBe('nowrap')
       const t = (await textsOf(ui)).join(' | ')
       expect(t).toContain('Opus high')
-      expect(textIn(drawnByKey(await ui.drawn(), `crew-chip-tok:${B_ID}`))).toBeTruthy()
+      // A badge is a native Button (its rounded look); its label is the figure.
+      expect(drawnByKey(await ui.drawn(), `crew-chip-tok:${B_ID}:badge`)?.props?.label).toBeTruthy()
       const svgs = await ui.findAll({ type: 'Svg' })
       const pills = svgs.filter(s => ['1/4 steps', 'Done', 'Failed'].includes(String(s.props.alt)))
       expect(pills.map(s => String(s.props.alt)).sort()).toEqual(['1/4 steps', 'Done', 'Failed'])
@@ -1598,8 +1601,9 @@ test('pane: a stepped-up member says what it stepped up from (compact on the ter
     const all = (await textsOf(ui)).join(' | ')
     if (surface === 'desktop') {
       expect(all).toContain('stepped up from Haiku · low')
-      expect(drawnByKey(await ui.drawn(), 'crew-member:ag-A2')?.props?.height).toBe(5)
-      expect(drawnByKey(await ui.drawn(), 'crew-member:ag-A')?.props?.height).toBe(4)
+      // 4 lines and a row of padding above and below; a retry has its "stepped up" line too.
+      expect(drawnByKey(await ui.drawn(), 'crew-member:ag-A2')?.props?.height).toBe(7)
+      expect(drawnByKey(await ui.drawn(), 'crew-member:ag-A')?.props?.height).toBe(6)
     } else {
       expect(all).toContain('↑ Haiku · low')
       expect(all).not.toContain('stepped up from')
@@ -1736,7 +1740,7 @@ test('pane with the pet off: no minis and no empty sprite column; the lead row h
   await agentEnd($, 'ag-Test Y')
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
-    expect(await svgs(ui).then(s => s.filter(x => !/steps|Done|Failed|at work|completed/.test(x.alt)))).toEqual([])
+    expect(await svgs(ui).then(s => s.filter(x => !/steps|Done|Failed|at work|completed|^(Builder|Researcher|Designer|Tester|Reviewer|Helper)$/.test(x.alt)))).toEqual([])
     expect((await keysOf(ui)).filter(k => k.startsWith('crew-mini:') || k === 'crew-lead-sprite')).toEqual([])
     expect((await textsOf(ui)).join(' | ')).toContain('Lead')
     await ui.unmount()
@@ -1752,7 +1756,9 @@ test('pane (desktop): each member\'s chips (model and effort, ≈cost, tokens) f
       const miniCols = Number(drawnByKey(tree, `crew-mini:${B_ID}`)?.props?.width)
       for (const id of [B_ID, C_ID, 'ag-Build the date utils']) {
         const chips = ((drawnByKey(tree, `crew-chips:${id}`)?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
-        const cells = chips.reduce((t, c) => t + stringOf(textIn(c)).length + 2 * Number(c.props?.paddingX ?? 0), 0) + Math.max(0, chips.length - 1)
+        // Each badge is a native Button: its label and 2 cells of chrome.
+        const label = (c: Drawn) => String((((c.children ?? []) as Drawn[]).find(b => b && typeof b === 'object')?.props as { label?: string } | undefined)?.label ?? '')
+        const cells = chips.reduce((t, c) => t + label(c).length + 2, 0) + Math.max(0, chips.length - 1)
         expect(cells).toBeLessThanOrEqual(40 - 2 - miniCols - 1)
         expect(chips.length).toBe(3)
       }

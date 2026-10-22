@@ -134,6 +134,14 @@ const wordsOf = (node: unknown): string => {
   return (n.children ?? []).map(wordsOf).join('')
 }
 const kids = (n: Drawn | undefined) => ((n?.children ?? []) as Drawn[]).filter(c => c && typeof c === 'object')
+/** The alt of the first Svg under a node (the role chip is an image). */
+const altOf = (node: unknown): string => {
+  let alt = ''
+  walk(node, n => {
+    if (!alt && n.type === 'Svg') alt = String(n.props?.alt ?? '')
+  })
+  return alt
+}
 
 // ── 4. A member row: its role and topic, then what it is doing; no Open (#47) ──
 
@@ -150,9 +158,10 @@ test('no Open anywhere and no view is ever asked: the desktop cannot show a tran
     expect(byKey(tree, `crew-open:${B}`)).toBeUndefined()
     expect(JSON.stringify(tree)).not.toContain('Open')
     expect(JSON.stringify(tree)).not.toContain('↗')
+    // Only the badges are Buttons (a native button's look; a press does nothing).
     let buttons = 0
     walk(byKey(tree, surface === 'desktop' ? `crew-member:${B}` : `crew-line:${B}`), n => {
-      buttons += n.type === 'Button' ? 1 : 0
+      buttons += n.type === 'Button' && !String(n.props?.key ?? '').endsWith(':badge') ? 1 : 0
     })
     expect(buttons).toBe(0)
     await ui.unmount()
@@ -173,16 +182,26 @@ test('a desktop row: the role in a colored chip and the topic cut short, then wh
   expect(during).toBe('Searching the web: “ISO 8601 date formats”')
   const ui = await mountPane($, 'desktop', 56)
   const tree = await ui.drawn()
+  // The chip: a rounded rectangle in the role's color with its word in white.
   const chip = byKey(tree, `crew-role:${B}`)
-  expect(wordsOf(chip)).toBe('Researcher')
-  expect(String(chip?.props?.backgroundColor)).toMatch(/^#/)
+  expect(altOf(chip)).toBe('Researcher')
+  let source = ''
+  walk(chip, n => {
+    source ||= n.type === 'Svg' ? String(n.props?.source) : ''
+  })
+  expect(source).toMatch(/rx="\d+" fill="#2f6fd0"/)
+  expect(source).toContain('fill="#ffffff"')
   const title = wordsOf(byKey(tree, `crew-title:${B}`))
-  expect(title).toMatch(/^Researcher\s*Research date formats/)
+  expect(title).toMatch(/^Research date formats/)
   expect(title).not.toContain('researcher-1')
   expect(wordsOf(byKey(tree, `crew-task:${B}`))).toBe('Searching the web: “ISO 8601 date formats”')
-  // Ended: the whole topic under the role.
+  // Ended: the chip alone on the title, the whole topic once, below it.
   expect(wordsOf(byKey(tree, `crew-task:${C}`))).toBe('Write the tests')
-  expect(wordsOf(byKey(tree, `crew-role:${C}`))).toBe('Tester')
+  expect(wordsOf(byKey(tree, `crew-title:${C}`))).not.toContain('Write the tests')
+  expect(altOf(byKey(tree, `crew-role:${C}`))).toBe('Tester')
+  // Each member has a row of padding above and below; none between members.
+  expect(byKey(tree, `crew-member:${B}`)?.props?.paddingY).toBe(1)
+  expect(byKey(tree, 'crew-members:running')?.props?.rowGap).toBeUndefined()
   await ui.unmount()
   // The terminal: the role word in its name column, the topic beside it.
   const term = await mountPane($, 'terminal', 100)
@@ -777,11 +796,13 @@ test('a member shows its role once with its task: a description that only repeat
     const ui = await mountPane($, surface, surface === 'desktop' ? 40 : 100)
     const tree = await ui.drawn()
     if (surface === 'desktop') {
-      expect(wordsOf(byKey(tree, 'crew-title:ag-researcher'))).toMatch(/^Researcher\s*Find the/)
+      expect(altOf(byKey(tree, 'crew-role:ag-researcher'))).toBe('Researcher')
+      expect(wordsOf(byKey(tree, 'crew-title:ag-researcher'))).toMatch(/^Find the/)
       // Running and no tool call yet: it is starting.
       expect(wordsOf(byKey(tree, 'crew-task:ag-researcher'))).toBe('Starting…')
       // The unnamed one: its role word too, its task beside it.
-      expect(wordsOf(byKey(tree, 'crew-title:ag-Look up the parser options'))).toMatch(/^Researcher\s*Look up/)
+      expect(altOf(byKey(tree, 'crew-role:ag-Look up the parser options'))).toBe('Researcher')
+      expect(wordsOf(byKey(tree, 'crew-title:ag-Look up the parser options'))).toMatch(/^Look up/)
     } else {
       const line = wordsOf(byKey(tree, 'crew-line:ag-researcher'))
       expect(line).toContain('Researcher')

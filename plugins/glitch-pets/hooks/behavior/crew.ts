@@ -65,16 +65,26 @@ const ROLE_NAME = /^(builder|researcher|designer|tester|reviewer)-\d+$/i
 // Stems take any word form (reviews, reviewer, researching, tests, builds…). The reviewer rule stays first.
 const ROLE_WORDS: [Role, RegExp][] = [
   ['reviewer', /\b(review\w*|audit\w*|check the whole)\b/i],
-  ['researcher', /\b(research\w*|find\w*|investigat\w*|explor\w*|look(s|ed|ing)? up|survey\w*)\b/i],
+  ['researcher', /\b(research\w*|find\w*|investigat\w*|explor\w*|look(s|ed|ing)? up|survey\w*|explain\w*|summar\w*|describ\w*|answer\w*|analy[sz]\w*|compar\w*)\b/i],
   ['tester', /\b(test\w*|verif\w*|validat\w*|qa)\b/i],
   ['designer', /\b(design\w*|draw\w*|drew|mock(s|ed|ing)? ?ups?|styl\w*|layouts?)\b/i],
   ['builder', /\b(build\w*|built|implement\w*|writ\w*|wrote|creat\w*|fix\w*|add(s|ed|ing)?|cod(e|es|ed|ing)|refactor\w*)\b/i],
 ]
 
-export function roleOf(name: string | undefined, description: string): Role {
+/** A task put as a question ("how a CPU works", "Why X?"): finding out, so a researcher. */
+const QUESTION = /(^|[:\s])(how|why|what|when|where|which|who)\b|\?\s*$/i
+/** How much of a prompt the role words are read in: its opening says the task. */
+const PROMPT_HEAD = 400
+
+/**
+ * A member's role: its crew name (`builder-1`), else the role words in its description, then in
+ * its prompt's opening, then a question-shaped task or the Explore type (a researcher); else other.
+ */
+export function roleOf(name: string | undefined, description: string, prompt = '', type = ''): Role {
   const m = name ? ROLE_NAME.exec(name) : null
   if (m) return (m[1] as string).toLowerCase() as Role
-  for (const [role, re] of ROLE_WORDS) if (re.test(description)) return role
+  for (const text of [description, prompt.slice(0, PROMPT_HEAD)]) for (const [role, re] of ROLE_WORDS) if (re.test(text)) return role
+  if (QUESTION.test(description) || /^explore$/i.test(type)) return 'researcher'
   return 'other'
 }
 
@@ -141,13 +151,13 @@ export const onMainTurnEnd = (s: CrewState): CrewState => ({ ...s, closed: s.clo
 const usageTokens = (u: UsageLike): number => u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens
 
 /** A spawn: a new row, or, for an agent already in the crew (a resume), its row running again with its counts kept. */
-export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; prompt?: string; model: string | null; now: number; costNow: number; rung?: string; stepUps?: number; steppedUpFrom?: CrewRow['steppedUpFrom'] }): CrewState {
+export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; prompt?: string; type?: string; model: string | null; now: number; costNow: number; rung?: string; stepUps?: number; steppedUpFrom?: CrewRow['steppedUpFrom'] }): CrewState {
   if (s.rows.some(r => r.id === a.agentId)) {
     return { ...mapRow(s, a.agentId, ({ doing: _d, ...r }) => ({ ...r, status: 'running', resumedAt: a.now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
   }
   const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
   // A row on the lean reviewer's type is the reviewer, whatever its name or description.
-  const role: Role = a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description)
+  const role: Role = a.rung === REVIEWER_TYPE ? 'reviewer' : roleOf(a.name, a.description, a.prompt, a.type)
   const task = repeatsName(a.description, a.name, role) && a.prompt ? taskOfPrompt(a.prompt, a.name) : ''
   const planned = a.prompt ? plannedOf(a.prompt) : null
   const row: CrewRow = {
