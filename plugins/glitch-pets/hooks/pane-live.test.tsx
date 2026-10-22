@@ -12,6 +12,9 @@ type Surface = (typeof SURFACES)[number]
 
 type H = { status: Record<string, string>; usd: number; summaries: unknown[]; listCalls: number; frames: number[]; openFails: boolean; contexts: (readonly string[] | undefined)[] }
 
+/** Runs inside the engine's own tool call, while it is in flight (a test sets it; the harness clears it). */
+const midCall: { probe: (() => Promise<void>) | null } = { probe: null }
+
 /** The engine version the harness answers (an Error: the version cannot be read). Read at the pane's first draw. */
 const engine = { version: '2.1.302' as string | Error }
 
@@ -61,7 +64,11 @@ const harness = async ($: Engine, on: On) => {
   on('ui.panes', () => ({ value: [] }) as never)
   on('ui.close', () => ({ value: undefined }) as never)
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1, tokens: 0, percent: 0 }, rateLimits: [], cost: { usd: h.usd } } }) as never)
-  on('tool.call', () => ({ result: 'ok' }) as never)
+  midCall.probe = null
+  on('tool.call', async () => {
+    await midCall.probe?.()
+    return { result: 'ok' } as never
+  })
   on('turn.step', async function* () {
     return { turnId: 's', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: null } as never
   })
@@ -155,7 +162,15 @@ test('no Open anywhere and no view is ever asked: the desktop cannot show a tran
 
 test('a desktop row: the role in a colored chip and the topic cut short, then what it is doing now; once ended, its whole topic', async ($, on) => {
   await crew($, on)
+  // Read while the call still runs: the row says it from the call's start.
+  let during = ''
+  midCall.probe = async () => {
+    const mid = await mountPane($, 'desktop', 56)
+    during = wordsOf(byKey(await mid.drawn(), `crew-task:${B}`))
+    await mid.unmount()
+  }
   await $.tool.call({ tool: 'WebSearch', query: 'ISO 8601 date formats', agentId: B } as never)
+  expect(during).toBe('Searching the web: “ISO 8601 date formats”')
   const ui = await mountPane($, 'desktop', 56)
   const tree = await ui.drawn()
   const chip = byKey(tree, `crew-role:${B}`)
@@ -205,8 +220,11 @@ test('a fresh member starts at 0 of its planned steps, never a bare "0 steps"; t
   await ui.unmount()
 })
 
-test('a click on the lead plays its happy hop, as a click on the HUD pet does', async ($, on) => {
+test('a click on the lead plays its happy hop, as a click on the HUD pet does; the terminal draws no lead to click', async ($, on) => {
   const { clock } = await crew($, on)
+  const term = await mountPane($, 'terminal', 100)
+  expect(byKey(await term.drawn(), 'crew-lead-poke')).toBeUndefined()
+  await term.unmount()
   const ui = await mountPane($, 'desktop', 56)
   const tree = await ui.drawn()
   const target = byKey(tree, 'crew-lead-poke')

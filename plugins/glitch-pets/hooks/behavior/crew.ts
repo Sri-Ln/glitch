@@ -143,7 +143,7 @@ const usageTokens = (u: UsageLike): number => u.input_tokens + u.output_tokens +
 /** A spawn: a new row, or, for an agent already in the crew (a resume), its row running again with its counts kept. */
 export function onSpawn(s: CrewState, a: { agentId: string; name?: string; description: string; prompt?: string; model: string | null; now: number; costNow: number; rung?: string; stepUps?: number; steppedUpFrom?: CrewRow['steppedUpFrom'] }): CrewState {
   if (s.rows.some(r => r.id === a.agentId)) {
-    return { ...mapRow(s, a.agentId, r => ({ ...r, status: 'running', resumedAt: a.now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
+    return { ...mapRow(s, a.agentId, ({ doing: _d, ...r }) => ({ ...r, status: 'running', resumedAt: a.now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false, turnBusy: true }
   }
   const base: CrewState = s.closed ? { ...INITIAL_CREW, closed: false, startedAt: a.now, tickAt: a.now, costAtStart: a.costNow } : s
   // A row on the lean reviewer's type is the reviewer, whatever its name or description.
@@ -165,7 +165,8 @@ export const onStep = (s: CrewState, agentId: string, model: string, effort: str
   mapRow(s, agentId, r => ({ ...r, model, effort, tier: tierOf(model, effort) }))
 
 /** A tool call starts: the row says what it is doing. */
-export const onToolStart = (s: CrewState, agentId: string, doing: string): CrewState => mapRow(s, agentId, r => ({ ...r, doing }))
+export const onToolStart = (s: CrewState, agentId: string, doing: string): CrewState =>
+  s.rows.some(r => r.id === agentId && r.doing !== doing) ? mapRow(s, agentId, r => ({ ...r, doing })) : s
 
 /** A tool call ended: one more step. */
 export const onTool = (s: CrewState, agentId: string): CrewState => mapRow(s, agentId, r => ({ ...r, tools: r.tools + 1 }))
@@ -206,7 +207,7 @@ export const onAgentRunEnd = (s: CrewState, agentId: string, reason: string, now
 export function onAgentWake(s: CrewState, agentId: string, now: number): CrewState {
   const row = s.rows.find(r => r.id === agentId)
   if (!row || row.status === 'running') return s
-  const { killed: _k, ...rest } = row
+  const { killed: _k, doing: _d, ...rest } = row
   return { ...mapRow(s, agentId, () => ({ ...rest, status: 'running', resumedAt: now, endedAt: null, turnTokens: 0, turnWeight: 0 })), closed: false }
 }
 

@@ -749,7 +749,8 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     const agentId = e.agentId
-    // A helper's row says what it is doing while the call runs.
+    // A helper's row says what it is doing while the call runs: written before the call (a quick
+    // write, and none when the words are the same), so the pane shows it for the call's whole run.
     if (agentId !== undefined) await update($, crew, c => onToolStart(c, agentId, activityOf(e as never))).catch(() => undefined)
     const ran = await next(e)
     if (agentId === undefined) {

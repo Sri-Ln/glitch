@@ -155,6 +155,12 @@ test('a tool call start says what the member is doing; its end counts the step',
   expect(s.rows[0]?.tools).toBe(0)
   s = onTool(s, 'a1')
   expect(s.rows[0]?.tools).toBe(1)
+  // The same words, or a call from no crew row: the state is kept as it is.
+  expect(onToolStart(s, 'a1', 'Reading pane.tsx')).toBe(s)
+  expect(onToolStart(s, 'nobody', 'Reading x')).toBe(s)
+  // A woken row starts afresh.
+  const woke = onAgentWake(onAgentRunEnd(s, 'a1', 'answer', 2000), 'a1', 3000)
+  expect(woke.rows[0]?.doing).toBeUndefined()
 })
 
 test('roleOf takes word forms of the role words', () => {

@@ -85,6 +85,7 @@ export const DESKTOP_CELL = { width: 7, height: 18 } as const
 const CELL_PX = DESKTOP_CELL.width
 
 /** Fixed heights (cells) of the desktop's blocks, so a row's top is exact. */
+/** `totals` and `header` are one line in a round border: the desktop draws it in 2 rows (the header's live look). */
 export const DESKTOP_ROWS = { lead: 3, totals: 2, header: 2, tally: 1, member: 4, steppedUp: 1, gap: 1 } as const
 /** A member block's left padding (cells): where its mini starts. */
 const MEMBER_PAD = 1
