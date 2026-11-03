@@ -41,8 +41,10 @@ export const warnMarks = (typed: number[] | null, ttlMs: number): number[] =>
   (typed ?? defaultMarks(ttlMs)).filter(m => m * 60_000 < ttlMs)
 
 // Warn at a third of the lifetime left, alert at a sixth (20 and 10 min of an hour).
-export const cacheLevel = (secondsLeft: number | null, isBusy: boolean, ttlMs = HOUR_MS): Level =>
-  isBusy || secondsLeft === null ? 'ok' : secondsLeft * 1000 <= ttlMs / 6 ? 'alert' : secondsLeft * 1000 <= ttlMs / 3 ? 'warn' : 'ok'
+export const cacheLevel = (secondsLeft: number | null, isBusy: boolean, lifetime: number | null = HOUR_MS): Level => {
+  const ttlMs = lifetime ?? HOUR_MS
+  return isBusy || secondsLeft === null ? 'ok' : secondsLeft * 1000 <= ttlMs / 6 ? 'alert' : secondsLeft * 1000 <= ttlMs / 3 ? 'warn' : 'ok'
+}
 
 const pad = (n: number): string => String(n).padStart(2, '0')
 

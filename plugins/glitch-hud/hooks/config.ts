@@ -1,5 +1,6 @@
 import type { CostScope, PartId, SpeedMode } from '../types'
 import { defaultMarks } from './cache'
+import { HOUR_MS } from './ttl'
 
 export type NotifyMode = 'windows' | 'toast' | 'off'
 
@@ -14,8 +15,8 @@ export type HudConfig = {
   budgetBlocksAgents: boolean
   /** The marks the person typed; null for none, then they fit the lifetime (warnMarks). */
   cacheWarnMinutes: number[] | null
-  /** How long the prompt cache lives after a request: 60 or 5 minutes. */
-  cacheTtlMs: number
+  /** How long the prompt cache lives after a request: 60 or 5 minutes; null works it out (auto). */
+  cacheTtlMs: number | null
   notify: NotifyMode
   /** tok/s: auto shows it in the terminal only (and on the desktop when Parts was chosen). */
   speed: SpeedMode
@@ -35,7 +36,7 @@ export const DEFAULT_CONFIG: HudConfig = {
   budgetDaily: 0,
   budgetBlocksAgents: false,
   cacheWarnMinutes: null,
-  cacheTtlMs: 60 * 60_000,
+  cacheTtlMs: null,
   notify: 'toast',
   speed: 'auto',
   autoWarm: false,
@@ -107,18 +108,21 @@ export function parseConfig(o: Record<string, unknown>): { config: HudConfig; pr
   if (o.cacheTtlMinutes !== undefined) {
     const ttl = String(o.cacheTtlMinutes).trim()
     if (ttl === '60' || ttl === '5') config.cacheTtlMs = Number(ttl) * 60_000
-    else problems.push('cacheTtlMinutes: must be 60 or 5, using 60')
+    else if (ttl !== 'auto') problems.push('cacheTtlMinutes: must be auto, 60 or 5, using auto')
   }
+  // Under auto the lifetime is an hour at most: marks are checked against that here,
+  // and against the lifetime worked out when they fire (warnMarks).
+  const lifetime = config.cacheTtlMs ?? HOUR_MS
   // Left empty, the marks fit the lifetime; only marks the person typed are checked.
   if (o.cacheWarnMinutes !== undefined && String(o.cacheWarnMinutes).trim() !== '') {
     const marks = typeof o.cacheWarnMinutes === 'string' ? parseMarks(o.cacheWarnMinutes) : null
     if (marks) config.cacheWarnMinutes = marks
-    else problems.push(`cacheWarnMinutes: must be minutes between 1 and 59, using ${defaultMarks(config.cacheTtlMs).join(',')}`)
+    else problems.push(`cacheWarnMinutes: must be minutes between 1 and 59, using ${defaultMarks(lifetime).join(',')}`)
   }
   // A typed mark at or above the lifetime would be due the moment an answer lands.
   const typed = config.cacheWarnMinutes
-  if (typed && typed.some(m => m * 60_000 >= config.cacheTtlMs)) {
-    config.cacheWarnMinutes = typed.filter(m => m * 60_000 < config.cacheTtlMs)
+  if (typed && typed.some(m => m * 60_000 >= lifetime)) {
+    config.cacheWarnMinutes = typed.filter(m => m * 60_000 < lifetime)
     problems.push('cacheWarnMinutes: marks at or above the cache lifetime are ignored')
   }
   if (o.notify !== undefined) {

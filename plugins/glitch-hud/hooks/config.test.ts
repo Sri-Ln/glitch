@@ -8,7 +8,7 @@ test('config: defaults when nothing is set', async () => {
   // No marks typed: they are fitted to the cache lifetime (warnMarks).
   expect(DEFAULT_CONFIG.cacheWarnMinutes).toBeNull()
   expect(DEFAULT_CONFIG.costShows).toEqual(['reply', 'session', 'today'])
-  expect(DEFAULT_CONFIG.cacheTtlMs).toBe(60 * 60_000)
+  expect(DEFAULT_CONFIG.cacheTtlMs).toBeNull()
   // Warnings stay inside the session that raised them unless the person opts in to the OS.
   expect(DEFAULT_CONFIG.notify).toBe('toast')
 })
@@ -42,10 +42,14 @@ test('config: a 5-minute cache lifetime drops the typed marks it can never reach
   expect(parseConfig({ cacheTtlMinutes: 60 }).config.cacheTtlMs).toBe(60 * 60_000)
 })
 
-test('config: an unknown cache lifetime falls back to 60 minutes', async () => {
+test('config: auto or an unknown cache lifetime leaves it to be worked out', async () => {
   const { config, problems } = parseConfig({ cacheTtlMinutes: '30' })
-  expect(config.cacheTtlMs).toBe(60 * 60_000)
-  expect(problems).toEqual(['cacheTtlMinutes: must be 60 or 5, using 60'])
+  expect(config.cacheTtlMs).toBeNull()
+  expect(problems).toEqual(['cacheTtlMinutes: must be auto, 60 or 5, using auto'])
+  expect(parseConfig({ cacheTtlMinutes: 'auto' })).toEqual({ config: DEFAULT_CONFIG, problems: [] })
+  // Under auto a typed mark is checked against an hour.
+  expect(parseConfig({ cacheWarnMinutes: '61' }).problems).toEqual(['cacheWarnMinutes: must be minutes between 1 and 59, using 10,5'])
+  expect(parseConfig({ cacheWarnMinutes: '10,3' }).config.cacheWarnMinutes).toEqual([10, 3])
 })
 
 test('config: parts keep the given order and drop duplicates', async () => {

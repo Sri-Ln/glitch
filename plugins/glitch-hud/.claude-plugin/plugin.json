@@ -1,6 +1,6 @@
 {
   "name": "glitch-hud",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Glitch HUD: one band above the prompt with turn, speed, cost and budget, prompt-cache countdown with keep-warm, context and git.",
   "author": { "name": "Sri-Ln", "email": "srikanth.lakshminarayanan@gmail.com" },
   "license": "MIT",
@@ -13,7 +13,7 @@
     "budgetSession": { "type": "number", "title": "Session budget (USD)", "description": "0 turns it off", "default": 0 },
     "budgetDaily": { "type": "number", "title": "Daily budget (USD)", "description": "Across sessions, per local day; 0 turns it off", "default": 0 },
     "budgetBlocksAgents": { "type": "boolean", "title": "Block subagents at a cap", "description": "Refuse new subagents once a budget cap is reached", "default": false },
-    "cacheTtlMinutes": { "type": "string", "title": "Prompt cache lifetime", "description": "1 hour (default on most plans) or 5 minutes", "default": "60", "options": ["60", "5"] },
+    "cacheTtlMinutes": { "type": "string", "title": "Prompt cache lifetime", "description": "auto: worked out from Claude Code's settings, your plan and what the cache does; or set 60 or 5 minutes", "default": "auto", "options": ["auto", "60", "5"] },
     "cacheWarnMinutes": { "type": "string", "title": "Cache warnings (minutes left)", "description": "Comma list, e.g. 10,5; empty fits the cache lifetime (10,5 for 1 hour, 2,1 for 5 minutes)", "default": "" },
     "notify": { "type": "string", "title": "Warnings", "description": "toast: inside Claude Code (default); windows: native Windows notification; off: colors only", "default": "toast", "options": ["toast", "windows", "off"] },
     "autoWarm": { "type": "boolean", "title": "Keep the cache warm by itself", "description": "Ping at the last warning while you were active recently", "default": false },

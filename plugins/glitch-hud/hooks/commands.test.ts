@@ -15,11 +15,16 @@ let sessionId = 's1'
 let storeFails = false
 let stateRefused = false
 let usageFails = false
+// The rate-limit windows the session's usage reports: a Claude subscription unless a test says.
+const SUBSCRIPTION = [{ kind: 'five_hour', percentUsed: 12 }, { kind: 'seven_day', percentUsed: 30 }]
+let windows: unknown[] = SUBSCRIPTION
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
 // `at` is what the session already cost and what the store already holds.
-const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<string, unknown>; refusable?: boolean } = {}) => {
+type At = { usd?: number; store?: Record<string, unknown>; refusable?: boolean; windows?: unknown[]; env?: Record<string, string>; settings?: Record<string, unknown> }
+const start = async ($: Engine, on: On, at: At = {}) => {
   usd = at.usd ?? 0
+  windows = at.windows ?? SUBSCRIPTION
   toasts = []
   store = { ...(at.store ?? {}) }
   sessionId = 's1'
@@ -51,10 +56,11 @@ const start = async ($: Engine, on: On, at: { usd?: number; store?: Record<strin
     refuse()
     return { value: Object.keys(store) } as never
   })
-  mock.env(on, {})
+  mock.env(on, at.env ?? {})
+  on('settings.read', () => ({ value: at.settings ?? {} }) as never)
   on('session.usage', () => {
     if (usageFails) throw new Error('usage refused')
-    return { value: { startedAt: 0, context: { window: 1_000_000, percent: 10 }, rateLimits: [], cost: { usd } } } as never
+    return { value: { startedAt: 0, context: { window: 1_000_000, percent: 10 }, rateLimits: windows, cost: { usd } } } as never
   })
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: '' } }) as never)
   on('session.cwd', () => ({ value: 'C:\\repo' }) as never)
@@ -457,7 +463,7 @@ test('demo: the next answer ends a cache demo', { options: { notify: 'toast' } }
 
 test('unknown subcommand shows usage', async ($, on) => {
   await start($, on)
-  expect(await run($, 'dance')).toBe('Glitch HUD: /glitch hud [parts <list> | cost <list> | speed on|off|auto] · budget [+N|N|off|on] · warm · demo cache <min> | demo budget <pct>')
+  expect(await run($, 'dance')).toBe('Glitch HUD: /glitch hud [parts <list> | cost <list> | speed on|off|auto | cache] · budget [+N|N|off|on] · warm · demo cache <min> | demo budget <pct>')
 })
 
 test('/glitch: routed subcommands are answered here, others go on', { options: { budgetSession: 5 } }, async ($, on) => {
@@ -491,4 +497,59 @@ test('helpers: alerts fire on a rise only, 100% also notifies', () => {
   const over = budgetAlerts(first.notified, { ...spend, session: 10 })
   expect(over.toasts[0]?.text).toBe('Glitch: session spend $10.00 reached the $10.00 cap')
   expect(over.notice).toBe('Budget cap reached: session spend $10.00 of $10.00')
+})
+
+test('cache lifetime: a Claude subscription counts down from an hour', async ($, on) => {
+  await start($, on)
+  expect(await run($, 'hud cache')).toBe('Prompt cache lifetime: 1 hour (assumed until the first answer).')
+  await turn($, 0.1)
+  expect(await run($, 'hud cache')).toBe('Prompt cache lifetime: 1 hour (Claude subscription).')
+  fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 } }
+  expect(await run($, 'warm')).toContain('Next expiry in 60:00.')
+})
+
+test('cache lifetime: an API key (no rate-limit windows) counts down from 5 minutes', async ($, on) => {
+  await start($, on, { windows: [] })
+  await turn($, 0.1)
+  expect(await run($, 'hud cache')).toBe('Prompt cache lifetime: 5 minutes (API key, cloud provider or usage credits).')
+  fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 } }
+  expect(await run($, 'warm')).toContain('Next expiry in 05:00.')
+})
+
+test('cache lifetime: Claude Code settings and env beat the plan', async ($, on) => {
+  await start($, on, { windows: [], settings: { promptCacheTtl: '1h' } })
+  await turn($, 0.1)
+  expect(await run($, 'hud cache')).toBe('Prompt cache lifetime: 1 hour (Claude Code promptCacheTtl or its env vars).')
+})
+
+test('cache lifetime: FORCE_PROMPT_CACHING_5M beats promptCacheTtl', async ($, on) => {
+  await start($, on, { env: { FORCE_PROMPT_CACHING_5M: '1' }, settings: { promptCacheTtl: '1h' } })
+  await turn($, 0.1)
+  expect(await run($, 'hud cache')).toBe('Prompt cache lifetime: 5 minutes (Claude Code promptCacheTtl or its env vars).')
+})
+
+test('cache lifetime: with caching off there is no countdown and nothing to warm', async ($, on) => {
+  await start($, on, { env: { DISABLE_PROMPT_CACHING: '1' } })
+  await turn($, 0.1)
+  expect(await run($, 'hud cache')).toBe('Prompt caching is off (DISABLE_PROMPT_CACHING).')
+  expect(await run($, 'warm')).toBe('Prompt caching is off (DISABLE_PROMPT_CACHING), so there is nothing to keep warm.')
+  expect(forks).toBe(0)
+})
+
+test('cache lifetime: a keep-warm that still reads the cache after 10 idle minutes proves an hour', async ($, on) => {
+  const clock = await start($, on, { windows: [] })
+  await turn($, 0.1)
+  await clock.advance(4 * 60_000)
+  // Within 5 minutes either lifetime holds: nothing learned, still the plan's 5 minutes.
+  fork = { isAnswered: true, text: 'ok', usage: { input_tokens: 10, output_tokens: 2, cache_read_input_tokens: 150_000, cache_creation_input_tokens: 0 } }
+  expect(await run($, 'warm')).toContain('Next expiry in 05:00.')
+  await clock.advance(10 * 60_000)
+  expect(await run($, 'warm')).toContain('Next expiry in 60:00.')
+  expect(await run($, 'hud cache')).toBe('Prompt cache lifetime: 1 hour (seen: the cache outlived 5 idle minutes).')
+})
+
+test('cache lifetime: cacheTtlMinutes beats everything Glitch works out', { options: { cacheTtlMinutes: '5', cacheWarnMinutes: '2' } }, async ($, on) => {
+  await start($, on, { settings: { promptCacheTtl: '1h' } })
+  await turn($, 0.1)
+  expect(await run($, 'hud cache')).toBe('Prompt cache lifetime: 5 minutes (cacheTtlMinutes setting).')
 })

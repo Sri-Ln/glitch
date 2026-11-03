@@ -45,8 +45,20 @@ export type CacheState = {
   lastPromptAt: number
   /** A keep-warm ran since the person's last prompt. */
   warmedSincePrompt: boolean
-  /** The cache lifetime the countdown runs from, ms; absent reads as an hour. */
-  ttlMs?: number
+  /** The cache lifetime the countdown runs from, ms; absent reads as an hour, null: caching is off. */
+  ttlMs?: number | null
+  /** Where `ttlMs` came from: the setting, Claude Code's config, what was seen, the plan, or assumed. */
+  ttlSource?: 'setting' | 'claude-code' | 'observed' | 'plan' | 'default'
+  /** Claude Code's own cache setting or env vars, read at start; absent: none set, null: caching off. */
+  ttlClaude?: number | null
+  /** The lifetime idle gaps proved (one cache read: an hour) or pointed to (rewrites in a row: 5 minutes). */
+  ttlObserved?: number
+  /** Idle gaps in a row after which the cache had to be written again. */
+  ttlMisses?: number
+  /** The lifetime the plan gives, from the rate-limit windows of the last answer. */
+  ttlPlan?: number
+  /** When the last request that refreshed the cache ended (an answer or a keep-warm), clock ms. */
+  lastAnswerAt?: number
   /** The real deadline, set aside while `/glitch demo cache` runs; absent or null when no demo runs. */
   real?: { expiresAt: number | null; warnedMark: number } | null
   /** A keep-warm request is running: the control reads … meanwhile. */
