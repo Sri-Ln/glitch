@@ -339,7 +339,7 @@ test('background helpers that finish unreviewed: the reminder rides the next pro
   const { h } = await backgroundCrew($, on)
   await mainEnd($, 'm3')
   // A stray context read or a plugin's own prompt does not take it.
-  expect(blockNames(await contextOnce($))).toEqual(['currentDate', 'glitch-pets:crew'])
+  expect(blockNames(await contextOnce($))).toEqual(['currentDate'])
   await submit($, { kind: 'plugin', name: 'other' })
   await submit($)
   await submit($)
@@ -426,20 +426,17 @@ test('the crewDone remark when the reviewer finishes and nothing else runs', asy
   expect(toasts.filter(t => crewDone.includes(t)).length).toBe(1)
 })
 
-test('the crew rule rides the conversation context, after the engine blocks', async ($, on) => {
+// The built-in cc-plugin-sec-default sends prompt.compose and prompt.context on past every module,
+// so a hook on either only drew a skip notice: the crew skill carries the workflow instead.
+test('the system prompt and the conversation context are left as the engine made them', async ($, on) => {
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
   on('prompt.context', (_$, e) => ({ blocks: e.blocks }) as never)
   await session($, on)
-  expect(blockNames(await contextOnce($))).toEqual(['currentDate', 'glitch-pets:crew'])
-})
-
-// A built-in plugin sends prompt.compose on past every module, so a compose hook only ever drew a skip notice.
-test('the system prompt is left as the engine composed it', async ($, on) => {
-  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
-  await session($, on)
   expect(sectionIds(await composeOnce($))).toEqual(['intro'])
+  expect(blockNames(await contextOnce($))).toEqual(['currentDate'])
 })
 
-test('with the crew review off: no rule and no reminder', { options: { crewReview: false } }, async ($, on) => {
+test('with the crew review off: no reminder', { options: { crewReview: false } }, async ($, on) => {
   const { h } = await backgroundCrew($, on)
   await mainEnd($, 'm3')
   expect(blockNames(await contextOnce($))).toEqual(['currentDate'])

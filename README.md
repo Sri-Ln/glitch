@@ -120,12 +120,12 @@ The `crew` skill is the workflow Claude follows when work splits into 2 or more 
 3. **Review:** one quick reviewer verifies the whole result against the plan (see "The lean review" below).
 4. **Fix loop:** each finding goes back to the crew member that did that part, then the reviewer checks only what changed, at most 2 rounds. Whatever is still open is reported plainly.
 
-A standing rule in the conversation context asks for this. If 2 or more crew members (named `builder-1`, `researcher-2` and so on) finish with no reviewer, Claude gets a one-time reminder on its next turn to run the review.
+If 2 or more crew members (named `builder-1`, `researcher-2` and so on) finish with no reviewer, Claude gets a one-time reminder on its next turn to run the review.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `crewPane` | `auto` | `auto` opens the pane when a crew starts; `manual` waits for `/glitch crew` |
-| `crewReview` | `true` | the crew rule in the conversation context, and the reminder when a review was skipped |
+| `crewReview` | `true` | the reminder when a review was skipped |
 | `crewTiers` | empty | JSON: each crew tier's model and effort, and the reviewer's (see below); empty uses the default table |
 | `crewTheme` | `busy-hands` | how crew members look in the pane: `busy-hands` or `hats`; `/glitch crew theme <id>` overrides it |
 

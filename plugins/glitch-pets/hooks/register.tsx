@@ -5,7 +5,7 @@ import type { MoodState, PetsView } from '../types'
 import { personaProblems } from './behavior/contract'
 import { INITIAL_CREW, crewSummaryOf, elapsedOf, helpersRunning, memberName, onAgentRunEnd, onAgentTurnEnd, onAgentWake, onMainTurnEnd, onMainTurnStart, onSpawn, onStatuses, onStep, onStepUsage, onTool, onToolStart, reviewerRunning, shares, stepsOf } from './behavior/crew'
 import type { CrewState, CrewSummary } from './behavior/crew'
-import { CREW_RULE, GATE_TEXT, needsReview } from './behavior/gate'
+import { GATE_TEXT, needsReview } from './behavior/gate'
 import { leadStatus } from './behavior/lead-status'
 import { isCapReached } from './behavior/moods'
 import type { BudgetLike } from './behavior/moods'
@@ -760,14 +760,6 @@ export const register: Register = (on, options) => {
       await update($, crew, c => onTool(c, agentId)).catch(() => undefined)
     }
     return ran
-  })
-
-  // The standing rule rides the conversation's opening context, not the system prompt:
-  // the built-in cc-plugin-sec-default sends prompt.compose on past every module.
-  on('prompt.context', async ($, e, next) => {
-    const context = await next(e)
-    if (!config.crewReview) return context
-    return { ...context, blocks: [...context.blocks, { name: 'glitch-pets:crew', text: CREW_RULE }] }
   })
 
   // A helper joins the open crew, or starts a fresh one; a fresh crew opens the pane (auto).
