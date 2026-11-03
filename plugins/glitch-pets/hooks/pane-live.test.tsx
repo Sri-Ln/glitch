@@ -44,7 +44,7 @@ const harness = async ($: Engine, on: On) => {
   on('turn.start', () => ({ turnId: 't' }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
   on('session.start', async () => ({ cwd: 'C:\\repo' }) as never)
-  on('prompt.compose', () => ({ sections: [] }) as never)
+  on('prompt.context', (_$, e) => ({ blocks: e.blocks }) as never)
   on('prompt.submit', (_$, e) => {
     h.contexts.push(e.context)
     return { text: e.text } as never

@@ -236,6 +236,8 @@ test('/glitch crew toggles the pane too', async ($, on) => {
 
 const sectionIds = (r: unknown) => (r as { sections: { id: string }[] }).sections.map(s => s.id)
 const composeOnce = ($: Engine) => $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as never)
+const blockNames = (r: unknown) => (r as { blocks: { name: string }[] }).blocks.map(b => b.name)
+const contextOnce = ($: Engine) => $.prompt.context({ blocks: [{ name: 'currentDate', text: 'today' }] } as never)
 const submit = ($: Engine, origin: object = { kind: 'composer' }) => $.prompt.submit({ text: 'go on', wait: false, origin } as never)
 const mainStart = ($: Engine, id: string) => $.turn.start({ turnId: id } as never)
 const mainEnd = ($: Engine, id: string) => $.turn.complete({ turnId: id, reason: 'answer', answer: '', durationMs: 1, isAborted: false } as never)
@@ -251,7 +253,7 @@ const paneText = async ($: Engine, surface: 'terminal' | 'desktop') => {
 // The engine around a crew: agents' statuses, the session's cost, what each prompt carried.
 const crewHarness = async ($: Engine, on: Parameters<typeof session>[1]) => {
   const h = { status: {} as Record<string, string>, listFails: false, listCalls: 0, step: null as object | null, hold: null as Promise<void> | null, usd: 0, contexts: [] as (readonly string[] | undefined)[], opened: [] as string[], contextOut: 'none' as 'none' | 'echo' | 'strip', spawned: [] as { type: string; model?: string; name?: string }[], toolInputs: [] as Record<string, unknown>[], usageCalls: 0, panes: [] as object[] }
-  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
+  on('prompt.context', (_$, e) => ({ blocks: e.blocks }) as never)
   on('prompt.submit', async (_$, e) => {
     h.contexts.push(e.context)
     if (h.hold) await h.hold
@@ -336,8 +338,8 @@ test('a crew spans main turns: the reviewer spawned later joins the same crew', 
 test('background helpers that finish unreviewed: the reminder rides the next prompt, once', async ($, on) => {
   const { h } = await backgroundCrew($, on)
   await mainEnd($, 'm3')
-  // A stray compose or a plugin's own prompt does not take it.
-  expect(sectionIds(await composeOnce($))).toEqual(['intro', 'glitch-pets:crew'])
+  // A stray context read or a plugin's own prompt does not take it.
+  expect(blockNames(await contextOnce($))).toEqual(['currentDate', 'glitch-pets:crew'])
   await submit($, { kind: 'plugin', name: 'other' })
   await submit($)
   await submit($)
@@ -424,16 +426,23 @@ test('the crewDone remark when the reviewer finishes and nothing else runs', asy
   expect(toasts.filter(t => crewDone.includes(t)).length).toBe(1)
 })
 
-test('the crew rule is added to the system prompt', async ($, on) => {
+test('the crew rule rides the conversation context, after the engine blocks', async ($, on) => {
+  on('prompt.context', (_$, e) => ({ blocks: e.blocks }) as never)
+  await session($, on)
+  expect(blockNames(await contextOnce($))).toEqual(['currentDate', 'glitch-pets:crew'])
+})
+
+// A built-in plugin sends prompt.compose on past every module, so a compose hook only ever drew a skip notice.
+test('the system prompt is left as the engine composed it', async ($, on) => {
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'x', scope: 'shared' }] }) as never)
   await session($, on)
-  expect(sectionIds(await composeOnce($))).toEqual(['intro', 'glitch-pets:crew'])
+  expect(sectionIds(await composeOnce($))).toEqual(['intro'])
 })
 
 test('with the crew review off: no rule and no reminder', { options: { crewReview: false } }, async ($, on) => {
   const { h } = await backgroundCrew($, on)
   await mainEnd($, 'm3')
-  expect(sectionIds(await composeOnce($))).toEqual(['intro'])
+  expect(blockNames(await contextOnce($))).toEqual(['currentDate'])
   await submit($)
   expect(h.contexts).toEqual([undefined])
 })
