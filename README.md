@@ -1,62 +1,60 @@
 # Glitch
 
-A kit of Claude Code mods: one band above the prompt that shows the session at a glance, makes spending and prompt-cache expiry visible before they cost money, and a pixel pet that reacts to it all. When Claude splits work across agents, your pet leads a live crew pane.
+Glitch is a set of mods for Claude Code. It puts a status line above the prompt that tracks your session: what it's costing, how long until the prompt cache goes cold, and how much context you've used. At the end of that line sits a small pixel pet that keeps you company while Claude works.
 
-![Glitch on the Claude Code desktop: the HUD band with a pet reacting during a turn](docs/images/hero.gif)
+![The Glitch HUD and pet in the Claude Code desktop app](docs/images/hero.webp)
 
-## What you get
+## The pets
 
-- **HUD:** turn, tok/s, cost (this reply, this session, today), a prompt-cache countdown with one-click keep-warm, context used and git, in one line above the prompt.
-- **Budget guard:** optional caps per session and per day, the cost changes color as you near a cap, with toasts at 90% and 100%.
-- **Cache keeper:** a warning before the prompt cache expires, and a cheap ping that keeps it warm.
-- **Pets:** six pixel pets with moods, short remarks and a daily streak.
-- **Crew pane:** each agent Claude starts shows up live with its role, model, steps and cost, followed by a quick review of the whole result.
-- **Themes:** six built-in looks, or your own colors.
+Glitch launches with six pets: Screenhead, Byte blob, Pixel, Dot, Fork and Bud, with more on the way. Each one has its own temperament, its own way of speaking and its own signature move.
 
-A Glitch bug never breaks your session, and Glitch never blocks anything unless you turn that on.
+Your pet isn't decoration. It works alongside Claude and pays attention to the session as it unfolds. Long turns, quiet spells, a budget running low, a run of failures or a streak kept alive all show on its face, and no two pets take them the same way. Spend some time with a few of them and pick the one that suits you.
 
-## Requirements
+![The six pets](docs/images/pets.png)
 
-- Claude Code 2.1.302 or later (tested on 2.1.311). Glitch uses Claude Code's early-access mods (function-hooks) API.
-- Works in the desktop app, VS Code and the terminal. Pets and the crew pane's sprites are drawn in the desktop app; in the terminal the HUD is text and the pet talks through toasts.
+## The status line
+
+Claude Code's prompt cache expires after a quiet spell: an hour on a Claude subscription, 5 minutes with an API key. After that, the next message pays full price for the whole conversation again. Glitch works out which one applies to you, counts down to that moment and warns you before it arrives. One click sends a small request that keeps the cache warm. It shows what the last reply, the session and the day have cost. You can set a budget, and the cost changes color as you get close to it. The line also shows the turn number, speed, context used and your git branch, in one of six color themes.
+
+## The crew
+
+When Claude splits a job across several agents, a crew pane opens and your pet takes the lead. Each agent shows up as a small copy of your pet acting out its role (builder, researcher, designer, tester), with its model, progress and cost beside it. When they're all done, a reviewer checks the combined result before Claude reports back.
+
+https://github.com/user-attachments/assets/0f63a8a1-4e3d-4bb8-bd92-eebfd1d54112
 
 ## Install
 
-In Claude Code:
+You need Claude Code 2.1.302 or later. Run these inside Claude Code:
 
 ```
 /plugin marketplace add Sri-Ln/glitch
 /plugin install glitch-pets@glitch
 ```
 
-That installs everything: `glitch-pets` brings in `glitch-hud` and `glitch-core`. For the HUD without a pet, install `glitch-hud@glitch` instead.
+That installs all three plugins: `glitch-core` (themes and the `/glitch` command), `glitch-hud` (the status line) and `glitch-pets` (the pets and the crew). If you only want the status line, install `glitch-hud@glitch` instead.
 
-## First steps
+Glitch works in the desktop app, VS Code and the terminal. The pets are only drawn in the desktop app. In the terminal the status line is plain text, and your pet talks to you through notifications.
 
-| Try | What happens |
-|---|---|
-| `/glitch` | the help card with every command |
-| `/glitch-pets` | lists the pets; `/glitch-pets pixel` picks one |
-| `/glitch theme neon` | switches the theme (`/glitch theme` lists them) |
-| `/glitch budget 5` | sets a $5 cap for this session |
-| `/glitch demo cache 4` | previews the cache warning at 4 minutes left |
+## Try it
 
-Everything else is in `/config` under the Glitch plugins.
+```
+/glitch                  help and every command
+/glitch-pets pixel       pick a pet (/glitch-pets lists them)
+/glitch theme neon       change the colors
+/glitch budget 5         set a $5 cap for this session
+/glitch demo cache 4     preview the cache warning
+```
 
-![The HUD in the terminal](docs/images/hud-terminal.png)
-
-![The six pets](docs/images/pets.png)
-
-![The crew pane while three agents work](docs/images/crew.gif)
+Other settings are in `/config`, under the Glitch plugins.
 
 ## Docs
 
-- [HUD, budget guard and cache keeper](docs/hud.md)
+- [Status line, budget and cache](docs/hud.md)
 - [Pets](docs/pets.md)
-- [Crew pane and the crew workflow](docs/crew.md)
+- [Crew pane](docs/crew.md)
 - [Themes](docs/themes.md)
-- [All commands, settings and other ways to install](docs/reference.md)
+- [All commands and settings](docs/reference.md)
 
 ## License
 
-MIT, see `LICENSE`.
+MIT

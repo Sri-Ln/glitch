@@ -2,6 +2,8 @@
 
 [← Back to the README](../README.md)
 
+![The status line in the Claude Code desktop app](images/hud.png)
+
 ## The HUD
 
 One line above the prompt. In the terminal it is text with theme colors and icons:
