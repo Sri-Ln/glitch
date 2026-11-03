@@ -762,11 +762,12 @@ export const register: Register = (on, options) => {
     return ran
   })
 
-  // The standing rule, sent after the cache boundary so it never disturbs the shared prompt.
-  on('prompt.compose', async ($, e, next) => {
-    const composed = await next(e)
-    if (!config.crewReview) return composed
-    return { sections: [...composed.sections, { id: 'glitch-pets:crew', text: CREW_RULE, scope: 'session' as const }] }
+  // The standing rule rides the conversation's opening context, not the system prompt:
+  // the built-in cc-plugin-sec-default sends prompt.compose on past every module.
+  on('prompt.context', async ($, e, next) => {
+    const context = await next(e)
+    if (!config.crewReview) return context
+    return { ...context, blocks: [...context.blocks, { name: 'glitch-pets:crew', text: CREW_RULE }] }
   })
 
   // A helper joins the open crew, or starts a fresh one; a fresh crew opens the pane (auto).
