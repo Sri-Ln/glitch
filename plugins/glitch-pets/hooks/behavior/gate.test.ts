@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { CREW_RULE, GATE_TEXT, needsReview } from './gate'
+import { GATE_TEXT, needsReview } from './gate'
 import type { CrewRow, CrewState } from './crew'
 import { INITIAL_CREW, onSpawn } from './crew'
 
@@ -49,13 +49,6 @@ test('a failed helper held for a step-up is not finished yet', () => {
   expect(needsReview(s, o)).toBe(true)
 })
 
-test('the crew rule names the crew tier types', () => {
-  expect(CREW_RULE).toContain('glitch-pets:crew-<tier>')
-  expect(CREW_RULE).toContain('no model or effort')
-  // The plan's step count reaches the pane through each prompt.
-  expect(CREW_RULE).toContain('Expected steps: N')
-})
-
 test('an unnamed row spawned on crew-reviewer satisfies the review (#45)', () => {
   let s = onSpawn(INITIAL_CREW, { agentId: 'a', name: 'builder-1', description: 'a', model: null, now: 0, costNow: 0 })
   s = onSpawn(s, { agentId: 'b', name: 'builder-2', description: 'b', model: null, now: 0, costNow: 0 })
@@ -65,12 +58,10 @@ test('an unnamed row spawned on crew-reviewer satisfies the review (#45)', () =>
   expect(needsReview(s, o)).toBe(false)
 })
 
-test('the rule and the reminder start a lean reviewer that verifies, not redoes', () => {
-  for (const t of [CREW_RULE, GATE_TEXT]) {
-    expect(t).toContain('reviewer-1')
-    expect(t).toContain('subagent_type glitch-pets:crew-reviewer')
-    expect(t).toContain('verify, not redo')
-    expect(t).toContain('at most 2 rounds')
-    expect(t).toContain('only what changed')
-  }
+test('the reminder starts a lean reviewer that verifies, not redoes', () => {
+  expect(GATE_TEXT).toContain('reviewer-1')
+  expect(GATE_TEXT).toContain('subagent_type glitch-pets:crew-reviewer')
+  expect(GATE_TEXT).toContain('verify, not redo')
+  expect(GATE_TEXT).toContain('at most 2 rounds')
+  expect(GATE_TEXT).toContain('only what changed')
 })

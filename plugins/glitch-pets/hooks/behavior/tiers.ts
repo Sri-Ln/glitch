@@ -143,7 +143,7 @@ export const REVIEWER_MAX_TURNS = 18
 const REVIEWER_WRAP_UP = REVIEWER_MAX_TURNS - 4
 
 const REVIEWER_NAME = /^reviewer-\d+$/i
-/** `reviewer-<n>`, the crew rule's name for the reviewer. */
+/** `reviewer-<n>`, the crew skill's name for the reviewer. */
 export const isReviewerName = (name: string | undefined): boolean => !!name && REVIEWER_NAME.test(name)
 /** The lean reviewer's type, full (`glitch-pets:crew-reviewer`) or short. */
 export const isReviewerType = (type: string): boolean => shortType(type) === REVIEWER_TYPE
