@@ -19,6 +19,8 @@ import type { PetSprite } from './pet'
 import { cellWidth, fitParts, segments } from './parts'
 import type { PartData } from './parts'
 import { toTheme } from './theme'
+import { HOUR_MS, claudeCodeTtl, observedTtl, planTtl, resolveTtl, ttlSummary } from './ttl'
+import type { Ttl } from './ttl'
 
 export const stats = atom({ plugin: 'glitch-hud', key: 'stats' } as const, INITIAL_STATS)
 export const cache = atom({ plugin: 'glitch-hud', key: 'cache' } as const, INITIAL_CACHE)
@@ -45,7 +47,7 @@ const LEDGER_FAILED = "Glitch: can't read or save the daily spend ledger right n
 
 // A failed read marks cost and context stale (the band shows —, not a frozen
 // number) and says so once per conversation (session id); the next good read clears it.
-export async function refreshUsage($: EngineInterface): Promise<void> {
+export async function refreshUsage($: EngineInterface): Promise<Awaited<ReturnType<EngineInterface['session']['usage']>> | null> {
   const usage = await $.session.usage().catch(() => null)
   if (!usage) {
     const sessionId = await $.session.id().catch(() => 'session')
@@ -58,10 +60,55 @@ export async function refreshUsage($: EngineInterface): Promise<void> {
         // Nothing else to tell.
       }
     }
-    return
+    return null
   }
   const total = usage.cost?.usd ?? 0
   await update($, stats, s => ({ ...s, isStale: false, total, turnCost: s.turn === 0 ? null : total - s.costAtStart, context: usage.context.percent ?? s.context }))
+  return usage
+}
+
+// Claude Code's own cache lifetime, if its settings or env name one. Each read
+// that fails counts as unset.
+async function readClaudeTtl($: EngineInterface): Promise<number | null | undefined> {
+  const env = async (get: () => Promise<string | undefined>) => get().catch(() => undefined)
+  const settings = (await $.settings.read().catch(() => ({}))) as Record<string, unknown>
+  return claudeCodeTtl({
+    disabled: await env(() => $.env.get('DISABLE_PROMPT_CACHING')),
+    force5m: await env(() => $.env.get('FORCE_PROMPT_CACHING_5M')),
+    envTtl: await env(() => $.env.get('CLAUDE_CODE_PROMPT_CACHE_TTL')),
+    settingTtl: settings.promptCacheTtl,
+    enable1h: await env(() => $.env.get('ENABLE_PROMPT_CACHING_1H')),
+  })
+}
+
+// Works the lifetime out again from what the state holds, and keeps it there for
+// the colors, the marks and /glitch hud cache.
+async function applyTtl($: EngineInterface, config: HudConfig): Promise<Ttl> {
+  const c = await read($, cache)
+  const t = resolveTtl({ manual: config.cacheTtlMs, claudeCode: c.ttlClaude, observed: c.ttlObserved, plan: c.ttlPlan })
+  await update($, cache, x => ({ ...x, ttlMs: t.ms, ttlSource: t.source }))
+  return t
+}
+
+type CacheUsage = { cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }
+
+// Misses in a row before the cache counts as seen lapsing: one alone may be a
+// changed CLAUDE.md or tool list, which rewrites the cache whatever its lifetime.
+const MISSES_FOR_5M = 2
+
+// What the first request after an idle gap shows about the lifetime. A read
+// proves an hour at once; 5 minutes takes MISSES_FOR_5M rewrites in a row.
+async function observe($: EngineInterface, askedAt: number, usage: CacheUsage): Promise<void> {
+  const c = await read($, cache)
+  if (c.lastAnswerAt === undefined) return
+  const seen = observedTtl({ gapMs: askedAt - c.lastAnswerAt, read: usage.cache_read_input_tokens ?? 0, written: usage.cache_creation_input_tokens ?? 0 })
+  if (seen === HOUR_MS) await update($, cache, x => ({ ...x, ttlObserved: HOUR_MS, ttlMisses: 0 }))
+  else if (seen !== undefined) {
+    await update($, cache, x => {
+      const misses = (x.ttlMisses ?? 0) + 1
+      return { ...x, ttlMisses: misses, ...(misses >= MISSES_FOR_5M ? { ttlObserved: seen } : {}) }
+    })
+  }
 }
 
 // Engine calls handed to the pure helpers: `$` stays in this file.
@@ -112,16 +159,22 @@ export async function warnCache($: EngineInterface, config: HudConfig, minutes: 
   await notify(engineIO($), config.notify, title, `Prompt cache expires in ${minutes} min${isDemo ? ' (demo)' : ''}`)
 }
 
-export async function keepWarm($: EngineInterface, ttlMs: number): Promise<string> {
+export async function keepWarm($: EngineInterface, config: HudConfig): Promise<string> {
   const c = await read($, cache)
+  if (c.ttlMs === null) return 'Prompt caching is off (DISABLE_PROMPT_CACHING), so there is nothing to keep warm.'
   if (c.isBusy) return 'Claude is working, so the cache is warm already.'
   if (c.isWarming) return 'A keep-warm request is already running.'
   await update($, cache, x => ({ ...x, isWarming: true }))
   try {
+    const askedAt = await $.clock.now()
     const reply = await $.model.fork({ prompt: WARM_PROMPT }).catch(() => ({ isAnswered: false as const, reason: 'request refused' }))
+    let ttlMs = c.ttlMs ?? HOUR_MS
     if (reply.isAnswered) {
+      // The ping reads the main thread's cache: it shows the lifetime as an answer does.
+      await observe($, askedAt, reply.usage)
+      ttlMs = (await applyTtl($, config)).ms ?? HOUR_MS
       const now = await $.clock.now()
-      await update($, cache, x => ({ ...x, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true, real: null }))
+      await update($, cache, x => ({ ...x, expiresAt: now + ttlMs, secondsLeft: ttlMs / 1000, warnedMark: 0, warmedSincePrompt: true, real: null, lastAnswerAt: now }))
     }
     return warmMessage(reply, ttlMs / 1000)
   } finally {
@@ -249,6 +302,10 @@ async function answerHud($: EngineInterface, config: HudConfig, args: string): P
       await update($, view, v => ({ ...v, speed, isHidden: false }))
       return speed === 'auto' ? 'tok/s: auto (terminal only, unless Parts was chosen).' : `tok/s: ${speed}.`
     }
+    if (a === 'cache') {
+      const c = await read($, cache)
+      return ttlSummary({ ms: c.ttlMs === undefined ? HOUR_MS : c.ttlMs, source: c.ttlSource ?? 'default' })
+    }
     if (a === 'cost') {
       const cost = b ? parseCostShows(b) : null
       if (!cost) return `Unknown cost figure. Figures: ${ALL_COST.join(', ')}.`
@@ -260,7 +317,7 @@ async function answerHud($: EngineInterface, config: HudConfig, args: string): P
     return hidden ? 'Glitch HUD hidden.' : 'Glitch HUD shown.'
   }
   if (sub === 'budget') return budgetCommand($, a)
-  if (sub === 'warm') return keepWarm($, config.cacheTtlMs)
+  if (sub === 'warm') return keepWarm($, config)
   if (sub === 'demo') return demoCommand($, a, b)
   return USAGE
 }
@@ -274,7 +331,7 @@ async function autoWarm($: EngineInterface, config: HudConfig, mark: number, mar
   if (!config.autoWarm) return
   const c = await read($, cache)
   const ok = shouldAutoWarm({ mark, marks, now: await $.clock.now(), lastPromptAt: c.lastPromptAt, maxIdleMin: config.autoWarmMaxIdle, warmedSincePrompt: c.warmedSincePrompt })
-  if (ok) $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })
+  if (ok) $.ui.toast(`Glitch: ${await keepWarm($, config)}`, { timeoutMs: 8000 })
 }
 
 export const register: Register = (on, options) => {
@@ -282,6 +339,10 @@ export const register: Register = (on, options) => {
   // session.start fires again in the same load (compact, resume, fork): the
   // timers of the earlier start are stopped before new ones begin.
   let timers: Timer[] = []
+  // The turn's first main-thread request is the one that meets the cache after the idle gap.
+  let isFirstStep = false
+  // A request on another model than the last one starts a new cache: it says nothing.
+  let lastModel: string | null = null
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -312,8 +373,11 @@ export const register: Register = (on, options) => {
     const speed = parseSpeed(await $.store.get(STORE_SPEED).catch(() => undefined))
     if (speed) await update($, view, v => ({ ...v, speed }))
 
-    // The colors and the fitted marks read the lifetime from the state.
-    await update($, cache, c => ({ ...c, ttlMs: config.cacheTtlMs }))
+    // The colors and the fitted marks read the lifetime from the state. Claude
+    // Code's own config is read once here; what was seen and the plan come with answers.
+    const ttlClaude = config.cacheTtlMs === null ? await readClaudeTtl($) : undefined
+    await update($, cache, c => ({ ...c, ttlClaude }))
+    await applyTtl($, config)
 
     for (const t of timers) t.cancel()
     // Each tick catches its own failure: one rejection must never end the interval.
@@ -330,7 +394,7 @@ export const register: Register = (on, options) => {
         const left = Math.max(0, Math.floor((c.expiresAt - now) / 1000))
         if (left !== c.secondsLeft) await update($, cache, x => ({ ...x, secondsLeft: left }))
         if (c.isBusy) return
-        const marks = warnMarks(config.cacheWarnMinutes, c.ttlMs ?? config.cacheTtlMs)
+        const marks = warnMarks(config.cacheWarnMinutes, c.ttlMs ?? HOUR_MS)
         const mark = dueMark(left, marks, c.warnedMark)
         if (mark === null) return
         await update($, cache, x => ({ ...x, warnedMark: mark }))
@@ -364,6 +428,7 @@ export const register: Register = (on, options) => {
     const sessionId = await $.session.id().catch(() => 'session')
     await update($, budget, b => rebase(b, sessionId, total))
     await update($, cache, c => ({ ...c, isBusy: true }))
+    isFirstStep = true
     return next(e)
   })
 
@@ -371,6 +436,10 @@ export const register: Register = (on, options) => {
   on('turn.step', async function* ($, e, next) {
     if (e.agentId !== undefined) return yield* next(e)
     let startedAt: number | null = null
+    const sameModel = lastModel === null || lastModel === e.model
+    const askedAt = isFirstStep && sameModel ? await $.clock.now().catch(() => null) : null
+    isFirstStep = false
+    lastModel = e.model
     const stream = next(e)
     for await (const chunk of stream) {
       // The speed is a nicety: a failure to time or store it must never break the stream.
@@ -380,6 +449,7 @@ export const register: Register = (on, options) => {
           const seconds = ((await $.clock.now()) - startedAt) / 1000
           const tokens = chunk.usage.output_tokens
           if (tokens >= MIN_TOKENS && seconds >= MIN_SECONDS) await update($, stats, s => ({ ...s, speed: Math.round(tokens / seconds) }))
+          if (askedAt !== null) await observe($, askedAt, chunk.usage)
         }
       } catch {
         // Leave the last speed shown.
@@ -394,13 +464,16 @@ export const register: Register = (on, options) => {
     try {
       const result = await next(e)
       if (e.agentId !== undefined) return result
-      await refreshUsage($)
+      const usage = await refreshUsage($)
       await recordSpend($, config).catch(() => undefined)
       // Only a turn that reached the API restarts the cache's lifetime; one aborted
       // or failed before any request leaves the countdown as it was.
       if (e.reason === 'answer' || e.usage) {
+        // An answer has come, so the rate-limit windows now say which plan this is.
+        if (usage) await update($, cache, c => ({ ...c, ttlPlan: planTtl(usage.rateLimits, true) }))
+        const { ms } = await applyTtl($, config)
         const now = await $.clock.now()
-        await update($, cache, c => ({ ...c, expiresAt: now + config.cacheTtlMs, secondsLeft: config.cacheTtlMs / 1000, warnedMark: 0, real: null }))
+        await update($, cache, c => ({ ...c, expiresAt: ms === null ? null : now + ms, secondsLeft: ms === null ? null : ms / 1000, warnedMark: 0, real: null, lastAnswerAt: now }))
       }
       await update($, budget, b => ({ ...b, demoPercent: null }))
       void refreshGit($)
@@ -506,7 +579,7 @@ export const register: Register = (on, options) => {
       // A failed keep-warm only loses its toast.
       const warm = async () => {
         try {
-          $.ui.toast(`Glitch: ${await keepWarm($, config.cacheTtlMs)}`, { timeoutMs: 8000 })
+          $.ui.toast(`Glitch: ${await keepWarm($, config)}`, { timeoutMs: 8000 })
         } catch {
           // Nothing to show.
         }

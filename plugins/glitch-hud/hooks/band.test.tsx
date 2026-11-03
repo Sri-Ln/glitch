@@ -23,13 +23,17 @@ let stateRefused = false
 let fork: unknown = { isAnswered: false, reason: 'nothing-to-fork' }
 // `lead`: time before the first chunk; `ms`: time from the first chunk to the rest.
 let step: { chunks: unknown[]; ms: number; lead?: number } = { chunks: [], ms: 0 }
+// The rate-limit windows the usage reports: a Claude subscription unless a session says.
+const SUBSCRIPTION = [{ kind: 'five_hour', percentUsed: 12 }]
+let windows: unknown[] = SUBSCRIPTION
 const MAIN = '# branch.oid abc\n# branch.head main\n'
 const STEP_RESULT = { turnId: 't', index: 0, answer: 'hi', toolUses: [] }
 
 // Every answer sits beneath the plugin and is registered before the first `$` call.
 // `opts.store` seeds the plugin's store (another session's ledger entry, say).
-const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { registerFails?: boolean; refusable?: boolean; store?: Record<string, unknown> } = {}) => {
+const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { registerFails?: boolean; refusable?: boolean; store?: Record<string, unknown>; windows?: unknown[]; env?: Record<string, string> } = {}) => {
   usd = 0
+  windows = opts.windows ?? SUBSCRIPTION
   toasts = []
   gitOut = git
   gitRuns = 0
@@ -70,10 +74,10 @@ const session = async ($: Engine, on: On, git: string | null = MAIN, opts: { reg
     })
     on('store.keys', () => ({ value: Object.keys(seeded) }) as never)
   } else mock.store(on)
-  mock.env(on, { OS: 'Windows_NT' })
+  mock.env(on, { OS: 'Windows_NT', ...opts.env })
   on('session.usage', () => {
     if (usageFails) throw new Error('usage refused')
-    return { value: { startedAt: 0, context: { window: 1_000_000, tokens: 630_000, percent: 63 }, rateLimits: [], cost: { usd } } } as never
+    return { value: { startedAt: 0, context: { window: 1_000_000, tokens: 630_000, percent: 63 }, rateLimits: windows, cost: { usd } } } as never
   })
   on('ui.notify', () => {
     uiNotifies++
@@ -440,6 +444,58 @@ test('band: a subagent step does not change the speed', async ($, on) => {
   const { got } = await runStep($, { ...STEP, agentId: 'a1' })
   expect(got).toEqual(STEP_CHUNKS)
   expect(await rowText($, 160)).not.toContain('tok/s')
+})
+
+test('band: an answer that still reads the cache after 10 idle minutes switches 5 minutes to an hour', async ($, on) => {
+  const clock = await session($, on, MAIN, { windows: [] })
+  await turn($, 0.1)
+  expect(await rowText($, 160)).toContain('05:00')
+  await clock.advance(10 * 60_000)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'back', turnId: 't2' })
+  // A subagent's request says nothing about the main thread's cache.
+  step = { chunks: [{ ...STEP_CHUNKS[2], usage: { ...USAGE(100), cache_read_input_tokens: 0, cache_creation_input_tokens: 150_000 } }], ms: 2000 }
+  await runStep($, { ...STEP, agentId: 'a1' })
+  step = { chunks: [{ ...STEP_CHUNKS[2], usage: { ...USAGE(100), cache_read_input_tokens: 150_000, cache_creation_input_tokens: 1_000 } }], ms: 2000 }
+  await runStep($, STEP)
+  await ($.turn.complete as (e: unknown) => Promise<unknown>)({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't2', reason: 'answer' })
+  expect(await rowText($, 160)).toContain('60:00')
+})
+
+// One idle gap of `minutes`, then a turn whose first request reads `read` tokens from cache and writes `written`.
+const idleTurn = async ($: Engine, clock: { advance: (ms: number) => Promise<unknown> }, minutes: number, cacheUse: { read: number; written: number }, model = 'm') => {
+  await clock.advance(minutes * 60_000)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ text: 'back', turnId: 't2' })
+  step = { chunks: [{ ...STEP_CHUNKS[2], usage: { ...USAGE(100), cache_read_input_tokens: cacheUse.read, cache_creation_input_tokens: cacheUse.written } }], ms: 2000 }
+  await runStep($, { ...STEP, model })
+  await ($.turn.complete as (e: unknown) => Promise<unknown>)({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't2', reason: 'answer' })
+}
+
+test('band: one rewrite after an idle gap is not enough for 5 minutes; two in a row are', async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  await idleTurn($, clock, 10, { read: 0, written: 150_000 })
+  expect(await rowText($, 160)).toContain('60:00')
+  await idleTurn($, clock, 10, { read: 0, written: 150_000 })
+  expect(await rowText($, 160)).toContain('05:00')
+  // A read inside 5 minutes says nothing; one after a longer gap proves an hour again.
+  await idleTurn($, clock, 4, { read: 150_000, written: 0 })
+  expect(await rowText($, 160)).toContain('05:00')
+  await idleTurn($, clock, 10, { read: 150_000, written: 0 })
+  expect(await rowText($, 160)).toContain('60:00')
+})
+
+test('band: a rewrite on a different model says nothing about the lifetime', async ($, on) => {
+  const clock = await session($, on)
+  await turn($, 0.1)
+  await idleTurn($, clock, 10, { read: 0, written: 150_000 }, 'm')
+  await idleTurn($, clock, 10, { read: 0, written: 150_000 }, 'other')
+  expect(await rowText($, 160)).toContain('60:00')
+})
+
+test('band: with caching off the cache part shows no countdown', async ($, on) => {
+  await session($, on, MAIN, { env: { DISABLE_PROMPT_CACHING: '1' } })
+  await turn($, 0.1)
+  expect(await rowText($, 160)).not.toMatch(/\d\d:\d\d/)
 })
 
 test('band: cache marks notify once each, never while a turn runs, and re-arm', { timeoutMs: 30_000, options: { notify: 'toast' } }, async ($, on) => {

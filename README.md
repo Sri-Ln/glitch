@@ -17,7 +17,7 @@ One line above the prompt. In the terminal it is text with theme colors and icon
 | turn | `#12` | count of main-session turns |
 | speed | `⚡ 84 tok/s` | output tokens divided by streaming time of the last main response (ignores answers under 20 tokens or 0.5 s) |
 | cost | `$ 0.42 reply · 3.10 session · 21.40 today` | the last reply, this session, and today across every session on this machine; pick them with `costShows`. Colored by budget level |
-| cache | `⧗ 47:12 ↻` | countdown to prompt-cache expiry (`cacheTtlMinutes`, 60 by default); `…` while a turn runs |
+| cache | `⧗ 47:12 ↻` | countdown to prompt-cache expiry (the lifetime is worked out, see Cache keeper); `…` while a turn runs |
 | context | `▓▓▓▓░░ 63%` | context window used; amber from 65%, red from 85% |
 | git | ` main ±4 ↑1` | branch, changed files, ahead/behind; hidden outside a repo |
 
@@ -47,7 +47,13 @@ Costs are Claude Code's own estimate at API prices, not a bill; on a subscriptio
 
 ## Cache keeper
 
-Claude Code's prompt cache lives for a fixed time after the last request: 1 hour on most plans, 5 minutes on others. Set `cacheTtlMinutes` to match (60 by default; set 5 if your account's cache lasts 5 minutes). The cache part counts down to that deadline from each answer and pauses (`…`) while a turn runs; a turn interrupted before any request leaves it as it was, and `/clear` drops it.
+Claude Code's prompt cache lives for a fixed time after the last request: 1 hour for the main conversation on a Claude subscription, 5 minutes with an API key, a cloud provider (Bedrock, Vertex, Foundry) or once a subscription draws on usage credits. With `cacheTtlMinutes` on `auto` (the default) Glitch works the lifetime out, first match wins:
+
+1. Claude Code's own `promptCacheTtl` setting and the `FORCE_PROMPT_CACHING_5M`, `CLAUDE_CODE_PROMPT_CACHE_TTL` and `ENABLE_PROMPT_CACHING_1H` env vars, in Claude Code's own order. With `DISABLE_PROMPT_CACHING` there is no countdown.
+2. What the cache did: when the first request after more than 5 idle minutes (an answer or a keep-warm) still reads the conversation from the cache, the lifetime is an hour; when it had to write it all again within the hour, 5 minutes.
+3. The plan: the rate-limit windows each answer reports are there only on a subscription. Until the first answer, an hour is assumed.
+
+`/glitch hud cache` says the lifetime in use and where it came from. Set `cacheTtlMinutes` to `60` or `5` to fix it by hand. The cache part counts down to that deadline from each answer and pauses (`…`) while a turn runs; a turn interrupted before any request leaves it as it was, and `/clear` drops it.
 
 Left empty, `cacheWarnMinutes` fits the lifetime: marks at 10 and 5 minutes left for 1 hour, at 2 and 1 for 5 minutes. Marks you type at or above the lifetime can never fire: they are ignored and named once at session start. The countdown turns the warning color at a third of the lifetime left (20 minutes of an hour, 1:40 of 5 minutes) and the alert color at a sixth (10 minutes, 0:50).
 
@@ -200,6 +206,7 @@ Color tokens are `accent`, `good`, `warn`, `alert`, `muted`, `info` (as `#rrggbb
 | `/glitch hud cost <list>` | hud | cost figures and order for this session, e.g. `session,today` |
 | `/glitch hud speed on\|off\|auto` | hud | show or hide tok/s, kept for later sessions; `auto` follows the setting |
 | `/glitch budget [+N \| N \| off \| on]` | hud | show, raise, set, disable or re-enable this session's caps |
+| `/glitch hud cache` | hud | the prompt-cache lifetime in use and where it came from |
 | `/glitch warm` | hud | keep-warm ping now |
 | `/glitch demo cache <min>` | hud | preview the cache part and warnings at N minutes left; demo warnings say "(demo)", never auto-warm, and the real countdown comes back when the demo runs out or at the next answer |
 | `/glitch demo budget <pct>` | hud | preview the budget levels at N percent |
@@ -227,7 +234,7 @@ Set them in `/config`, or in `~/.claude/settings.json` under `pluginConfigs`. In
 | `budgetSession` | `0` | USD cap per session; 0 is off |
 | `budgetDaily` | `0` | USD cap per local day, across sessions; 0 is off |
 | `budgetBlocksAgents` | `false` | refuse new subagents at a cap |
-| `cacheTtlMinutes` | `60` | prompt cache lifetime: `60` (most plans) or `5` |
+| `cacheTtlMinutes` | `auto` | prompt cache lifetime: `auto` works it out (see Cache keeper); `60` or `5` fixes it |
 | `cacheWarnMinutes` | empty | minutes-left marks that notify; empty fits the lifetime (`10,5` for 1 hour, `2,1` for 5 minutes); marks at or above the lifetime are ignored |
 | `notify` | `toast` | `toast` (inside the Claude Code session that raised it), `windows` (native Windows notification) or `off` (no cache or cap notifications; budget toasts still show) |
 | `autoWarm` | `false` | keep the cache warm by itself at the last warning mark |
