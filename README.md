@@ -20,7 +20,7 @@ Claude Code's prompt cache expires after a quiet spell: an hour on a Claude subs
 
 When Claude splits a job across several agents, a crew pane opens and your pet takes the lead. Each agent shows up as a small copy of your pet acting out its role (builder, researcher, designer, tester), with its model, progress and cost beside it. When they're all done, a reviewer checks the combined result before Claude reports back.
 
-https://github.com/user-attachments/assets/0f63a8a1-4e3d-4bb8-bd92-eebfd1d54112
+https://github.com/user-attachments/assets/c2072b69-8d23-466f-b132-cadaf0e76b2e
 
 ## Install
 
