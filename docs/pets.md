@@ -33,3 +33,16 @@ Moods: idle, working, happy, tired, sleepy, worried, oops, cheering, leading, re
 
 
 When Claude splits work across agents, your pet leads the crew pane: see [Crew](crew.md).
+
+## Adding a pet
+
+New pets come in through pull requests. The repo has a Claude Code skill, `new-pet` (in `.claude/skills/new-pet/`), that does the work with you:
+
+1. Fork [Sri-Ln/glitch](https://github.com/Sri-Ln/glitch) and clone your fork.
+2. Open Claude Code in it and say "I want to add a pet", or run `/new-pet`.
+3. Describe your pet: what it is, its name, its personality, what it does when idle and the colors you'd like.
+4. Claude draws it with all 13 moods and its voice lines, adds it everywhere a pet is listed, and runs the tests.
+5. A gallery opens in your browser. Check every mood on the dark and light backgrounds and in the crew pane, and ask for changes until it looks right.
+6. Claude commits it and gives you a checklist. Push to your fork and open a pull request.
+
+Every pet is reviewed before it's merged. You need Node 22.15 or later for the gallery.

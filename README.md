@@ -6,7 +6,7 @@ Glitch is a set of mods for Claude Code. It puts a status line above the prompt 
 
 ## The pets
 
-Glitch launches with six pets: Screenhead, Byte blob, Pixel, Dot, Fork and Bud, with more on the way. Each one has its own temperament, its own way of speaking and its own signature move.
+Glitch launches with six pets: Screenhead, Byte blob, Pixel, Dot, Fork and Bud, with more on the way, and you can [make your own](#make-your-own-pet). Each one has its own temperament, its own way of speaking and its own signature move.
 
 Your pet isn't decoration. It works alongside Claude and pays attention to the session as it unfolds. Long turns, quiet spells, a budget running low, a run of failures or a streak kept alive all show on its face, and no two pets take them the same way. Spend some time with a few of them and pick the one that suits you.
 
@@ -46,6 +46,10 @@ Glitch works in the desktop app, VS Code and the terminal. The pets are only dra
 ```
 
 Other settings are in `/config`, under the Glitch plugins.
+
+## Make your own pet
+
+Have a pet in mind? Fork the repo, open Claude Code in it and say "I want to add a pet" (or run `/new-pet`). Claude asks you about your pet, draws it in the Glitch pixel style with every mood, wires it in and runs the tests. It then opens a gallery in your browser so you can check the art before anything is committed. When you're happy, open a pull request. See [Adding a pet](docs/pets.md#adding-a-pet).
 
 ## Docs
 
